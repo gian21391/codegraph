@@ -1016,6 +1016,14 @@ export function preloadLanguagesForFiles(
   ) {
     languages.push('pascal');
   }
+  // A `.m` path-detects as Objective-C but may read as MATLAB — same rule.
+  if (
+    !languages.includes('matlab') &&
+    !(overrides && overrides['.m']) &&
+    files.some((f) => f.toLowerCase().endsWith('.m'))
+  ) {
+    languages.push('matlab');
+  }
   return languages;
 }
 

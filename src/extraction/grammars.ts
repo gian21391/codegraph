@@ -51,6 +51,7 @@ const WASM_GRAMMAR_FILES: Record<GrammarLanguage, string> = {
   terraform: 'tree-sitter-terraform.wasm',
   arkts: 'tree-sitter-arkts.wasm',
   nix: 'tree-sitter-nix.wasm',
+  matlab: 'tree-sitter-matlab.wasm',
 };
 
 /**
@@ -377,6 +378,10 @@ export async function initGrammars(): Promise<void> {
  * nix-community/tree-sitter-nix @ 3d0173d (MIT) with tree-sitter-cli 0.25.10
  * (`generate` + `build --wasm`, ABI 15 — upstream's checked-in parser.c is
  * still ABI 13; all 54 upstream corpus tests pass on the regenerated parser).
+ * MATLAB: tree-sitter-wasms doesn't ship it and upstream publishes no wasm;
+ * we vendor one built from acristoffers/tree-sitter-matlab v1.3.3 (ff2f83d,
+ * MIT) — its checked-in ABI-15 parser.c, no `generate` — with tree-sitter-cli
+ * 0.25.10 `build --wasm`.
  *
  * TypeScript/TSX/JavaScript (+jsx, which shares the javascript grammar): the
  * tree-sitter-wasms builds are 2023-era (^0.20.x); we vendor wasm built from
@@ -396,7 +401,7 @@ export async function initGrammars(): Promise<void> {
  */
 const VENDORED_WASM_LANGS: ReadonlySet<GrammarLanguage> = new Set([
   'pascal', 'scala', 'lua', 'luau', 'csharp', 'r', 'cfml', 'cfscript', 'cfquery',
-  'cobol', 'vbnet', 'erlang', 'terraform', 'arkts', 'nix',
+  'cobol', 'vbnet', 'erlang', 'terraform', 'arkts', 'nix', 'matlab',
   'typescript', 'tsx', 'javascript', 'jsx', 'java', 'python', 'go',
   // R7a (C/C++ kernel port prep): tree-sitter-c v0.24.2 (b780e47) +
   // tree-sitter-cpp v0.23.4 (f41e1a0), parser.c/scanner.c sha-matched against
@@ -629,7 +634,58 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
     return 'pascal';
   }
 
+  // `.m` is Objective-C's implementation extension and MATLAB's only one, so
+  // it is decided per file by content, like `.inc`. An explicit codegraph.json
+  // mapping for `.m` is the user's answer and is not second-guessed.
+  if (lang === 'objc' && ext === '.m' && source && !(overrides && overrides[ext]) && looksLikeMatlab(source)) {
+    return 'matlab';
+  }
+
   return lang;
+}
+
+/**
+ * Line shapes only Objective-C (or C) writes in a `.m` file: a preprocessor
+ * directive or an `@`-keyword at the start of a line, or a `- (void)foo` /
+ * `+ (id)bar` method header. MATLAB has no `#` directives (Octave's `#`
+ * comments are followed by a space or text, never a directive word), and its
+ * `@` only starts a function handle (`@(x) …`, `@name`).
+ */
+const OBJC_M_SIGNAL =
+  /^[ \t]*(?:#[ \t]*(?:import|include|define|if|ifdef|ifndef|pragma|undef)\b|@(?:interface|implementation|protocol|end|class|property|synthesize|import)\b|[-+][ \t]*\([^)\n]*\)[ \t]*[A-Za-z_])/m;
+
+/**
+ * Line shapes only MATLAB writes: a `function` or `classdef` header, a `%`
+ * comment, a bare `end` closing a block, a `...` line continuation, or a
+ * `clc` / `clear` / `close all` script preamble. Each is anchored at a line
+ * start, where Objective-C would put a statement, a declaration or a `//`
+ * comment.
+ */
+const MATLAB_SIGNAL =
+  /^[ \t]*(?:function\b[^(\n{]*(?:\(|$|=)|classdef\b|%|end[ \t]*(?:[;%].*)?$|(?:clc|clear|close[ \t]+all)\b)|\.\.\.[ \t]*$/m;
+
+/**
+ * C declarations at a line start — a storage class or a scalar type before a
+ * name, or `type name(…) {` — which a `.m` holding plain C (no `#include`)
+ * would still have and MATLAB never writes.
+ */
+const C_DECLARATION_SIGNAL =
+  /^[ \t]*(?:(?:static|extern|typedef|void|int|char|float|long|short|unsigned|signed|const|struct|union)[ \t]+[A-Za-z_*]|[A-Za-z_]\w*[ \t*]+[A-Za-z_]\w*[ \t]*\([^)\n]*\)[ \t]*\{)/m;
+
+/**
+ * Whether a `.m` file is MATLAB rather than Objective-C. An Objective-C
+ * shape anywhere keeps it Objective-C — and an Objective-C implementation
+ * file always has one, an `#import` if nothing else. Otherwise a MATLAB-only
+ * shape makes it MATLAB; so does any other content that is not C
+ * declarations, since a MATLAB script may be nothing but statements
+ * (`c_obs = zeros(100, 100, 100);`). An empty file stays Objective-C. Per
+ * file, so a full index and a sync of one edited file always agree.
+ */
+export function looksLikeMatlab(source: string): boolean {
+  const head = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
+  if (OBJC_M_SIGNAL.test(head)) return false;
+  if (MATLAB_SIGNAL.test(head)) return true;
+  return !C_DECLARATION_SIGNAL.test(head) && /\S/.test(head);
 }
 
 /** A PHP open tag: `<?php` in any case, or the short echo `<?=` (never `<?xml`). */
@@ -946,6 +1002,7 @@ export function getLanguageDisplayName(language: Language): string {
     objc: 'Objective-C',
     solidity: 'Solidity',
     nix: 'Nix',
+    matlab: 'MATLAB',
     yaml: 'YAML',
     twig: 'Twig',
     xml: 'XML',

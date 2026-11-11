@@ -4760,6 +4760,11 @@ export class ToolHandler {
       const typeTokens = tokens.filter(
         (o) => /^[A-Z][A-Za-z0-9]{3,}/.test(o) && !projectNameTokens.has(normalizeNameToken(o)),
       );
+      /** Whether a qualified-name scope of the node is a type the query names (`SerialLink::fdyn` for "SerialLink fdyn"). */
+      const isMemberOfNamedType = (n: Node): boolean => {
+        const scopes = n.qualifiedName.toLowerCase().split('::').slice(0, -1);
+        return scopes.length > 0 && typeTokens.some((ct) => scopes.includes(ct.toLowerCase()));
+      };
       const inNamedContext = (n: Node) =>
         typeTokens.some((ct) => {
           const lc = ct.toLowerCase();
@@ -4864,8 +4869,13 @@ export class ToolHandler {
         // the guard uniformly to both branches below, including the >3-def
         // single-pick fallback — an uncorroborated bare `run` must not tier its
         // most-substantive namesake any more than a 1-def `check` may.
+        // A member of a type the query also names corroborates too: in
+        // "SerialLink fdyn accel rne" each is SerialLink's own method, but a
+        // MATLAB class folder gives every method a file of its own
+        // (`@SerialLink/fdyn.m`), where the class itself is never declared, so
+        // no other query token is named beside it.
         if (!isPreciseToken(t)) {
-          cands = cands.filter((n) => coNamedInFile(t, n.filePath));
+          cands = cands.filter((n) => coNamedInFile(t, n.filePath) || isMemberOfNamedType(n));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
