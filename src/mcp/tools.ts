@@ -262,6 +262,30 @@ function filesDefiningSymbol(cg: CodeGraph, symbol: string): string[] {
 }
 
 /**
+ * The file nodes of the MATLAB scripts named `name` (`setup_paths.m` for
+ * `setup_paths`): files that define no function or class, run by their name.
+ * A script's only node is its file, so the file is the symbol explore shows.
+ */
+function matlabScriptFilesNamed(cg: CodeGraph, name: string): Node[] {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return [];
+  try {
+    return cg.getNodesByName(`${name}.m`).filter((n) => isMatlabScriptFile(cg, n));
+  } catch {
+    return [];
+  }
+}
+
+/** Whether `n` is a MATLAB file node of a script: a file that defines no function or class. */
+function isMatlabScriptFile(cg: CodeGraph, n: Node): boolean {
+  if (n.kind !== 'file' || n.language !== 'matlab') return false;
+  try {
+    return cg.getNodesInFile(n.filePath).every((m) => m.kind === 'file' || m.kind === 'import');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Calculate the recommended number of codegraph_explore calls based on project size.
  * Larger codebases need more exploration calls to cover their surface area,
  * but smaller ones should use fewer to avoid unnecessary overhead.
@@ -4786,6 +4810,28 @@ export class ToolHandler {
         } catch { /* a probe failure corroborates nothing */ }
         return out;
       };
+      /**
+       * The ids of `nodes` that are MATLAB scripts a function the query also
+       * names runs (`BeamLine globals`, BeamLine running `globals.m`): a
+       * script is a file of its own, where no other query token is named
+       * beside it. One batched edge read and one node read.
+       */
+      const matlabScriptsRunByNamed = (nodes: readonly Node[], self: string): Set<string> => {
+        const out = new Set<string>();
+        const scripts = nodes.filter((n) => n.kind === 'file' && n.language === 'matlab');
+        if (scripts.length === 0) return out;
+        try {
+          const edges = cg.getIncomingEdgesTo(scripts.map((n) => n.id), ['calls']);
+          if (edges.length === 0) return out;
+          const callers = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
+          const others = new Set([...lcTokens].filter((o) => o !== self.toLowerCase()));
+          for (const e of edges) {
+            const caller = callers.get(e.source);
+            if (caller && others.has(caller.name.toLowerCase())) out.add(e.target);
+          }
+        } catch { /* a probe failure corroborates nothing */ }
+        return out;
+      };
       const inNamedContext = (n: Node) =>
         typeTokens.some((ct) => {
           const lc = ct.toLowerCase();
@@ -4884,6 +4930,9 @@ export class ToolHandler {
             .sort((a, b) => a.name.length - b.name.length)
             .slice(0, 3);
         }
+        // A MATLAB script has no symbol but its file (`setup_paths.m`): the
+        // file is what a name of one asks for, and its code is the body.
+        if (cands.length === 0 && !isQual) cands = matlabScriptFilesNamed(cg, t).filter((n) => !isTestPath(n.filePath));
         if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
         // (see the NL-stopword guard above). Filtering CANDS (not picks) applies
@@ -4899,7 +4948,8 @@ export class ToolHandler {
         if (!isPreciseToken(t)) {
           const unnamedIds = new Set(cands.filter((n) => !coNamedInFile(t, n.filePath)).map((n) => n.id));
           const ofNamedClass = classFolderMethodsOfNamedTypes(cands.filter((n) => unnamedIds.has(n.id)));
-          cands = cands.filter((n) => !unnamedIds.has(n.id) || ofNamedClass.has(n.id));
+          const runByNamed = matlabScriptsRunByNamed(cands.filter((n) => unnamedIds.has(n.id)), t);
+          cands = cands.filter((n) => !unnamedIds.has(n.id) || ofNamedClass.has(n.id) || runByNamed.has(n.id));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
@@ -4955,6 +5005,24 @@ export class ToolHandler {
           if (!isInterfaceOwnedMethod(n)) tierSeedIds.add(n.id);
         }
       }
+    }
+
+    // Compute the flow spine once — used both to prepend the Flow section (below)
+    // and to gate adaptive source sizing: files on the spine get full source,
+    // off-spine peers skeletonize.
+    // The Flow section labels each hop with its branch conditions; that read
+    // is synchronous, so the grammars it needs are loaded here, once.
+    await warmBranchGuardGrammars();
+    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
+    // A MATLAB script on the flow, or named: its file node is the hop, and the
+    // file's code its body, which the gather (symbols, not files) never
+    // reaches. Seeded as the agent's own, so its file renders like a function's.
+    for (const id of [...flow.pathNodeIds, ...flow.namedNodeIds]) {
+      if (subgraph.nodes.has(id)) continue;
+      const n = cg.getNode(id);
+      if (!n || !isMatlabScriptFile(cg, n)) continue;
+      subgraph.nodes.set(id, n);
+      namedSeedIds.add(id);
     }
 
     // Step 2: Group nodes by file, score by relevance
@@ -5533,14 +5601,6 @@ export class ToolHandler {
     }
 
     // Step 4: Read contiguous file sections
-    // Compute the flow spine once — used both to prepend the Flow section (below)
-    // and to gate adaptive source sizing: files on the spine get full source,
-    // off-spine peers skeletonize.
-    // The Flow section labels each hop with its branch conditions; that read
-    // is synchronous, so the grammars it needs are loaded here, once.
-    await warmBranchGuardGrammars();
-    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
-
     // The symbols the question is about: exact targets, the named ones, the spine.
     const questionIds = new Set([...exactNodeIds, ...flow.pathNodeIds, ...flow.namedNodeIds]);
     /**

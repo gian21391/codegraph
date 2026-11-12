@@ -1230,7 +1230,9 @@ export async function buildSteps(cg: CodeGraph, projectRoot: string, query: URLS
         const fromTest = isTestPath(fold.node.filePath);
         for (const e of edges) {
           const found = targets.get(e.target);
-          if (!found || found.kind === 'file') continue;
+          // A file is no step — but a MATLAB script, which runs by its name:
+          // its file is all there is of it, the code its body.
+          if (!found || (found.kind === 'file' && !(found.language === 'matlab' && e.kind === 'calls'))) continue;
           const meta = (e.metadata ?? {}) as Record<string, unknown>;
 
           // A member call the index kept only the last segment of (`create`

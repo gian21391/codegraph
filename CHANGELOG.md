@@ -19,7 +19,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New Features
 
-- CodeGraph now indexes **MATLAB** (`.m`) — functions, `classdef` classes and enumerations, packages and class folders, with calls that follow MATLAB's own lookup rules, including inherited methods and `@` function handles — and reads each `.m` file as MATLAB or Objective-C by its content, so mixed projects keep both.
+- CodeGraph now indexes **MATLAB** (`.m`) — functions, scripts, `classdef` and old-style `@`-folder classes and enumerations, packages and class folders, with calls that follow MATLAB's own lookup rules, including inherited methods, scripts run by name and `@` function handles — and reads each `.m` file as MATLAB or Objective-C by its content, so mixed projects keep both.
 - Asking `codegraph_explore` about a MATLAB class and its methods by name, like `SerialLink fdyn accel`, finds the methods kept in their own files in the class's `@` folder.
 - GNU Octave is not supported: a `.m` file written in Octave-only syntax, such as `#` comments or `endfunction`, is indexed as a file with no symbols or calls.
 - Re-index projects that have `.m` files after upgrading, since earlier versions read every `.m` file as Objective-C.

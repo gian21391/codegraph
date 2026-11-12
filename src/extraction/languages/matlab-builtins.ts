@@ -1,4 +1,5 @@
 import { matlabPathScope } from './matlab-path';
+import { referenceNameTail } from '../../db/reference-tail';
 
 /**
  * MATLAB built-in, GUI, graphics and common toolbox functions. A bare call of
@@ -12,9 +13,11 @@ import { matlabPathScope } from './matlab-path';
  * across PlatEMO, the Robotics Toolbox, fieldtrip, DeepLearnToolbox, PRMLT and
  * a 17k-file accelerator-physics codebase.
  *
- * Only a bare call is ever discarded: `numel(obj)` on a method's own object is
- * `Cls::numel` (a class's overload), and so is `set(c, …)` on a variable the
- * function says holds a class; `@size` is a function reference.
+ * A bare call is discarded by its name alone: `numel(obj)` on a method's own
+ * object is `Cls::numel` (a class's overload), and so is `set(c, …)` on a
+ * variable the function says holds a class, discarded only when no symbol
+ * carries the name either (see matlabUnmatchableKeys); `@size` is a function
+ * reference.
  *
  * What is discarded is gone for good: a sync that later adds `normpdf.m` links
  * the calls in the files it re-indexes, but not those in files it leaves alone,
@@ -95,6 +98,26 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'weboptions', 'writematrix', 'pdist2', 'kmeans', 'knnsearch', 'corr', 'anova', 'zscore', 'pca', 'ttest',
   'ttest2', 'mvnrnd', 'hanning', 'filtfilt', 'fir1', 'butter', 'flattopwin', 'resample', 'hilbert', 'set_param',
   'step', 'lyap', 'jacobian',
+  // more of MATLAB: geometry, numerics, logic and bits
+  'blkdiag', 'convhull', 'convhulln', 'delaunay', 'inpolygon', 'griddata', 'sphere', 'light', 'lightangle',
+  'reducepatch', 'waterfall', 'sph2cart', 'cart2sph', 'cart2pol', 'pol2cart', 'logspace', 'atand', 'cosd', 'rad2deg',
+  'gcd', 'lcm', 'magic', 'poly', 'toeplitz', 'schur', 'rsf2csf', 'sqrtm', 'svds', 'spalloc', 'speye', 'ipermute',
+  'intmax', 'integral', 'ode45', 'pchip', 'unwrap', 'issorted', 'setxor', 'xor', 'and', 'eq', 'ne', 'bitget',
+  'bitset', 'finite', 'isglobal', 'fmins',
+  // tables, strings, files and the GUI
+  'readtable', 'table2array', 'array2table', 'table2struct', 'struct2table', 'table2cell', 'setvartype',
+  'extractAfter', 'extractBefore', 'strread', 'regexptranslate', 'fileread', 'xlswrite', 'xmlread', 'hdf5read',
+  'hdf5write', 'h5read', 'h5readatt', 'memmapfile', 'unzip', 'urlwrite', 'websave', 'clipboard', 'uisave', 'movie',
+  'ind2rgb', 'rgb2ind', 'gtext', 'uitoggletool', 'uitreenode', 'xticks',
+  // objects, errors, timers and the Java, COM, C and Python bridges
+  'findprop', 'ismethod', 'properties', 'handle', 'throw', 'message', 'addOptional', 'addParameter', 'stop',
+  'awtinvoke', 'javachk', 'calllib', 'pyargs', 'invoke', 'hgfeval', 'feature', 'license', 'numnodes',
+  // toolboxes: signal, optimization, statistics, image, control, instrument, database, OPC, deep learning, fuzzy
+  // logic, Simulink, symbolic
+  'zp2tf', 'tf2sos', 'freqz', 'sinc', 'findpeaks', 'envelope', 'bartlett', 'fmincon', 'fminunc', 'optimoptions',
+  'lhsdesign', 'tabulate', 'random', 'nanmedian', 'getrect', 'imfill', 'imcontrast', 'mean2', 'tf', 'pzplot',
+  'binblockread', 'icdevice', 'visa', 'exec', 'fetch', 'setdbprefs', 'opcda', 'fullyConnectedLayer', 'reluLayer',
+  'featureInputLayer', 'dlnetwork', 'adamupdate', 'mapminmax', 'radbas', 'addMF', 'sim', 'matlabFunction',
 ]);
 
 /** Whether `ref` is a bare MATLAB call of a built-in's name (`plot(x)`, not `Cls::plot`, `obj.plot` or `@plot`). */
@@ -126,7 +149,8 @@ export function addMatlabReachableNames(paths: Iterable<string>, into: Set<strin
  * project could answer — no function or class of the file itself (`defined`,
  * the file's nodes) and no `.m` file of that name (`reachable`) — so that they
  * are never written at all. A file that imports anything keeps them all: an
- * import reaches a package's functions and a class's methods by a bare name.
+ * import reaches a package's functions and a class's methods by a bare name
+ * (one of Java's, `import java.util.*`, reaches none).
  * The resolver discards the other ones that resolve to nothing
  * (`isMatlabBuiltinCall`); this spares the database their rows. `refs` itself
  * when nothing goes.
@@ -143,7 +167,7 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
     const name = ref.referenceName;
     if (ref.referenceKind === 'calls' && MATLAB_BUILTINS.has(name) && !reachable.has(name)) {
       if (!own) {
-        if (defined.some((n) => n.kind === 'import')) return refs;
+        if (defined.some((n) => n.kind === 'import' && !isJavaImport(n.name))) return refs;
         own = new Set(defined.map((n) => n.name));
       }
       if (!own.has(name)) {
@@ -154,4 +178,71 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
     out?.push(ref);
   }
   return out ?? refs;
+}
+
+/** The roots of Java's packages (`java.lang.String`, `javax.swing.JFrame`), which MATLAB reaches through its JVM: never a project's. */
+export const JAVA_PACKAGE_ROOTS: ReadonlySet<string> = new Set(['java', 'javax']);
+
+/** `import java.util.ArrayList` / `import javax.swing.*`: Java's, which brings no project name into reach. */
+export function isJavaImport(target: string): boolean {
+  return JAVA_PACKAGE_ROOTS.has(target.split('.')[0]!);
+}
+
+/**
+ * The names a project symbol would have to carry for a MATLAB call that
+ * resolved to nothing to be worth keeping: its name and the tail it is parked
+ * under (`v.f` → `f`, `pkg::sub::f` → `f`), the two the dead-code check and
+ * the failed-ref retry match symbols on, each also as a file's (`f.m`, a
+ * script's only node). Null for any other reference, which is always kept.
+ *
+ * A failed call no symbol carries a name of is kept only as written with
+ * arguments, `f(x)` or `m(obj, x)`: a call leaving the index, which the
+ * viewer lists — but not `size(obj, 2)` on an object of a known class, the
+ * built-in's. A bare read (`t = cfg;`, a command `setup_paths`), a member
+ * (`v.field(k)`) or a qualified name (`pkg.f`, `Cls.m`) of a name nothing
+ * defines is a variable of the workspace, a struct's field or an outside
+ * package's — kept, one row
+ * in every function that reads it, it would be most of a large MATLAB
+ * codebase's rows, and neither resolves nor holds a symbol back from being
+ * called dead. What is discarded is gone for good, as a built-in's call is:
+ * a sync that later adds a symbol of the name links the files it re-indexes
+ * only — a member call written with arguments too (`r = a.recalib(2)`, its
+ * row gone while no symbol was named `recalib`) is not retried in a file the
+ * sync leaves alone when it adds the method `recalib` to a class.
+ */
+export function matlabUnmatchableKeys(ref: {
+  referenceName: string;
+  referenceKind: string;
+  language?: string;
+  nameTail?: string;
+  candidates?: string[];
+}): string[] | null {
+  if (ref.language !== 'matlab' || ref.referenceKind !== 'calls') return null;
+  // `m(obj, …)` on an object of a known class (`Cls::m`, its written name in its
+  // candidates): a call written with arguments, like any `f(x)` — unless what is
+  // written is a built-in's name (`size(c, 2)`), which, the class's method and
+  // the project's functions failing, is the built-in's call.
+  // (A dotted candidate is a variable's own name, `aa.getData` for
+  // `Archive::getData` — no written call.)
+  const written = ref.candidates?.filter((c) => !c.includes('.'));
+  if (written?.length && !written.every((c) => MATLAB_BUILTINS.has(c))) return null;
+  const name = ref.referenceName;
+  const tail = ref.nameTail ?? referenceNameTail(name, ref.referenceKind);
+  const names = tail === name ? [name] : [name, tail];
+  return [...names, ...names.map((n) => `${n}.m`)];
+}
+
+/** Whether a MATLAB reference name is a member or qualified one (`v.f`, `pkg::f`), not a bare name. */
+export function isDottedMatlabName(name: string): boolean {
+  return name.includes('.') || name.includes(':');
+}
+
+/**
+ * Whether the bare call `name` at `column` of `line` is written with
+ * arguments, `name(…)` — or, where the line does not read `name` there, may
+ * be: true then too, so that what cannot be seen is kept.
+ */
+export function writtenWithArguments(line: string | undefined, column: number, name: string): boolean {
+  if (line === undefined || line.slice(column, column + name.length) !== name) return true;
+  return /^\s*\(/.test(line.slice(column + name.length));
 }

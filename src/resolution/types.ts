@@ -158,6 +158,12 @@ export interface ResolutionContext {
   /** Get nodes by lowercase name (O(1) lookup for fuzzy matching) */
   getNodesByLowerName(lowerName: string): Node[];
   /**
+   * The nodes of several lowercase names in one lookup. Optional for
+   * external/test contexts: a caller falls back to one getNodesByLowerName
+   * per name.
+   */
+  getNodesByLowerNames?(lowerNames: readonly string[]): Node[];
+  /**
    * The names of a language's nodes of the given kinds, nothing else decoded:
    * a cheap pre-filter before lookups by name. Optional for external/test
    * contexts.

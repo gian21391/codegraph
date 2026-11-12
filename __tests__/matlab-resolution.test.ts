@@ -8,6 +8,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
+import { QueryBuilder } from '../src/db/queries';
+import { createResolver } from '../src/resolution';
+import { buildDeadCodeReport } from '../src/graph/dead-code';
 import { ToolHandler } from '../src/mcp/tools';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 
@@ -196,7 +199,8 @@ describe('MATLAB class-folder methods are contained by their class', () => {
       '@Robot/step.m': 'function step(r, x)\n    r.Q = r.Q + x;\nend\n',
       '+geo/@Shape/Shape.m': 'classdef Shape < handle\n    methods\n        function s = Shape()\n        end\n    end\nend\n',
       '+geo/@Shape/area.m': 'function a = area(s)\n    a = 1;\nend\n',
-      // An old-style class folder: its constructor is a function, and no classdef declares the class.
+      // An old-style class folder: its constructor is a function, and no classdef declares the class —
+      // the class node the extractor makes for it contains the folder's methods all the same.
       '@Legacy/Legacy.m': 'function obj = Legacy()\n    obj = class(struct(), \'Legacy\');\nend\n',
       '@Legacy/show.m': 'function show(obj)\n    disp(1);\nend\n',
       // An enumeration kept in a class folder.
@@ -212,10 +216,11 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('links each method file of a classdef class folder to the class, and nothing else', () => {
-    // move.m's local `aux` is no method; @Legacy has no class node.
+  it('links each method file of a class folder to the class, and nothing else', () => {
+    // move.m's local `aux` is no method.
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::move @ @Robot/move.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
@@ -240,6 +245,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/step.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::move @ @Robot/move.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
@@ -253,6 +259,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/move.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
@@ -265,6 +272,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
@@ -273,12 +281,14 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
     ]);
     write('@Robot/Robot.m', classdef);
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
@@ -600,9 +610,11 @@ describe('MATLAB function precedence', () => {
       'useAcc.m useAcc -calls-> AccObj::get @ @AccObj/get.m',
       'useAcc.m useAcc -calls-> AccObj::set @ @AccObj/set.m',
     ]);
-    // What resolves to nothing and is no bare call of a built-in's name is kept, for a later sync to
-    // retry: `class(obj, …)` on the method's own object is `AccObj::class`.
-    expect(unresolved).toEqual(['@AccObj/AccObj.m calls:AccObj::class', 'useAcc.m calls:AccObj', 'useAcc.m calls:missing']);
+    // `AccObj(1)` instantiates the old-style class. What resolves to nothing and is no call of a
+    // built-in's name is kept, for a later sync to retry. `class(obj, …)` on the method's own object
+    // is `AccObj::class`, which AccObj does not define and no symbol is named: the built-in's, no row either.
+    expect(edges.filter((e) => e.includes(' -instantiates-> '))).toEqual(['useAcc.m useAcc -instantiates-> AccObj @ @AccObj/AccObj.m']);
+    expect(unresolved).toEqual(['useAcc.m calls:missing']);
   });
 
   it('reaches a project function named like a built-in — on the path, in private/, local to the file — and keeps no row for one it does not define', async () => {
@@ -783,5 +795,203 @@ describe('MATLAB function precedence', () => {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('MATLAB unresolved rows', () => {
+  it('keeps a failed call only when written with arguments or named like a project symbol, and drops indexing and the toolboxes\' calls', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-')));
+    writeTree(root, {
+      // getData is two classes' method: `aa.getData()` cannot pick one, and fails.
+      'Acc.m': 'classdef Acc\n    properties\n        gain\n    end\n    methods\n        function d = getData(obj)\n            d = 1;\n        end\n    end\nend\n',
+      'Bcc.m': 'classdef Bcc\n    methods\n        function d = getData(obj)\n            d = 2;\n        end\n    end\nend\n',
+      'setup_paths.m': 'p = 1;\n', // a script: its file is the only node of the name
+      'tools.py': 'def pyhelper():\n    pass\n', // another language's symbol counts too
+      // A function named like a variable the caller indexes.
+      'x.m': 'function y = x(a)\ny = a;\nend\n',
+      'user.m': [
+        'function user(aa, temp)',
+        'd = aa.getData();', // a member a project method carries: kept
+        'v = temp.value(1);', // a member nothing carries: none
+        'w = cfgval;', // a bare read nothing defines: none
+        'g = gain;', // one a property carries: kept
+        'h = pyhelper;',
+        'q = tango_read_attribute(aa);', // an outside call: kept
+        'pkg.missing(1);', // a package path nothing defines: none
+        'setup_paths', // the script: linked to its file
+        'other_cmd on', // a command nothing defines: none
+        's = tf2sos(aa);', // the Signal Processing Toolbox's: none
+        'y = x(:, 2);', // indexing: no call, no edge
+        'z = x(end);',
+        'c = Acc();',
+        'n = size(c, 2);', // Acc has no size: the built-in's, none
+        'rescale_obj(c);', // nor a rescale_obj: an outside call, kept
+        'end',
+        'function other()',
+        'z = x(1);', // the function: linked
+        'end',
+        '',
+      ].join('\n'),
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(allEdges(cg).filter((e) => e.startsWith('user.m '))).toEqual([
+        'user.m other -calls-> x @ x.m',
+        'user.m user -calls-> setup_paths.m @ setup_paths.m',
+        'user.m user -instantiates-> Acc @ Acc.m',
+      ]);
+      expect(unresolvedRows(root)).toEqual([
+        'user.m calls:Acc::rescale_obj',
+        'user.m calls:aa.getData',
+        'user.m calls:gain',
+        'user.m calls:pyhelper',
+        'user.m calls:tango_read_attribute',
+      ]);
+      // What the dead-code check sees: every name a symbol carries still has its rows.
+      expect([...cg.getUnresolvedNamesAmong(['getData', 'gain', 'value', 'cfgval', 'missing'])].sort()).toEqual(['gain', 'getData']);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('on a sync, links a call written with arguments to a function added later everywhere, and a bare read of it only in the files it re-indexes', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-sync-')));
+    const caller = (name: string) => `function ${name}()\nt = later;\nlater(1);\nend\n`;
+    writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(unresolvedRows(root)).toEqual(['edited.m calls:later', 'untouched.m calls:later']);
+      writeTree(root, { 'later.m': 'function later(n)\nend\n', 'edited.m': caller('edited') + '% edited\n' });
+      await cg.sync();
+      // untouched.m's bare read was dropped when nothing defined `later`, and no row is left to retry.
+      expect(allEdges(cg)).toEqual([
+        'edited.m edited -calls-> later @ later.m',
+        'edited.m edited -calls-> later @ later.m',
+        'untouched.m untouched -calls-> later @ later.m',
+      ]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('on a sync that adds a method to a class, links a member call written with arguments only in the files it re-indexes (accepted)', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-member-')));
+    const caller = (name: string) => `function ${name}(a)\nr = a.recalib(2);\nend\n`;
+    writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      // No symbol is named recalib: a member nothing carries, no row.
+      expect(unresolvedRows(root)).toEqual([]);
+      writeTree(root, {
+        'Cal.m': 'classdef Cal\n    methods\n        function r = recalib(obj, n)\n            r = n;\n        end\n    end\nend\n',
+        'edited.m': caller('edited') + '% edited\n',
+      });
+      await cg.sync();
+      // The limitation: untouched.m's row went before Cal.m came, and nothing is left to retry.
+      expect(allEdges(cg)).toEqual(['edited.m edited -calls-> Cal::recalib @ Cal.m']);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps `size(obj, …)` on a class with no size when another class defines one, so that method is not called dead', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-size-')));
+    writeTree(root, {
+      'Acc.m': 'classdef Acc\n    methods\n        function n = size(obj)\n            n = 1;\n        end\n    end\nend\n',
+      'Cls.m': 'classdef Cls\n    methods\n        function n = count(obj)\n            n = size(obj, 2);\n        end\n    end\nend\n',
+      // What makes Acc.m reachable, so that its methods are candidates at all.
+      'main.m': 'function main()\na = Acc();\nc = Cls();\ncount(c);\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      // Cls::size is no method of Cls's, and Acc's size is another class's: no edge to it.
+      expect(allEdges(cg)).toEqual([
+        'main.m main -calls-> Cls::count @ Cls.m',
+        'main.m main -instantiates-> Acc @ Acc.m',
+        'main.m main -instantiates-> Cls @ Cls.m',
+      ]);
+      expect(unresolvedRows(root)).toEqual(['Cls.m calls:Cls::size']);
+      expect([...cg.getUnresolvedNamesAmong(['size'])]).toEqual(['size']);
+      // The kept row is what holds Acc's size back from being called dead.
+      const report = buildDeadCodeReport(cg, { kinds: ['method'], includeExported: true });
+      expect(report.entries.map((e) => e.node.qualifiedName)).not.toContain('Acc::size');
+      expect(report.excluded.unresolvedName).toBe(1);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a call\'s column on its line past multi-byte characters, tabs and CRLF line ends', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-col-')));
+    writeTree(root, {
+      'u.m': [
+        'function u()',
+        "\tmsg = 'héllo wörld ✓ 日本'; r = undefined_fn(1);",
+        "\tlbl = 'ünïcode ✓ 𝛼'; t = undefined_fn;",
+        'end',
+        '',
+      ].join('\r\n'),
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const db = DatabaseConnection.open(getDatabasePath(root));
+      try {
+        const rows = db.getDb().prepare('SELECT reference_name AS name, line FROM unresolved_refs').all() as Array<{ name: string; line: number }>;
+        // `undefined_fn(1)` is kept, the bare read of it dropped.
+        expect(rows.map((r) => `${r.name}:${r.line}`)).toEqual(['undefined_fn:2']);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('deletes a hand-built ref (no row id) by its key only when no failure of that key is kept', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-key-')));
+    const db = DatabaseConnection.initialize(path.join(root, 'test.db'));
+    try {
+      const q = new QueryBuilder(db.getDb());
+      fs.writeFileSync(path.join(root, 'k.m'), 'function k()\nt = nowhere;\nnowhere(1);\nend\nfunction j()\nt = gone;\nend\n');
+      const fn = (id: string, name: string, line: number) => ({
+        id, kind: 'function' as const, name, qualifiedName: name, filePath: 'k.m', language: 'matlab' as const,
+        startLine: line, endLine: line + 2, startColumn: 0, endColumn: 0, updatedAt: Date.now(),
+      });
+      q.insertNode(fn('fn:k', 'k', 1));
+      q.insertNode(fn('fn:j', 'j', 5));
+      const ref = (from: string, name: string, line: number, column: number) => ({
+        fromNodeId: from, referenceName: name, referenceKind: 'calls' as const, line, column, filePath: 'k.m', language: 'matlab' as const,
+      });
+      // `t = nowhere;` is a bare read nothing defines (discarded); `nowhere(1)`, of the same key, is kept.
+      const refs = [ref('fn:k', 'nowhere', 2, 4), ref('fn:k', 'nowhere', 3, 0), ref('fn:j', 'gone', 6, 4)];
+      q.insertUnresolvedRefsBatch(refs);
+      createResolver(root, q).resolveAndPersist(refs.map((r) => ({ ...r })));
+      const rows = db.getDb().prepare('SELECT reference_name AS name, line, status FROM unresolved_refs ORDER BY line').all() as Array<{ name: string; line: number; status: string }>;
+      // The key delete would have taken `nowhere(1)`'s row too: both stay, parked as failed. `gone` goes.
+      expect(rows.map((r) => `${r.name}:${r.line}:${r.status}`)).toEqual(['nowhere:2:failed', 'nowhere:3:failed']);
+    } finally {
+      db.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('in a function, links no call to `a.m` where `a` is indexed as only an array can be, and in a script at that site only', async () => {
+    const { edges } = await indexOfProject({
+      'a.m': 'function y = a(i, j)\ny = i + j;\nend\n',
+      'byEnd.m': 'function byEnd(t)\nplot(t, a(1,:) - a(1,1));\nn = a(end, 1);\nend\n',
+      'byBrace.m': 'function byBrace(t)\nplot(t, a(1,1));\nv = a{2};\nend\n',
+      'byColon.m': 'function byColon(t)\nplot(t, a(1,:) - a(1,1));\nend\n',
+      'script.m': 'plot(t, a(1,:) - a(1,1));\nv = a{2};\nn = a(end, 1);\n',
+    });
+    expect(edges).toEqual([
+      // A bare `:` is this site's evidence only: MATLAB passes a function `':'` too.
+      'byColon.m byColon -calls-> a @ a.m',
+      'script.m script.m -calls-> a @ a.m',
+    ]);
   });
 });

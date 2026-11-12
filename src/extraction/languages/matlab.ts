@@ -4,6 +4,7 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
+import { JAVA_PACKAGE_ROOTS, MATLAB_BUILTINS, isJavaImport } from './matlab-builtins';
 
 /**
  * MATLAB extractor (vendored acristoffers/tree-sitter-matlab, ABI 15).
@@ -20,7 +21,9 @@ import { isOctave } from './matlab-syntax';
  *                 local to the file (`isExported: false` — the resolver keeps
  *                 another file's calls off them). In a class folder
  *                 (`@Account/deposit.m`) the first function is a method of
- *                 that class.
+ *                 that class; `@Account/Account.m` holding a function is an
+ *                 old-style class's constructor, and a class node of that
+ *                 name contains it.
  *   - packages:   `+pkg/+sub/f.m` qualifies what the file defines as
  *                 `pkg::sub::f`, so `pkg.sub.f(x)` resolves by qualified name.
  *   - classdef:   class (an `enumeration` class with members is an enum);
@@ -35,10 +38,13 @@ import { isOctave } from './matlab-syntax';
  *                 assigns, takes as an argument or declares global is a
  *                 VARIABLE there — MATLAB decides that per function,
  *                 statically — so `x(3)` on one is an index read and emits
- *                 nothing. `obj.m()` and `m(obj, …)` on a method's own object
- *                 (its first parameter; a constructor's output) are `Cls::m`;
+ *                 nothing; so does `x(:, k)`, `a(end)` or `c{k}` on any
+ *                 name, what an assignment writes (`s.f{1}(k, :) = …`) and
+ *                 Java's classes (`java.lang.String(…)`). `obj.m()` and
+ *                 `m(obj, …)` on a method's own object (its first
+ *                 parameter; a constructor's output) are `Cls::m`;
  *                 on a variable the function assigns from a constructor
- *                 (`c = pkg.Cls(…)`) it is `pkg::Cls::m` (the function-syntax
+ *                 (`c = pkg.Cls(…)`, `c = Cls;`) it is `pkg::Cls::m` (the function-syntax
  *                 form carries the written `m` too: MATLAB may take a function
  *                 of that name first, or after the class lacks the method);
  *                 `v.m()` on any other variable is `v.m`, which the resolver
@@ -142,6 +148,75 @@ function helpText(node: SyntaxNode, source: string): string | undefined {
   return text || undefined;
 }
 
+/**
+ * What `f(…)` / `f{…}` says of `f`: `'variable'` when only an array can be
+ * indexed so — braces (a cell's contents) or an `end` that can be its own
+ * only (`a(end)`, `b(2:end)`, `c(end-1, [1 end])`); `'index'` when this
+ * site reads as indexing but `f` may still be a function — a bare `:` among
+ * its arguments (`x(:, 2)`; MATLAB passes `f(:)` a `':'`); else null. An
+ * `end` belongs to the innermost array indexed around it, and a function
+ * call is no array: `pop(select(2, end))` is pop's `end` when select is a
+ * function. So in a call inside another call's arguments an `end` says
+ * nothing, and neither does one inside an index or a lambda in its own
+ * arguments (`g(x(end))`).
+ */
+function arrayEvidence(call: SyntaxNode): 'variable' | 'index' | null {
+  for (let i = 0; i < call.childCount; i++) if (call.child(i)?.type === '{') return 'variable';
+  const args = namedChildren(call).find((c) => c.type === 'arguments');
+  if (!args) return null;
+  const ownEnd = (n: SyntaxNode): boolean => {
+    if (n.type === 'end_keyword') return true;
+    if (n.type === 'function_call' || n.type === 'lambda') return false;
+    return namedChildren(n).some(ownEnd);
+  };
+  if (!isInCallArguments(call) && namedChildren(args).some(ownEnd)) return 'variable';
+  if (namedChildren(args).some((a) => a.type === 'spread_operator')) return 'index';
+  return null;
+}
+
+/** Whether `f(…)` / `f{…}` can only be indexing here (see arrayEvidence). */
+function indexesLikeArray(call: SyntaxNode): boolean {
+  return arrayEvidence(call) !== null;
+}
+
+/** Whether `node` sits in a call's (or index's) arguments, at any depth of its expression. */
+function isInCallArguments(node: SyntaxNode): boolean {
+  for (let p = node.parent; p; p = p.parent) {
+    if (p.type === 'arguments' && p.parent?.type === 'function_call') return true;
+    if (p.type === 'block' || p.type === 'source_file' || p.type === 'function_definition') return false;
+  }
+  return false;
+}
+
+/**
+ * Whether `node` is part of what an assignment writes to — `x(k) = …`,
+ * `s.f{1}(k, :) = …`, `AO.(name).Monitor.Params{1} = …`, `[a.b, c(2)] = …` —
+ * reached up the chain (a call's callee, a field chain's parts, the outputs'
+ * list), never through an index's arguments, which are read.
+ */
+function isAssignmentTarget(node: SyntaxNode): boolean {
+  let n = node;
+  for (let p = n.parent; p; n = p, p = p.parent) {
+    if (p.type === 'assignment') return getChildByField(p, 'left')?.id === n.id;
+    if (p.type === 'field_expression' || p.type === 'multioutput_variable') continue;
+    if (p.type === 'function_call' && getChildByField(p, 'name')?.id === n.id) continue;
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Whether a field chain is the middle of a longer one: the grammar reads
+ * `AO.Q2.Setpoint.P{1}(6, :)` as `AO.(Q2.Setpoint.P{1})(6, :)`, so the inner
+ * chain's head `Q2` is a field of `AO`, not a variable, a package or a class.
+ */
+function isInnerChain(node: SyntaxNode): boolean {
+  const call = node.parent;
+  if (call?.type !== 'function_call' || getChildByField(call, 'name')?.id !== node.id) return false;
+  const outer = call.parent;
+  return outer?.type === 'field_expression' && getChildByField(outer, 'object')?.id !== call.id;
+}
+
 /** A dotted name's identifiers (`pkg.Base` in a `superclass`, `@pkg.f`), or null when anything else is in it. */
 function dottedName(node: SyntaxNode, source: string): string[] | null {
   const ids = namedChildren(node);
@@ -172,7 +247,7 @@ interface Frame {
   /** Variables assigned, passed in or declared HERE (a lambda's: its parameters) — see isLocal for the ones it shares. */
   locals: ReadonlySet<string>;
   /** Variable → the class its every constructor-shaped assignment here names (`c = pkg.Cls(…)` → `pkg::Cls`). */
-  classHints: ReadonlyMap<string, string>;
+  classHints: ReadonlyMap<string, ClassHint>;
   /** `v.f` for every field assigned here, and `v` for every `v = struct(…)`: `v.f(…)` there reads a field. */
   structFields: ReadonlySet<string>;
   /** The method's own object, when the code is a non-static method's (or nested in one, and no lambda parameter hides it). */
@@ -187,7 +262,17 @@ interface Frame {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
-const NO_HINTS: ReadonlyMap<string, string> = new Map();
+/**
+ * The class a variable holds, and whether only a bare name said so (`aa =
+ * Archive;`): that is a class's constructor called with no arguments, or as
+ * well a function's call (`G = GetCfg;`), which only the resolver can tell.
+ */
+interface ClassHint {
+  cls: string;
+  bare: boolean;
+}
+
+const NO_HINTS: ReadonlyMap<string, ClassHint> = new Map();
 
 /**
  * The walk's frames. Pushed and popped around each scope's children within
@@ -198,6 +283,45 @@ const frames: Frame[] = [];
 
 /** Outside every frame (only if a walk ever starts below the file's root): nothing in scope. */
 const NO_FRAME: Frame = { kind: 'file', qual: [], locals: EMPTY, classHints: NO_HINTS, structFields: EMPTY, self: null, parent: null };
+
+/**
+ * The classes the file imports from Java by name (`import java.util.ArrayList`
+ * → `ArrayList`), set while extractFile walks it: `ArrayList()` there is
+ * Java's constructor. Read for the whole file, as a wildcard's names cannot be.
+ */
+let javaImported: ReadonlySet<string> = EMPTY;
+
+/** Whether a dotted name's head is Java's: `java`, `javax`, or a class the file imports from Java. */
+function isJavaHead(head: string): boolean {
+  return JAVA_PACKAGE_ROOTS.has(head) || javaImported.has(head);
+}
+
+/** Whether a class hint (`javax::swing::JFrame`, `ArrayList` imported from Java) names a Java class: its methods are never the project's. */
+function isJavaClass(cls: string): boolean {
+  return isJavaHead(cls.split('::')[0]!);
+}
+
+/** The classes `root`'s `import java.….Cls` / `import javax.….Cls` statements name (a wildcard's are unknown). */
+function javaImportsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
+  if (!/\bimport\s+javax?\./.test(source)) return EMPTY;
+  const names = new Set<string>();
+  const walk = (n: SyntaxNode): void => {
+    for (const c of namedChildren(n)) {
+      if (c.type !== 'command') {
+        walk(c);
+        continue;
+      }
+      const cmd = namedChildren(c).find((a) => a.type === 'command_name');
+      if (!cmd || getNodeText(cmd, source) !== 'import') continue;
+      for (const arg of namedChildren(c)) {
+        const target = arg.type === 'command_argument' ? getNodeText(arg, source).trim() : '';
+        if (isJavaImport(target) && !target.endsWith('.*')) names.add(target.slice(target.lastIndexOf('.') + 1));
+      }
+    }
+  };
+  walk(root);
+  return names;
+}
 
 function frame(): Frame {
   return frames[frames.length - 1] ?? NO_FRAME;
@@ -214,7 +338,7 @@ function isLocal(f: Frame, name: string): boolean {
  * holds whatever the lambda is called with; a nested function goes by its own
  * assignments only (it may reassign its parent's variable).
  */
-function classHintOf(f: Frame, v: string): string | undefined {
+function classHintOf(f: Frame, v: string): ClassHint | undefined {
   let g = f;
   while (g.kind === 'lambda') {
     if (g.locals.has(v)) return undefined;
@@ -245,19 +369,36 @@ function inFrame(f: Frame, walk: () => void): void {
 
 interface ScopeFacts {
   locals: Set<string>;
-  /** `v = Cls(…)` / `v = pkg.Cls(…)`: the variable, the callee's head (which must be no variable), and the class it names. */
-  constructions: Array<{ v: string; head: string; cls: string }>;
+  /** `v = Cls(…)` / `v = pkg.Cls(…)` / `v = Cls`: the variable, the callee's head (which must be no variable), the class it names, and whether it is a bare name. */
+  constructions: Array<{ v: string; head: string; cls: string; bare: boolean }>;
   structFields: Set<string>;
 }
 
-/** The variables of `scope` (a function_definition or a script's source_file) and what its assignments say about them — one walk, its nested functions excluded. */
-function scanScope(scope: SyntaxNode, source: string): ScopeFacts {
+/**
+ * The variables of `scope` (a function_definition or a script's source_file)
+ * and what its assignments say about them — one walk, its nested functions
+ * excluded. In a function, a name indexed as only an array can be (`c{k}`,
+ * `a(end)`: see arrayEvidence) is one of its variables too — MATLAB decides
+ * that per function, so every use of it there, before or after, is one. A
+ * script's workspace is the caller's, and what a name is there may change
+ * between its lines: there the evidence holds at its own site only.
+ */
+function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): ScopeFacts {
   const locals = new Set<string>();
   const constructions: ScopeFacts['constructions'] = [];
   const structFields = new Set<string>();
 
-  /** `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head, class] — a capitalised callee that is no variable reads as a constructor. */
+  /**
+   * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
+   * class] — a capitalised callee that is no variable reads as a constructor.
+   * So does a bare `Cls` (`aa = ArchAppliance;`), the constructor called with
+   * no arguments, unless it is a built-in's name (`x = NaN;`).
+   */
   const constructed = (rhs: SyntaxNode | null): [string, string] | null => {
+    if (rhs?.type === 'identifier') {
+      const text = getNodeText(rhs, source);
+      return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
+    }
     if (rhs?.type === 'function_call') {
       const name = getChildByField(rhs, 'name');
       const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
@@ -318,7 +459,7 @@ function scanScope(scope: SyntaxNode, source: string): ScopeFacts {
             locals.add(v);
             const right = getChildByField(c, 'right');
             const made = constructed(right);
-            if (made) constructions.push({ v, head: made[0], cls: made[1] });
+            if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier' });
             else if (right?.type === 'function_call' && getNodeText(getChildByField(right, 'name') ?? right, source) === 'struct') {
               structFields.add(v);
             }
@@ -345,6 +486,16 @@ function scanScope(scope: SyntaxNode, source: string): ScopeFacts {
           if (v) locals.add(getNodeText(v, source));
           break;
         }
+        case 'function_call': {
+          // `c{k}` / `a(end)` in a function: c and a are its variables. Not a
+          // chain's field (`s.c{k}`), which is no variable.
+          if (!isFunction) break;
+          const callee = getChildByField(c, 'name');
+          if (callee?.type !== 'identifier') break;
+          if (n.type === 'field_expression' && getChildByField(n, 'object')?.id !== c.id) break;
+          if (arrayEvidence(c) === 'variable') locals.add(getNodeText(callee, source));
+          break;
+        }
       }
       walk(c);
     }
@@ -363,15 +514,20 @@ function errorVariable(clause: SyntaxNode): SyntaxNode | null {
   return null;
 }
 
-/** The class a variable holds, where every constructor-shaped assignment to it agrees. */
-function classHintsFrom(facts: ScopeFacts, isVariable: (name: string) => boolean): ReadonlyMap<string, string> {
+/**
+ * The class a variable holds, where every constructor-shaped assignment to it
+ * agrees. A Java class's (`m = javax.swing.JFrame()`) is one too, and says
+ * that what is called on the variable is Java's: see isJavaClass.
+ */
+function classHintsFrom(facts: ScopeFacts, isVariable: (name: string) => boolean): ReadonlyMap<string, ClassHint> {
   if (facts.constructions.length === 0) return NO_HINTS;
-  const hints = new Map<string, string>();
+  const hints = new Map<string, ClassHint>();
   const conflicted = new Set<string>();
-  for (const { v, head, cls } of facts.constructions) {
+  for (const { v, head, cls, bare } of facts.constructions) {
     if (isVariable(head)) continue; // `c = cfg.Make()` on a variable `cfg`: a field's value
-    if (hints.has(v) && hints.get(v) !== cls) conflicted.add(v);
-    else hints.set(v, cls);
+    const had = hints.get(v);
+    if (had && had.cls !== cls) conflicted.add(v);
+    else hints.set(v, { cls, bare: bare && (had?.bare ?? true) });
   }
   for (const v of conflicted) hints.delete(v);
   return hints;
@@ -402,7 +558,9 @@ function firstParameter(fn: SyntaxNode, source: string): string | null {
  * argument (`m(obj, …)` → `Cls::m`): the name as written, which MATLAB looks up
  * as a function before the class's methods and after them on the path. It
  * rides in the ref's `candidates`; a dotted `obj.m()` carries none and reaches
- * the class's method or nothing.
+ * the class's method or nothing — unless only a bare name gave its class
+ * (`aa = Archive;`): then it carries the variable's own name, dotted
+ * (`aa.getData`), for when that name is no class (see MemberRef).
  */
 function addRef(ctx: ExtractorContext, name: string, kind: 'calls' | 'function_ref' | 'extends' | 'imports', at: SyntaxNode, written?: string): void {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
@@ -426,28 +584,46 @@ function addRef(ctx: ExtractorContext, name: string, kind: 'calls' | 'function_r
  *     nothing when the function fills that field in itself or made it a
  *     struct, else `v.m`, which the resolver links only to a method no
  *     property shares a name with (deeper, `s.field.m()`, is a field's value);
- *   - else a package path or a class: `pkg.sub.f`, `Cls.staticM`, `pkg.Cls`.
+ *   - else a package path or a class: `pkg.sub.f`, `Cls.staticM`, `pkg.Cls` —
+ *     but not Java's (`java.lang.String(…)`, `ArrayList.valueOf` where the
+ *     file imports `java.util.ArrayList`): nothing, and nothing either on a
+ *     variable that holds a Java object (`m = javax.swing.JFrame(); m.show()`).
  */
-function memberRef(path: string[], member: string): string | null {
+function memberRef(path: string[], member: string): MemberRef | null {
   const f = frame();
   const head = path[0]!;
-  if (f.self && head === f.self.name) return path.length === 1 ? `${f.self.cls}::${member}` : null;
+  if (f.self && head === f.self.name) return path.length === 1 ? { name: `${f.self.cls}::${member}` } : null;
   if (isLocal(f, head)) {
     if (path.length !== 1) return null;
-    const cls = classHintOf(f, head);
-    if (cls) return `${cls}::${member}`;
-    if (readsStructField(f, head, member)) return null;
-    return `${head}.${member}`;
+    const hint = classHintOf(f, head);
+    const field = readsStructField(f, head, member);
+    if (hint) {
+      if (isJavaClass(hint.cls)) return null;
+      return { name: `${hint.cls}::${member}`, ...(hint.bare && !field ? { variable: `${head}.${member}` } : {}) };
+    }
+    return field ? null : { name: `${head}.${member}` };
   }
-  return [...path, member].join('::');
+  if (isJavaHead(head)) return null;
+  return { name: [...path, member].join('::') };
+}
+
+/**
+ * A member reference: its name, and for one through a bare-name hint (`aa =
+ * Archive; aa.getData()` → `Archive::getData`) the variable's own (`aa.getData`),
+ * which the resolver takes instead when `Archive` is no class.
+ */
+interface MemberRef {
+  name: string;
+  variable?: string;
 }
 
 /**
  * `a.b.f(x)` / `obj.m(x)` / `Cls.m(x)`: the reference for the first call in a
  * field chain whose receiver is a plain dotted name. Later calls in a chain
- * (`obj.get().run()`) act on a returned value with no static type — silent.
+ * (`obj.get().run()`) act on a returned value with no static type — silent,
+ * and so is a first call that can only be indexing (`s.data(end)`, `obj.c{k}`).
  */
-function fieldChainRef(node: SyntaxNode, source: string): { name: string; at: SyntaxNode } | null {
+function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: SyntaxNode }) | null {
   const object = getChildByField(node, 'object');
   if (object?.type !== 'identifier') return null;
   const path = [getNodeText(object, source)];
@@ -460,18 +636,18 @@ function fieldChainRef(node: SyntaxNode, source: string): { name: string; at: Sy
     }
     if (f.type !== 'function_call') return null;
     const callee = getChildByField(f, 'name');
-    if (callee?.type !== 'identifier') return null;
-    const name = memberRef(path, getNodeText(callee, source));
-    return name ? { name, at: f } : null;
+    if (callee?.type !== 'identifier' || indexesLikeArray(f)) return null;
+    const ref = memberRef(path, getNodeText(callee, source));
+    return ref ? { ...ref, at: f } : null;
   }
   return null;
 }
 
 /** `@f` / `@pkg.f` / `@obj.m` (`@(x) …` is a lambda node, not this). */
-function handleRef(node: SyntaxNode, source: string): string | null {
+function handleRef(node: SyntaxNode, source: string): MemberRef | null {
   const names = dottedName(node, source);
   if (!names) return null;
-  return names.length === 1 ? names[0]! : memberRef(names.slice(0, -1), names[names.length - 1]!);
+  return names.length === 1 ? { name: names[0]! } : memberRef(names.slice(0, -1), names[names.length - 1]!);
 }
 
 /**
@@ -495,11 +671,39 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
     return { name: [...base, method].join('::'), dispatch: false };
   }
   if (isLocal(f, name)) return null;
+  // `ArrayList()` where the file imports `java.util.ArrayList`: Java's constructor.
+  if (javaImported.has(name)) return null;
   const firstArg = namedChildren(node).find((c) => c.type === 'arguments')?.namedChild(0);
   const first = firstArg?.type === 'identifier' ? getNodeText(firstArg, source) : null;
-  const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first);
-  if (cls) return { name: `${cls}::${name}`, dispatch: true };
+  const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first)?.cls;
+  // On a Java object (`set(m, …)`), the function as written: no class of the project's.
+  if (cls && !isJavaClass(cls)) return { name: `${cls}::${name}`, dispatch: true };
   return { name, dispatch: false };
+}
+
+/**
+ * `run setup_paths` / `run('setup_paths.m')`: the script (or function) run
+ * by that name, as a call of it written where the name is. A path
+ * (`run('lib/setup')`) or a name built at runtime names nothing the index can
+ * tell from here. `holder` is the call's arguments or the command.
+ */
+function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext): void {
+  const args = holder ? namedChildren(holder).filter((c) => c.type !== 'command_name' && c.type !== 'comment') : [];
+  if (args.length !== 1) return;
+  const arg = args[0]!;
+  const at = arg.type === 'string' ? namedChildren(arg).find((c) => c.type === 'string_content') : arg.type === 'command_argument' ? arg : undefined;
+  if (!at) return;
+  const m = /^(['"]?)([A-Za-z][A-Za-z0-9_]*)(?:\.m)?\1$/.exec(getNodeText(at, ctx.source));
+  if (!m) return;
+  const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
+  if (!fromNodeId) return;
+  ctx.addUnresolvedReference({
+    fromNodeId,
+    referenceName: m[2]!,
+    referenceKind: 'calls',
+    line: at.startPosition.row + 1,
+    column: at.startPosition.column + m[1]!.length,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -570,8 +774,20 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     extra.isExported = primary && stem !== null;
   }
 
+  // `@Cls/Cls.m` holding a function is an old-style class's constructor: the
+  // folder is the class, which no classdef declares. Its class node stands
+  // where the constructor does and contains it (and, through the class-folder
+  // pass, the folder's other methods), so `Cls(…)` instantiates the class as
+  // it does a classdef's and `@Cls` names the constructor.
+  const oldStyleClass = classFolder !== undefined && name === classFolder
+    ? ctx.createNode('class', name, node, { qualifiedName: qual.join('::'), docstring: extra.docstring })
+    : null;
+  if (oldStyleClass) ctx.pushScope(oldStyleClass.id);
   const fn = ctx.createNode(kind, name, node, extra);
-  if (!fn || node.type === 'function_signature') return; // a declaration: no body to walk
+  if (!fn || node.type === 'function_signature') {
+    if (oldStyleClass) ctx.popScope();
+    return; // a declaration: no body to walk
+  }
 
   // The method's own object: a constructor's output, any other non-static
   // method's first parameter. A nested function sees its method's; a local
@@ -586,7 +802,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     self = outer.self;
   }
 
-  const facts = scanScope(node, source);
+  const facts = scanScope(node, source, true);
   const parent = nested ? outer : null;
   const f: Frame = {
     kind: 'function',
@@ -605,6 +821,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     }
   });
   ctx.popScope();
+  if (oldStyleClass) ctx.popScope();
 }
 
 function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
@@ -695,26 +912,34 @@ function extractImport(node: SyntaxNode, ctx: ExtractorContext): void {
     ctx.createNode('import', target, node, { signature: getNodeText(node, ctx.source).trim().slice(0, 100) });
     // `import pkg.*` names a package, and no node stands for one: the import
     // node is all there is (the resolver reads it for the names it brings in).
-    if (!target.endsWith('.*')) addRef(ctx, target.replace(/\./g, '::'), 'imports', arg);
+    // So does `import java.util.ArrayList`: Java's, never the project's.
+    if (!target.endsWith('.*') && !isJavaImport(target)) {
+      addRef(ctx, target.replace(/\./g, '::'), 'imports', arg);
+    }
   }
 }
 
 /** A script's top level, or a function file's (its code outside every function is a script's). */
 function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
   const source = ctx.source;
-  const facts = scanScope(node, source);
-  const f: Frame = {
-    kind: 'file',
-    qual: matlabPathScope(ctx.filePath).packages,
-    locals: facts.locals,
-    classHints: classHintsFrom(facts, (v) => facts.locals.has(v)),
-    structFields: facts.structFields,
-    self: null,
-    parent: null,
-  };
-  inFrame(f, () => {
-    for (const c of namedChildren(node)) ctx.visitNode(c);
-  });
+  javaImported = javaImportsOf(node, source);
+  try {
+    const facts = scanScope(node, source, false);
+    const f: Frame = {
+      kind: 'file',
+      qual: matlabPathScope(ctx.filePath).packages,
+      locals: facts.locals,
+      classHints: classHintsFrom(facts, (v) => facts.locals.has(v)),
+      structFields: facts.structFields,
+      self: null,
+      parent: null,
+    };
+    inFrame(f, () => {
+      for (const c of namedChildren(node)) ctx.visitNode(c);
+    });
+  } finally {
+    javaImported = EMPTY;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -778,20 +1003,23 @@ export const matlabExtractor: LanguageExtractor = {
         const parent = node.parent;
         // A field of a chain (`pkg.f(x)`, `obj.m()`): the field_expression owns it.
         if (parent?.type === 'field_expression' && getChildByField(parent, 'object')?.id !== node.id) return false;
-        // `x(k) = …` assigns into x.
-        if (parent?.type === 'assignment' && getChildByField(parent, 'left')?.id === node.id) return false;
+        // `x(k) = …`, `[y, x(k)] = …` assign into x.
+        if (isAssignmentTarget(node)) return false;
         const callee = getChildByField(node, 'name');
-        if (callee?.type !== 'identifier') return false;
+        // `x(:, 2)`, `a(end)`, `c{k}`: x, a and c hold arrays.
+        if (callee?.type !== 'identifier' || indexesLikeArray(node)) return false;
         const written = getNodeText(callee, source);
         const ref = callRef(node, written, source);
         if (ref) addRef(ctx, ref.name, 'calls', node, ref.dispatch ? written : undefined);
+        if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx);
         return false; // arguments still walked
       }
 
       case 'field_expression': {
-        if (node.parent?.type === 'assignment' && getChildByField(node.parent, 'left')?.id === node.id) return false;
+        // `s.f(k) = …` writes a field; `Q2.Setpoint.P` in `AO.Q2.Setpoint.P{1}(6, :)` is no chain of its own.
+        if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
-        if (ref) addRef(ctx, ref.name, 'calls', ref.at);
+        if (ref) addRef(ctx, ref.name, 'calls', ref.at, ref.variable);
         return false;
       }
 
@@ -808,7 +1036,7 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'catch_clause' && errorVariable(parent)?.id !== node.id);
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
+        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node);
         return false;
       }
 
@@ -817,13 +1045,16 @@ export const matlabExtractor: LanguageExtractor = {
         if (!cmd) return true;
         const name = getNodeText(cmd, source);
         if (name === 'import') extractImport(node, ctx);
-        else if (!isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
+        else if (!isLocal(frame(), name)) {
+          addRef(ctx, name, 'calls', node);
+          if (name === 'run') runRef(node, ctx);
+        }
         return true;
       }
 
       case 'handle_operator': {
         const target = handleRef(node, source);
-        if (target) addRef(ctx, target, 'function_ref', node);
+        if (target) addRef(ctx, target.name, 'function_ref', node, target.variable);
         return true;
       }
     }

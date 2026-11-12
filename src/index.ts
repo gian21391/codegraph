@@ -1239,6 +1239,10 @@ export class CodeGraph {
         // passes below use the new set (#2516).
         if (result.detectedFrameworks) this.followDetectedFrameworks(result.detectedFrameworks);
 
+        // Only the changed files' references are fresh: a failure elsewhere
+        // is a reference this sync took the target of, kept for its return.
+        this.resolver.setFreshRefFiles(result.changedFilePaths ?? []);
+
         // A component a tag in an unchanged file may render: `<Team />` links
         // to the `Team` this sync adds. The gate above reads each changed file
         // on its own, and a component with no markup of its own (`return null`,
@@ -1645,6 +1649,16 @@ export class CodeGraph {
           }
         }
 
+        // A MATLAB file that became a script, or stopped being one: the calls
+        // that run it by name in files this sync left alone.
+        if (result.changedFilePaths?.some((p) => p.endsWith('.m'))) {
+          const tScripts = Date.now();
+          const reopened = this.resolver.reopenMatlabScriptRuns(result.changedFilePaths);
+          if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
+            console.error(`[phase-timing] sync-matlab-scripts: ${Date.now() - tScripts}ms (${reopened} refs re-opened)`);
+          }
+        }
+
         // The same for a route whose answer is read from a module: one that
         // renders `const Docs = lazy(() => import('./pages/Docs'))` binds to
         // the component the module exports, so it moves when the module is
@@ -1871,6 +1885,7 @@ export class CodeGraph {
         // auto-checkpoint interval (runMaintenance above already folded the
         // WAL on the success path; on the error path SQLite replays it on
         // the next open).
+        this.builtResolver?.setFreshRefFiles(null);
         if (walValve) { walValve.stop(); await walValve.drain(); }
         if (deferWal) {
           try { this.db.setWalAutocheckpoint(priorAutocheckpoint); } catch { /* connection may be closing */ }

@@ -18,6 +18,8 @@
  *   7. a class kept in a class folder (`@Cls/`), then a function file's
  *      function or a class on the path — outside every `+package` folder: a
  *      package member is reached by its full name even from its own package.
+ *      A call written as a statement of its own (`setup_paths`, `run
+ *      setup_paths`) reaches a script on the path too: its file node.
  *
  * An import holds in the function that makes it and the functions nested in
  * it, not in the file's other functions. Of several equally near same-named
@@ -28,8 +30,9 @@
  * through its class (`Cls::m`, from `Cls.m()` or `obj.m()` on a method's own
  * object), found on the class or else on its superclasses, read from the
  * `classdef X < A & B` signature. A method on a variable of no stated class
- * (`robot.accel(…)` on a parameter) resolves only when one class defines it
- * and no property shares its name. A local function of ANOTHER file is never
+ * (`robot.accel(…)` on a parameter) resolves only when one class defines it,
+ * or one class and subclasses of it that override it, and no property shares
+ * its name. A local function of ANOTHER file is never
  * reachable — that is what made the generic name matcher unsafe here: every
  * MATLAB project has a dozen local `parseInputs` / `helper`s.
  *
@@ -46,6 +49,8 @@
 
 import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
+import { matlabPathScope } from '../extraction/languages/matlab-path';
+import { isOctave, maskMatlabBlockComments } from '../extraction/languages/matlab-syntax';
 const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
 const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
 const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KINDS]);
@@ -216,18 +221,10 @@ function genpathOrder(a: string, b: string): number {
  */
 function nearest(candidates: Node[], callerFile: string): Node | undefined {
   if (candidates.length <= 1) return candidates[0];
-  const callerDir = dirOf(callerFile);
-  const b = callerDir.split('/');
   let best: Node[] = [];
   let bestScore = -1;
   for (const c of candidates) {
-    const dir = dirOf(c.filePath);
-    let score = 0;
-    if (dir === callerDir) score = Number.MAX_SAFE_INTEGER;
-    else {
-      const a = dir.split('/');
-      while (score < a.length && score < b.length && a[score] === b[score]) score++;
-    }
+    const score = nearness(c.filePath, callerFile);
     if (score > bestScore) {
       best = [c];
       bestScore = score;
@@ -236,6 +233,18 @@ function nearest(candidates: Node[], callerFile: string): Node | undefined {
   if (best.length === 1) return best[0];
   const [first, second] = best.map((c) => dirOf(c.filePath)).sort(genpathOrder);
   return first === second ? undefined : best.find((c) => dirOf(c.filePath) === first);
+}
+
+/** How near a file is to the caller's: the same folder above all, then the number of leading folders they share. */
+function nearness(filePath: string, callerFile: string): number {
+  const dir = dirOf(filePath);
+  const callerDir = dirOf(callerFile);
+  if (dir === callerDir) return Number.MAX_SAFE_INTEGER;
+  const a = dir.split('/');
+  const b = callerDir.split('/');
+  let score = 0;
+  while (score < a.length && score < b.length && a[score] === b[score]) score++;
+  return score;
 }
 
 /** A path-visible definition by exact qualified name: a package function, a class, a class's method. */
@@ -349,7 +358,7 @@ function resolveQualified(name: string, caller: Caller, context: ResolutionConte
  * method `f` comes after the caller's own, imported and private functions
  * and before the path.
  */
-function resolveBare(name: string, caller: Caller, context: ResolutionContext, dispatch?: string): Node | undefined {
+function resolveBare(name: string, caller: Caller, context: ResolutionContext, dispatch?: string, statement?: () => boolean): Node | undefined {
   const from = caller.file;
   const { imports, scopes } = caller;
   // 1. An explicit import.
@@ -401,18 +410,152 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
   // 7. A class-folder class, then the path. Never a method otherwise: one
   // called with function syntax on an object of a known class arrives with
   // `dispatch`, and any other `char(s, …)` is the built-in even inside a
-  // class that overloads it.
+  // class that overloads it. A script on the path is a file of it like a
+  // function's, but runs only as a statement of its own (`setup_paths`,
+  // `run setup_paths`): it takes no argument and returns nothing.
   const folderClasses = onPath.filter((n) => TYPE_KINDS.has(n.kind) && inClassFolder(n));
-  return nearest(folderClasses.length > 0 ? folderClasses : onPath, from);
+  let target: Node | undefined;
+  if (folderClasses.length > 0) target = nearest(folderClasses, from);
+  else {
+    const scripts = statement ? scriptsNamed(name, context) : [];
+    target = nearest(scripts.length > 0 && statement!() ? [...onPath, ...scripts] : onPath, from);
+  }
+  return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
+}
+
+/**
+ * Whether a file of the path that matches `name` only when case is ignored
+ * lies strictly nearer the caller than `target`, the nearest exact match: a
+ * function file (`FindCells.m` for `findcells`), a class, a script, the help
+ * text of a MEX function (`RingPass.m` beside `RingPass.c` for `ringpass`), or
+ * a class folder's constructor-shaped file (`@tps/TPS.m` for `TPS` or `tps`).
+ * MATLAB matches a name with its case, and errors when it finds no exact match
+ * ("Cannot find an exact (case-sensitive) match"), so the call is not to the
+ * far file: the code was written against the near one, which runs only on an
+ * old release on a case-blind file system, or nowhere. No edge then. An exact
+ * match in the caller's own folder is never beaten.
+ */
+function nearerInexactMatch(name: string, target: Node, callerFile: string, context: ResolutionContext): boolean {
+  const bar = nearness(target.filePath, callerFile);
+  if (bar === Number.MAX_SAFE_INTEGER) return false;
+  const lower = name.toLowerCase();
+  const keys = [lower, `${lower}.m`];
+  const variants = context.getNodesByLowerNames?.(keys) ?? keys.flatMap((k) => context.getNodesByLowerName(k));
+  return matlab(variants).some((n) => {
+    if (nearness(n.filePath, callerFile) <= bar || !privateInReach(n, callerFile)) return false;
+    const owner = ownerOf(n);
+    // `@tps/TPS.m`: a constructor's file, its folder's name in another case or its own.
+    if (n.kind === 'method') return isMethodFile(n) && !owner.includes('::') && owner.toLowerCase() === lower && (owner !== name || n.name !== name);
+    if (n.name === name || n.name === `${name}.m`) return false;
+    if (n.kind === 'file') {
+      const scope = matlabPathScope(n.filePath);
+      return n.name.toLowerCase() === `${lower}.m` && scope.packages.length === 0 && scope.classFolder === undefined;
+    }
+    return owner === '' && ((n.kind === 'function' && n.isExported === true) || TYPE_KINDS.has(n.kind));
+  });
+}
+
+/**
+ * Per file, keyed by the node array the context returns for it (as
+ * FILE_FACTS): whether the file is a script MATLAB can run by its name.
+ */
+const SCRIPT_FILES = new WeakMap<Node[], boolean>();
+
+/**
+ * The file nodes of the scripts named `name` (`name.m`) that the path holds:
+ * outside every package, class and `private/` folder, defining no function
+ * or class, with code in it — a file of comments only is the help text of a
+ * MEX function of that name (`lcaPut.m` beside `lcaPut.mexa64`), which is
+ * what MATLAB runs, and an Octave file (whose functions go unread) is no
+ * script either.
+ */
+function scriptsNamed(name: string, context: ResolutionContext): Node[] {
+  if (context.isAbsentName?.(`${name}.m`)) return [];
+  return context.getNodesByName(`${name}.m`).filter((file) => isPathScript(file, context));
+}
+
+/** Whether a node is the file node of a script on the path (see scriptsNamed). */
+function isPathScript(file: Node, context: ResolutionContext): boolean {
+  if (file.kind !== 'file' || file.language !== 'matlab') return false;
+  const scope = matlabPathScope(file.filePath);
+  if (scope.packages.length > 0 || scope.classFolder !== undefined || /(?:^|\/)private\//.test(file.filePath)) return false;
+  const nodes = context.getNodesInFile(file.filePath);
+  let script = SCRIPT_FILES.get(nodes);
+  if (script === undefined) {
+    script = !matlab(nodes).some((n) => NAMED_KINDS.has(n.kind)) && runsCode(context.readFile(file.filePath));
+    SCRIPT_FILES.set(nodes, script);
+  }
+  return script;
+}
+
+/**
+ * Whether `filePath`, a MATLAB file, is a script MATLAB runs by its name:
+ * for a sync, which re-opens the calls into a file that stopped being one.
+ */
+export function isMatlabPathScript(filePath: string, context: ResolutionContext): boolean {
+  const file = context.getNodesInFile(filePath).find((n) => n.kind === 'file');
+  return file !== undefined && isPathScript(file, context);
+}
+
+/**
+ * Whether MATLAB source holds a statement: a line that is no comment, outside
+ * every `%{ … %}` block. Not a file of control bytes — MATLAB Compiler's
+ * encrypted `.m` files (`V1MCC4000MEC…`) in a deployed runtime tree.
+ */
+function runsCode(source: string | null): boolean {
+  if (source === null || isOctave(source) || /[\x00-\x08\x0E-\x19\x1B-\x1F]/.test(source)) return false;
+  return maskMatlabBlockComments(source).split(/\r?\n/).some((line) => !/^\s*(?:%.*)?$/.test(line));
+}
+
+/**
+ * Whether the bare name `name` at `column` of line `row` is a statement of its
+ * own — `setup_paths`, `setup_paths;`, `if ok, setup_paths, end` — or the
+ * script a `run` statement names (`run setup_paths`, `run('setup_paths.m')`):
+ * the only way a script runs. Not when it is a value (`x = name`, `f(name)`,
+ * `[name, 1]`) or continues an earlier line; what the line does not show
+ * plainly is no statement.
+ */
+function writtenAsStatement(lines: readonly string[] | null | undefined, row: number, column: number, name: string): boolean {
+  const text = lines?.[row - 1];
+  if (text === undefined || text.slice(column, column + name.length) !== name) return false;
+  const before = text.slice(0, column);
+  const after = text.slice(column + name.length);
+  const prev = row >= 2 ? lines![row - 2]! : '';
+  if (/\.\.\./.test(prev.replace(/%.*$/, ''))) return false;
+  if (/^\s*run\s*\(\s*['"]$/.test(before)) return /^(?:\.m)?['"]\s*\)\s*(?:[;,%]|$)/.test(after);
+  if (/^\s*run\s+['"]?$/.test(before)) return /^(?:\.m)?['"]?\s*(?:[;,%]|$)/.test(after);
+  if (!/^\s*(?:[;,%]|$)/.test(after)) return false;
+  return /(?:^|[;,])\s*(?:(?:else|try|otherwise)\s+)?$/.test(before) && atTopLevel(before);
+}
+
+/** Whether `code` (a line's start) leaves no bracket or string open, so a `,` / `;` in it ends a statement. */
+function atTopLevel(code: string): boolean {
+  let depth = 0;
+  let quote: string | null = null;
+  let prev = '';
+  for (const ch of code) {
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || (ch === "'" && !/[\w)\]}.']/.test(prev))) quote = ch;
+    else if (ch === '%') return false;
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    if (ch !== ' ' && ch !== '\t') prev = ch;
+  }
+  return depth === 0 && quote === null;
 }
 
 /**
  * `v.m()` on a variable whose class the function never states (a parameter,
  * mostly): the method, when exactly one class defines a method of that name
  * and nothing in the project has a property of that name — `opts.tol(1)` on a
- * struct, or `robot.links(1)` on a property, reads exactly the same.
+ * struct, or `robot.links(1)` on a property, reads exactly the same. When
+ * several classes define it and one of them is a superclass of all the others
+ * (`Problem.CalGrad(x)` on a PROBLEM, whose subclasses override `CalGrad`),
+ * `v` holds that class or one of its subclasses: the call is that class's
+ * method, overridden or not.
  */
-function resolveVariableMethod(name: string, context: ResolutionContext): Node | undefined {
+function resolveVariableMethod(name: string, callerFile: string, context: ResolutionContext): Node | undefined {
   const member = name.slice(name.lastIndexOf('.') + 1);
   const named = matlab(context.getNodesByName(member));
   if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return undefined;
@@ -421,12 +564,48 @@ function resolveVariableMethod(name: string, context: ResolutionContext): Node |
   const statics = new Set(all.filter((n) => n.isStatic).map((n) => n.qualifiedName));
   const methods = preferBodies(all.filter((n) => !statics.has(n.qualifiedName)));
   const classes = new Set(methods.map(ownerOf));
-  return classes.size === 1 ? methods[0] : undefined;
+  if (classes.size === 0) return undefined;
+  // Of each class's copies, the one nearest the caller.
+  const chosen = new Map<string, Node>();
+  for (const owner of classes) {
+    const copy = nearest(methods.filter((n) => ownerOf(n) === owner), callerFile);
+    if (!copy) return undefined;
+    chosen.set(owner, copy);
+  }
+  if (chosen.size === 1) return [...chosen.values()][0];
+  const root = commonRoot(chosen, context);
+  return root === undefined ? undefined : chosen.get(root);
+}
+
+/**
+ * Of the classes whose methods `chosen` holds (by class), the one every other
+ * one inherits from, or undefined when there is no single such class. Each
+ * class's superclasses are read from the copy of it its method is in, so a
+ * copy elsewhere is not taken for it.
+ */
+function commonRoot(chosen: ReadonlyMap<string, Node>, context: ResolutionContext): string | undefined {
+  const ancestry = new Map<string, Set<string>>();
+  for (const [owner, method] of chosen) {
+    const cls = byQualifiedName(owner, method.filePath, context, TYPE_KINDS);
+    if (!cls) return undefined;
+    const seen = new Set<string>();
+    const walk = (c: Node): void => {
+      if (seen.has(c.qualifiedName)) return;
+      seen.add(c.qualifiedName);
+      for (const sup of superclassesOf(c, context)) walk(sup);
+    };
+    walk(cls);
+    ancestry.set(owner, seen);
+  }
+  const roots = [...ancestry.keys()].filter((r) => [...ancestry.values()].every((a) => a.has(r)));
+  return roots.length === 1 ? roots[0] : undefined;
 }
 
 export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
   const name = ref.referenceName;
   let target: Node | undefined;
+  /** The name the target was looked up by, when not `name`. */
+  let via = name;
   switch (ref.referenceKind) {
     case 'extends':
       target = resolveType(name, { file: ref.filePath, imports: NO_IMPORTS }, context);
@@ -436,12 +615,26 @@ export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionCont
       break;
     case 'calls':
     case 'function_ref': {
+      // `aa.getData()` after `aa = Archive;`: `Archive::getData`, the
+      // variable's own `aa.getData` in `candidates` — taken when the bare
+      // name is a function of the project's and no class (`G = GetCfg;`
+      // calls the function: what it returns has no class the code states).
+      // A name the project defines nothing of stays a class: `r = SE2;` makes
+      // an object of a toolbox's class, whose methods are none of the project's.
+      const variable = name.includes('::') ? ref.candidates?.find((c) => c.includes('.')) : undefined;
       // `m(obj, …)`: `Cls::m`, the name as written in `candidates`.
-      const written = ref.referenceKind === 'calls' && name.includes('::') ? ref.candidates?.[0] : undefined;
+      const written = ref.referenceKind === 'calls' && name.includes('::') && !variable ? ref.candidates?.[0] : undefined;
+      const hinted = variable === undefined ? undefined : name.slice(0, name.lastIndexOf('::'));
+      const unhinted = hinted !== undefined && !resolveType(hinted, callerOf(ref, context), context) &&
+        resolveBare(hinted, callerOf(ref, context), context)?.kind === 'function';
+      if (unhinted) via = variable!;
       target = written ? resolveBare(written, callerOf(ref, context), context, name.slice(0, name.lastIndexOf('::')))
+        : unhinted ? resolveVariableMethod(variable!, ref.filePath, context)
         : name.includes('::') ? resolveQualified(name, callerOf(ref, context), context)
-        : name.includes('.') ? resolveVariableMethod(name, context)
-        : resolveBare(name, callerOf(ref, context), context);
+        : name.includes('.') ? resolveVariableMethod(name, ref.filePath, context)
+        : resolveBare(name, callerOf(ref, context), context, undefined, ref.referenceKind === 'calls'
+          ? () => writtenAsStatement(context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/), ref.line, ref.column, name)
+          : undefined);
       // A handle names a function: `@Cls` is its constructor, or the class
       // itself when it declares none (MATLAB gives it a default one).
       if (target && ref.referenceKind === 'function_ref' && TYPE_KINDS.has(target.kind)) {
@@ -457,7 +650,7 @@ export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionCont
   return {
     original: ref,
     targetNodeId: target.id,
-    confidence: name.includes('.') && !name.includes('::') ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
-    resolvedBy: ref.referenceKind === 'function_ref' ? 'function-ref' : name.includes('::') ? 'qualified-name' : 'exact-match',
+    confidence: via.includes('.') && !via.includes('::') ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
+    resolvedBy: ref.referenceKind === 'function_ref' ? 'function-ref' : via.includes('::') ? 'qualified-name' : 'exact-match',
   };
 }

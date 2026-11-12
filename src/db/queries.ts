@@ -1818,6 +1818,26 @@ export class QueryBuilder {
     return this.stmts.getNodesByLowerName.all(name);
   }
 
+  /** {@link getNodesByLowerName} for several names in one statement (each `IN` term seeks idx_nodes_lower_name). */
+  getNodesByLowerNames(names: readonly string[]): Node[] {
+    if (names.length === 0) return [];
+    if (names.length === 1) return this.getNodesByLowerName(names[0]!);
+    const out: Node[] = [];
+    for (let i = 0; i < names.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = names.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      let stmt = this.lowerNamesStmts.get(chunk.length);
+      if (!stmt) {
+        stmt = prepareNodeStatement(this.db, `SELECT * FROM nodes WHERE lower(name) IN (${chunk.map(() => 'lower(?)').join(',')})`);
+        this.lowerNamesStmts.set(chunk.length, stmt);
+      }
+      out.push(...stmt.all(...chunk));
+    }
+    return out;
+  }
+
+  /** getNodesByLowerNames's statements, by how many names they take. */
+  private readonly lowerNamesStmts = new Map<number, NodeStatement>();
+
   /** Does the index hold any file of this language? One seek on idx_files_language. */
   hasFilesOfLanguage(language: string): boolean {
     if (!this.stmts.hasFilesOfLanguage) {
@@ -2992,6 +3012,20 @@ export class QueryBuilder {
           )
           .all(...chunk, ...chunk, ...chunk)
         : this.db.prepare(byName).all(...chunk)) as Array<{ name: string }>;
+      for (const row of rows) found.add(row.name);
+    }
+    return found;
+  }
+
+  /** Which of `names` some node (any kind, any language) carries as its name. Chunked probe over `idx_nodes_name`. */
+  getNodeNamesAmong(names: Iterable<string>): Set<string> {
+    const unique = [...new Set(names)];
+    const found = new Set<string>();
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const rows = this.db
+        .prepare(`SELECT DISTINCT name FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})`)
+        .all(...chunk) as Array<{ name: string }>;
       for (const row of rows) found.add(row.name);
     }
     return found;

@@ -65,8 +65,8 @@ import { lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
-import { matchMatlabReference } from './matlab-lookup';
-import { isMatlabBuiltinCall } from '../extraction/languages/matlab-builtins';
+import { isMatlabPathScript, matchMatlabReference } from './matlab-lookup';
+import { isDottedMatlabName, isMatlabBuiltinCall, matlabUnmatchableKeys, writtenWithArguments } from '../extraction/languages/matlab-builtins';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
 import { builtinModules } from 'module';
@@ -1086,6 +1086,16 @@ export class ReferenceResolver {
         return result;
       },
 
+      getNodesByLowerNames: (lowerNames: readonly string[]) => {
+        // A key no single name is: a name holds no NUL.
+        const key = lowerNames.join('\0');
+        const cached = this.lowerNameCache.get(key);
+        if (cached !== undefined) return cached;
+        const result = this.queries.getNodesByLowerNames(lowerNames);
+        this.lowerNameCache.set(key, result);
+        return result;
+      },
+
       getNodeNamesOfKinds: (language, kinds) => this.queries.getNodeNamesOfKinds(language, kinds),
 
       rememberNode: (node: Node) => {
@@ -1845,6 +1855,8 @@ export class ReferenceResolver {
       isNixPathImportRef(ref) ||
       isJsPathImportRef(ref) ||
       this.hasAnyPossibleMatch(existenceName) ||
+      // A MATLAB script has no symbol but its file, named `setup_paths.m`.
+      (ref.language === 'matlab' && this.knownNames?.has(`${existenceName}.m`) === true) ||
       // PHP, Pascal, CFML, COBOL and VB.NET names ignore case: `formatprice()`
       // calls `FormatPrice`, which the exact-name set never lists.
       (CASE_INSENSITIVE_LANGUAGES.has(ref.language) && this.hasAnyPossibleMatchIgnoringCase(existenceName)) ||
@@ -2278,25 +2290,83 @@ export class ReferenceResolver {
   }
 
   /**
-   * `failures` less the bare MATLAB calls of a built-in's name (`plot(x)`,
-   * `set(h, …)`), whose rows are deleted instead of parked as failed: no
-   * project function answered one, so it is MATLAB's own, and kept it would
-   * be one row in every function that calls it. A sync that later adds a
-   * project function of the name reaches only the calls in the files it
-   * re-indexes (see matlab-builtins). `removed` counts the rows deleted.
+   * `failures` less the MATLAB calls nothing in the project could ever
+   * answer, whose rows are deleted instead of parked as failed: the bare
+   * calls of a built-in's name (`plot(x)`, `set(h, …)`) — no project function
+   * answered one, so it is MATLAB's own — and the calls no symbol carries a
+   * name of, unless written with arguments (see matlabUnmatchableKeys). Kept,
+   * either would be one row in every function that makes it. A sync that
+   * later adds a symbol of the name reaches only the calls in the files it
+   * re-indexes (see matlab-builtins) — and so does one that adds a method of
+   * the name to a class: a member call written with arguments (`a.recalib(2)`)
+   * whose row went is not retried in a file the sync leaves alone. `removed`
+   * counts the rows deleted.
+   *
+   * A ref with no row id (a caller's hand-built one) is deleted by its
+   * (from, name, kind) key, which reaches every row of that key: only when no
+   * failure of the batch with that key is kept. Else it is kept with them,
+   * parked as failed.
    */
-  private discardBuiltinFailures(failures: UnresolvedRef[]): { kept: UnresolvedRef[]; removed: number } {
-    if (!failures.some(isMatlabBuiltinCall)) return { kept: failures, removed: 0 };
+  private discardUnanswerableFailures(failures: UnresolvedRef[]): { kept: UnresolvedRef[]; removed: number } {
+    if (this.freshRefFiles !== null && this.freshRefFiles.size === 0) return { kept: failures, removed: 0 };
+    const discarded = this.unanswerableMatlabFailures(failures);
+    if (discarded.size === 0) return { kept: failures, removed: 0 };
+    const keyOf = (ref: UnresolvedRef): string => `${ref.fromNodeId}\0${ref.referenceName}\0${ref.referenceKind}`;
+    const keptKeys = new Set<string>();
+    for (const ref of failures) if (!discarded.has(ref)) keptKeys.add(keyOf(ref));
     const kept: UnresolvedRef[] = [];
     const rowIds: number[] = [];
-    const legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> = [];
+    const legacyKeys = new Map<string, { fromNodeId: string; referenceName: string; referenceKind: string }>();
     for (const ref of failures) {
-      if (!isMatlabBuiltinCall(ref)) kept.push(ref);
+      if (!discarded.has(ref) || (ref.rowId == null && keptKeys.has(keyOf(ref)))) kept.push(ref);
       else if (ref.rowId != null) rowIds.push(ref.rowId);
-      else legacyKeys.push({ fromNodeId: ref.fromNodeId, referenceName: ref.referenceName, referenceKind: ref.referenceKind });
+      else legacyKeys.set(keyOf(ref), { fromNodeId: ref.fromNodeId, referenceName: ref.referenceName, referenceKind: ref.referenceKind });
     }
-    const removed = this.queries.deleteReferencesByRowIds(rowIds) + this.queries.deleteSpecificResolvedReferences(legacyKeys);
+    const removed = this.queries.deleteReferencesByRowIds(rowIds) + this.queries.deleteSpecificResolvedReferences([...legacyKeys.values()]);
     return { kept, removed };
+  }
+
+  /**
+   * While a sync resolves, the files whose references it extracted afresh:
+   * only their failures may be discarded. Any other failure is a reference of
+   * a file the sync left alone — one whose target this sync removed (the
+   * edge goes back to a reference), or one re-opened for a retry — and is
+   * kept, parked as failed, so that the sync that brings its target back
+   * links it again, as it would a TypeScript call. Null: every reference is
+   * fresh (a full index).
+   */
+  private freshRefFiles: ReadonlySet<string> | null = null;
+
+  /** See {@link freshRefFiles}: set by a sync for its resolution, null after it. */
+  setFreshRefFiles(files: readonly string[] | null): void {
+    this.freshRefFiles = files === null ? null : new Set(files);
+  }
+
+  /**
+   * The failures {@link discardUnanswerableFailures} deletes. Whether a
+   * symbol carries a name is asked of the index as it stands once the pass's
+   * definitions are stored: a full index's every symbol, or a sync's.
+   */
+  private unanswerableMatlabFailures(failures: UnresolvedRef[]): Set<UnresolvedRef> {
+    const discarded = new Set<UnresolvedRef>();
+    const pending: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+    for (const ref of failures) {
+      if (this.freshRefFiles !== null && !this.freshRefFiles.has(ref.filePath)) continue;
+      if (isMatlabBuiltinCall(ref)) discarded.add(ref);
+      else {
+        const keys = matlabUnmatchableKeys(ref);
+        if (keys) pending.push({ ref, keys });
+      }
+    }
+    if (pending.length === 0) return discarded;
+    const carried = this.queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
+    for (const { ref, keys } of pending) {
+      if (keys.some((k) => carried.has(k))) continue;
+      const name = ref.referenceName;
+      if (isDottedMatlabName(name)) discarded.add(ref);
+      else if (!writtenWithArguments(this.context.getFileLines?.(ref.filePath)?.[ref.line - 1], ref.column, name)) discarded.add(ref);
+    }
+    return discarded;
   }
 
   private deferReference(ref: UnresolvedRef, queue: UnresolvedRef[]): void {
@@ -2347,7 +2417,7 @@ export class ReferenceResolver {
     // is still 'pending', so any pending row at rest belongs to an
     // interrupted run and the sweep can key off the pending count.
     if (result.unresolved.length > 0) {
-      const { kept } = this.discardBuiltinFailures(this.nonDeferredFailures(result.unresolved));
+      const { kept } = this.discardUnanswerableFailures(this.nonDeferredFailures(result.unresolved));
       const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(kept);
       this.queries.markReferencesFailedByRowIds(byRowId);
       this.queries.markReferencesFailed(legacyKeys);
@@ -2396,7 +2466,7 @@ export class ReferenceResolver {
       await maybeYield();
     }
 
-    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.discardBuiltinFailures(this.nonDeferredFailures(result.unresolved)).kept);
+    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.discardUnanswerableFailures(this.nonDeferredFailures(result.unresolved)).kept);
     for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
       this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));
       await maybeYield();
@@ -3092,7 +3162,7 @@ export class ReferenceResolver {
       tLp = Date.now();
       const nonDeferred = this.nonDeferredFailures(result.unresolved);
       const deferredCount = result.unresolved.length - nonDeferred.length;
-      const { kept: failures, removed: discarded } = this.discardBuiltinFailures(nonDeferred);
+      const { kept: failures, removed: discarded } = this.discardUnanswerableFailures(nonDeferred);
       removedThisBatch += discarded;
       const failedCleanup = ReferenceResolver.partitionFailedCleanup(failures);
       for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
@@ -3523,6 +3593,45 @@ export class ReferenceResolver {
     }
     if (edgeIds.length > 0) this.queries.replaceResolutionEdgesWithUnresolvedRefs(edgeIds, refs);
     return this.queries.reopenFailedReferences(rowIds) + refs.length;
+  }
+
+  /**
+   * Put back in the pending set the MATLAB calls a sync's `.m` files may now
+   * answer differently because one became a script MATLAB runs by its name,
+   * or stopped being one (a function went in, its code went out leaving only
+   * help text, it turned to Octave), for the sync's resolution sweep. A
+   * script's calls end at its file node, which a re-index keeps, and no name
+   * the file defines changes with its verdict, so the definition delta never
+   * sees it. The calls into a file that is no script now go back as the
+   * references they were; the calls parked as failed under the name of one
+   * that is a script (`setup_paths` for `setup_paths.m`) are retried. Calls
+   * in `changedFilePaths` are left alone: the sync resolved them already.
+   * Returns the number of references put back.
+   */
+  reopenMatlabScriptRuns(changedFilePaths: readonly string[]): number {
+    const fresh = new Set(changedFilePaths);
+    const edgeIds: number[] = [];
+    const refs: UnresolvedReference[] = [];
+    const stems = new Set<string>();
+    for (const filePath of changedFilePaths) {
+      const stem = /(?:^|\/)([A-Za-z][A-Za-z0-9_]*)\.m$/.exec(filePath)?.[1];
+      if (!stem) continue;
+      if (isMatlabPathScript(filePath, this.context)) {
+        stems.add(stem);
+        continue;
+      }
+      for (const edge of this.queries.getCrossFileIncomingEdgesWithTarget(filePath)) {
+        if (edge.target !== `file:${filePath}` || edge.sourceLanguage !== 'matlab' || fresh.has(edge.sourceFilePath)) continue;
+        const ref = resurrectRefFromDroppedEdge(edge);
+        if (!ref) continue;
+        edgeIds.push(edge.edgeId);
+        refs.push(ref);
+      }
+    }
+    if (edgeIds.length > 0) this.queries.replaceResolutionEdgesWithUnresolvedRefs(edgeIds, refs);
+    const rowIds = stems.size === 0 ? [] : this.queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
+      ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
+    return refs.length + this.queries.reopenFailedReferences(rowIds);
   }
 
   /**

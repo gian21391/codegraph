@@ -13,9 +13,10 @@
  * the folder, declared in the file of that name. So this is a structural link,
  * not a guess — the same kind as the Go cross-file method containment pass —
  * and it carries no provenance, only the `synthesizedBy` ownership tag a
- * synthesis refresh replaces it by. A folder whose `Cls.m` is no `classdef`
- * (an old-style `@`-folder class, whose constructor is a function) has no
- * class node, and gets no edge.
+ * synthesis refresh replaces it by. An old-style `@`-folder class, whose
+ * `Cls.m` is a constructor function rather than a `classdef`, has the class
+ * node the extractor makes for it there; a folder with no `Cls.m` (methods
+ * added to a built-in type, `@double/`) has none, and gets no edge.
  */
 
 import type { Edge, Node } from '../types';

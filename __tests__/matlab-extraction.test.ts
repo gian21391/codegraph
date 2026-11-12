@@ -13,7 +13,7 @@ import { CodeGraph } from '../src';
 import { extractFromSource } from '../src/extraction';
 import { detectLanguage, getParser, initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
-import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames, writtenWithArguments } from '../src/extraction/languages/matlab-builtins';
 
 beforeAll(async () => {
   await initGrammars();
@@ -428,6 +428,155 @@ end
     ]);
     // An import may reach a package's function or a class's method by its bare name: all are kept.
     expect(kept('b.m', 'function b(x)\nimport uix.*\nset(x);\nplot(x);\nend\n')).toEqual(['calls:set', 'calls:plot']);
+    // Java's reaches none.
+    expect(kept('c.m', 'function c(x)\nimport java.util.*\nimport javax.swing.JFrame\nplot(x);\nmine(x);\nend\n')).toEqual(['calls:mine']);
+  });
+
+  it('tells a call written with arguments from a bare read by the source, keeping what it cannot see', () => {
+    expect(writtenWithArguments('t = f(x);', 4, 'f')).toBe(true);
+    expect(writtenWithArguments('t = f (x);', 4, 'f')).toBe(true);
+    expect(writtenWithArguments('t = f;', 4, 'f')).toBe(false);
+    expect(writtenWithArguments('setup_paths', 0, 'setup_paths')).toBe(false);
+    expect(writtenWithArguments('hold on', 0, 'hold')).toBe(false);
+    // The line does not read the name there (the file changed, a column it cannot place): kept.
+    expect(writtenWithArguments('t = g;', 4, 'f')).toBe(true);
+    expect(writtenWithArguments(undefined, 4, 'f')).toBe(true);
+  });
+});
+
+describe('MATLAB indexing written like a call', () => {
+  it('emits nothing for `x(:, k)`, `a(end)`, `b(2:end)` or `c{k}`, and keeps the calls an `end` in their arguments may not be the own of', () => {
+    const code = `function f(k)
+    y = x(:, 2);
+    z = a(end);
+    v = b(2:end, [1 end]);
+    u = c{k};
+    w = outer(inner(end));
+    pick = pop(select(2, end));
+    n = sized(end + 1 - k);
+    r = runIt(@(q) q(end), k);
+    p = plain(1:3, k);
+    s = spread(cs{:});
+    o = k.data(end);
+    o = k.items{2};
+    o = k.getData();
+end
+`;
+    expect(refs('f.m', code)).toEqual([
+      // An `end` in a call's arguments is the innermost array's: inner's when inner is one, else
+      // outer's. Which is which nothing here says, so both are calls; so are pop and select.
+      'calls:outer <- f',
+      'calls:inner <- f',
+      'calls:pop <- f',
+      'calls:select <- f',
+      'calls:runIt <- f', // q's `end` is the lambda's
+      'calls:plain <- f',
+      'calls:spread <- f', // `cs{:}` spreads a cell into spread's arguments
+      'calls:k.getData <- f',
+    ]);
+  });
+});
+
+describe('MATLAB names a function indexes as only an array can be', () => {
+  it('in a function, makes `c{k}` and an own `end` a variable for the whole function, and a bare `:` only its own site', () => {
+    const code = `function f(t)
+    plot(t, a(1,:) - a(1,1));
+    n = a(end, 1);
+end
+function g(t)
+    plot(t, b(1,1));
+    v = b{2};
+    w = b;
+end
+function h(t)
+    plot(t, a(1,:) - a(1,1));
+end
+function k(s)
+    v = s.c{2};
+    w = c(1);
+    x = outer(d(end));
+    y = d(1);
+end
+`;
+    expect(refs('f.m', code)).toEqual([
+      // \`:\` can be what a function is passed (\`a(':')\`): a(1,:) is indexing, a(1,1) still a call.
+      'calls:a <- h',
+      // s.c{2} is a field's, which says nothing of c; d's \`end\` may be outer's.
+      'calls:c <- k',
+      'calls:outer <- k',
+      'calls:d <- k',
+      'calls:d <- k',
+    ]);
+  });
+
+  it('in a script, at its own site only: a script\'s workspace is its caller\'s', () => {
+    const code = 'plot(t, a(1,1));\nv = a{2};\nw = a;\nz = b(end);\nq = b(1);\n';
+    expect(refs('s.m', code)).toEqual(['calls:t <- s.m', 'calls:a <- s.m', 'calls:a <- s.m', 'calls:b <- s.m']);
+  });
+});
+
+describe('MATLAB assignment targets', () => {
+  it('emits nothing for the chain an assignment writes, dynamic fields and multiple outputs included, and keeps its index reads', () => {
+    const code = `function f(AO, iFam, ii, c, y)
+    AO.(iFam).Monitor.HW2PhysicsParams{1}(ii, :) = c;
+    AO.Q2.Setpoint.Physics2HWParams{1}(6, :) = c;
+    AO{ii}.Setpoint.HW2PhysicsParams{2}(ii, :) = c;
+    [st.a.b(1), m(2), q.r{3}] = deal(c);
+    x(pick(y)) = 1;
+    AO.(name(y)).Monitor = c;
+    t = Root.Q2.Setpoint.Params{1}(6, ii);
+end
+`;
+    expect(refs('f.m', code)).toEqual([
+      'calls:pick <- f', // an index is read
+      'calls:name <- f', // so is a dynamic field's name
+      // A chain read: Q2 is a field of Root, not a package of its own; Root.Q2… is indexed, nothing to call.
+    ]);
+  });
+});
+
+describe('MATLAB Java', () => {
+  it('emits nothing for Java\'s classes, called, as a handle or imported', () => {
+    const code = `function f()
+    import java.util.ArrayList
+    import javax.swing.*
+    import geom.Circle
+    s = java.lang.String('x');
+    fr = javax.swing.JFrame();
+    t = java.lang.System.currentTimeMillis;
+    h = @java.lang.System.exit;
+    l = ArrayList();
+end
+`;
+    const r = extractFromSource('f.m', code, 'matlab');
+    expect(r.nodes.filter((n) => n.kind === 'import').map((n) => n.name)).toEqual(['java.util.ArrayList', 'javax.swing.*', 'geom.Circle']);
+    expect(refs('f.m', code)).toEqual(['imports:geom::Circle <- f']);
+  });
+
+  it('calls nothing of the project\'s on a Java object, nor on a class the file imports from Java', () => {
+    const code = `function f(x)
+    import java.util.ArrayList
+    m = javax.swing.table.DefaultTableModel();
+    m.setRowCount(0);
+    getValueAt(m, 1, 2);
+    al = ArrayList();
+    al.add(x);
+    n = ArrayList.valueOf(x);
+    s = Shape();
+    s.area();
+end
+function g()
+    q = ArrayList;
+end
+`;
+    expect(refs('f.m', code)).toEqual([
+      // The function as written, on a Java object: no class of the project's.
+      'calls:getValueAt <- f',
+      'calls:Shape <- f',
+      'calls:Shape::area <- f',
+    ]);
+    // Without the import, ArrayList is a name like any other.
+    expect(refs('g.m', 'function g()\nq = ArrayList();\nend\n')).toEqual(['calls:ArrayList <- g']);
   });
 });
 
