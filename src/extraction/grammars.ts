@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { ExtractionError, Language } from '../types';
+import { maskMatlabBlockComments, OCTAVE_KEYWORD_LINE } from './languages/matlab-syntax';
 
 export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
 
@@ -645,47 +646,77 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
 }
 
 /**
- * Line shapes only Objective-C (or C) writes in a `.m` file: a preprocessor
- * directive or an `@`-keyword at the start of a line, or a `- (void)foo` /
- * `+ (id)bar` method header. MATLAB has no `#` directives (Octave's `#`
- * comments are followed by a space or text, never a directive word), and its
- * `@` only starts a function handle (`@(x) …`, `@name`).
+ * Line shapes only Objective-C (or C) writes in a `.m` file: an `@`-keyword
+ * at the start of a line, or a preprocessor directive that opens or defines
+ * something — `#` directly followed by the directive word, or spaced
+ * (`#  ifdef X`) for the words no comment would open with. MATLAB has no `#`
+ * at all, and its `@` only starts a function handle (`@(x) …`, `@name`). An
+ * Objective-C method header (`- (void)foo`) is no signal of its own: it only
+ * ever sits under an `@implementation` / `@interface`, and a MATLAB matrix
+ * row reads the same (`-(b) c];`).
  */
 const OBJC_M_SIGNAL =
-  /^[ \t]*(?:#[ \t]*(?:import|include|define|if|ifdef|ifndef|pragma|undef)\b|@(?:interface|implementation|protocol|end|class|property|synthesize|import)\b|[-+][ \t]*\([^)\n]*\)[ \t]*[A-Za-z_])/m;
+  /^[ \t]*(?:#(?:import|include|define|if|ifdef|ifndef|pragma|undef)\b|#[ \t]+(?:(?:import|include)[ \t]*[<"]|(?:ifdef|ifndef|elif|pragma|undef)\b)|@(?:interface|implementation|protocol|end|class|property|synthesize|import)\b)/m;
 
 /**
- * Line shapes only MATLAB writes: a `function` or `classdef` header, a `%`
- * comment, a bare `end` closing a block, a `...` line continuation, or a
- * `clc` / `clear` / `close all` script preamble. Each is anchored at a line
- * start, where Objective-C would put a statement, a declaration or a `//`
- * comment.
+ * A directive line an Octave comment can read the same as: a spaced word that
+ * is also plain English (`#  define X 1` in C, `# define the grid`), or one
+ * that only continues or annotates a conditional (`#else`, `#endif`,
+ * `#error …`, `#line 10` in C, `#line up the data`). Objective-C evidence only
+ * when the rest of the file is C-shaped or empty — see looksLikeMatlab.
  */
-const MATLAB_SIGNAL =
-  /^[ \t]*(?:function\b[^(\n{]*(?:\(|$|=)|classdef\b|%|end[ \t]*(?:[;%].*)?$|(?:clc|clear|close[ \t]+all)\b)|\.\.\.[ \t]*$/m;
+const AMBIGUOUS_DIRECTIVE_LINE =
+  /^[ \t]*#(?:[ \t]+(?:define|if|else|endif|error|warning|line|import|include)|[ \t]*(?:elif|else|endif|error|warning|line))\b.*$/gm;
+
+/**
+ * Line shapes only MATLAB writes, and no C file would: a `function` or
+ * `classdef` header, or a `clc` / `clear` / `close all` script preamble.
+ */
+const MATLAB_SIGNAL = /^[ \t]*(?:function\b[^(\n{]*(?:\(|$|=)|classdef\b|(?:clc|clear|close[ \t]+all)\b)/m;
+
+/**
+ * Line shapes MATLAB writes that a C file might too, in a stray line: a `%`
+ * comment, a bare `end` closing a block, a `...` line continuation — and
+ * Octave's keywords (OCTAVE_KEYWORD_LINE: an Octave file is MATLAB-family,
+ * though read as nothing; see the MATLAB extractor). They decide only a file
+ * with no C declaration in it.
+ */
+const MATLAB_WEAK_SIGNAL = /^[ \t]*(?:%|end[ \t]*(?:[;%].*)?$)|\.\.\.[ \t]*$/m;
 
 /**
  * C declarations at a line start — a storage class or a scalar type before a
- * name, or `type name(…) {` — which a `.m` holding plain C (no `#include`)
- * would still have and MATLAB never writes.
+ * name, a `struct` / `union` declaring something (`struct s` alone on its
+ * line is MATLAB command syntax), or a function definition opening its body
+ * on the same line.
  */
 const C_DECLARATION_SIGNAL =
-  /^[ \t]*(?:(?:static|extern|typedef|void|int|char|float|long|short|unsigned|signed|const|struct|union)[ \t]+[A-Za-z_*]|[A-Za-z_]\w*[ \t*]+[A-Za-z_]\w*[ \t]*\([^)\n]*\)[ \t]*\{)/m;
+  /^[ \t]*(?:(?:static|extern|typedef|void|int|char|float|long|short|unsigned|signed|const)[ \t]+[A-Za-z_*]|(?:struct|union)[ \t]+(?:\{|[A-Za-z_]\w*[ \t]*[{*;A-Za-z_])|[A-Za-z_]\w*[ \t*]+[A-Za-z_]\w*[ \t]*\([^)\n]*\)[ \t]*\{)/m;
+
+/** C comments starting a line — a `//` line, a slash-star block — never MATLAB at a line start. */
+const C_LINE_COMMENT = /^[ \t]*(?:\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
 
 /**
  * Whether a `.m` file is MATLAB rather than Objective-C. An Objective-C
  * shape anywhere keeps it Objective-C — and an Objective-C implementation
  * file always has one, an `#import` if nothing else. Otherwise a MATLAB-only
- * shape makes it MATLAB; so does any other content that is not C
- * declarations, since a MATLAB script may be nothing but statements
- * (`c_obs = zeros(100, 100, 100);`). An empty file stays Objective-C. Per
- * file, so a full index and a sync of one edited file always agree.
+ * shape makes it MATLAB; a C declaration keeps it Objective-C (over a stray
+ * `%` line, `end;` or `...` in plain C); a weaker MATLAB shape makes it
+ * MATLAB; and so does any other content left once C comments and the
+ * directives a comment may read as are set aside, since a MATLAB script may
+ * be nothing but statements (`c_obs = zeros(100, 100, 100);`). An empty,
+ * comment-only or directive-only file stays Objective-C. Text inside a MATLAB
+ * `%{ … %}` block comment is no evidence either way (read with the
+ * extractor's nesting rule). Per file, so a full index and a sync of one
+ * edited file always agree.
  */
 export function looksLikeMatlab(source: string): boolean {
-  const head = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
-  if (OBJC_M_SIGNAL.test(head)) return false;
-  if (MATLAB_SIGNAL.test(head)) return true;
-  return !C_DECLARATION_SIGNAL.test(head) && /\S/.test(head);
+  const text = maskMatlabBlockComments(source.charCodeAt(0) === 0xfeff ? source.slice(1) : source);
+  if (OBJC_M_SIGNAL.test(text)) return false;
+  if (MATLAB_SIGNAL.test(text)) return true;
+  if (C_DECLARATION_SIGNAL.test(text)) return false;
+  const code = text.replace(C_LINE_COMMENT, '');
+  if (MATLAB_WEAK_SIGNAL.test(code) || OCTAVE_KEYWORD_LINE.test(code)) return true;
+  return /\S/.test(code.replace(AMBIGUOUS_DIRECTIVE_LINE, ''));
 }
 
 /** A PHP open tag: `<?php` in any case, or the short echo `<?=` (never `<?xml`). */

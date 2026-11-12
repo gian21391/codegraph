@@ -30,6 +30,7 @@ import { escapeRegExp } from '../utils';
 import { cFnPointerDispatchEdges } from './c-fnptr-synthesizer';
 import { goframeRouteEdges } from './goframe-synthesizer';
 import { goFuncFieldEdges } from './go-func-field-synthesizer';
+import { isMatlabClassFolderFile, matlabClassFolderContainsEdges } from './matlab-class-folders';
 import { expoRouterReturnEdges } from './expo-router-synthesizer';
 import { nextLinkEdges, nextProxyEdges } from './next-router-synthesizer';
 import { constAliasEdges, hasConstAliasShape } from './const-alias-synthesizer';
@@ -5318,6 +5319,9 @@ export function hasSynthesisPattern(filePath: string, content: string): boolean 
   // Every Go file: besides the declarations the interface passes read, a call
   // through a func field, or a function put in one, can sit in any of them.
   if (/\.go$/.test(filePath)) return true;
+  // A MATLAB class folder's files: a method file added, or the classdef its
+  // methods hang from, changes which methods the class contains.
+  if (isMatlabClassFolderFile(filePath)) return true;
   if (hasCrossTierPattern(content) || hasTestRequestPattern(filePath, content) || hasTauriPattern(filePath, content)) return true;
   if (/\b(?:render|build|setState|defineStore|createStore|createApi|Store|href|sendEvent|sendEventWithName)\b|<\/|\/>/.test(content)) return true;
   // A wrapper renders the component it wraps (jsxEdges), in a file with no markup of its own too.
@@ -5438,6 +5442,8 @@ export const SYNTH_PASSES: SynthPassDef[] = [
   { name: 'svelteKitPageEdges', gate: (has) => has('svelte'), run: (_q, c, y) => svelteKitPageComponentEdges(c, y) },
   { name: 'svelteKitLinkEdges', gate: (has) => has('svelte'), run: (_q, c, y) => svelteKitLinkEdges(c, y) },
   { name: 'nixOptionEdges', gate: (has) => has('nix'), run: (q, _c, y) => nixOptionPathEdges(q, y) },
+  // `@Cls/m.m` — a class folder's method file is the folder's class's member (structural, no provenance).
+  { name: 'matlabClassFolderEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabClassFolderContainsEdges(q, y) },
 ];
 
 /**

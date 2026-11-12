@@ -812,14 +812,15 @@ function containersOf(cg: CodeGraph, nodes: readonly Node[]): Map<string, Node> 
   const out = new Map<string, Node>();
   if (memberIds.length === 0) return out;
 
+  // A member can have several containers: a Go method or a MATLAB class-folder
+  // method is contained by its file and, across files, by its type. The type
+  // wins whichever edge comes first.
   const edges = cg.getIncomingEdgesTo(memberIds, ['contains']);
-  const byMember = new Map<string, string>();
-  for (const edge of edges) if (!byMember.has(edge.target)) byMember.set(edge.target, edge.source);
-
-  const containerNodes = cg.getNodesByIds([...new Set(byMember.values())]);
-  for (const [memberId, containerId] of byMember) {
-    const container = containerNodes.get(containerId);
-    if (container && CONTAINER_KINDS.has(container.kind)) out.set(memberId, container);
+  const containerNodes = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
+  for (const edge of edges) {
+    if (out.has(edge.target)) continue;
+    const container = containerNodes.get(edge.source);
+    if (container && CONTAINER_KINDS.has(container.kind)) out.set(edge.target, container);
   }
   return out;
 }

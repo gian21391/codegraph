@@ -65,6 +65,7 @@ import { lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
+import { matchMatlabReference } from './matlab-lookup';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
 import { builtinModules } from 'module';
@@ -1284,6 +1285,8 @@ export class ReferenceResolver {
       filePath: ref.filePath || this.getFilePathFromNodeId(ref.fromNodeId),
       language: ref.language || this.getLanguageFromNodeId(ref.fromNodeId),
       rowId: ref.rowId,
+      // The name a MATLAB function-syntax call was written with (`Cls::m` ← `m`).
+      candidates: ref.candidates,
     }));
 
     const total = refs.length;
@@ -1862,6 +1865,12 @@ export class ReferenceResolver {
       return this.gateLanguage(matchVbPathCall(ref, this.context, (name) => isStdMethodName('vbnet', name)), ref);
     }
 
+    // A MATLAB name is what MATLAB's own lookup order reaches from where it is
+    // written (see ./matlab-lookup), or a built-in or toolbox function: no
+    // framework, import or name strategy may guess past it — every MATLAB
+    // project has a dozen local `parseInputs` another file cannot call.
+    if (ref.language === 'matlab') return this.gateLanguage(matchMatlabReference(ref, this.context), ref);
+
     // The last name of a TypeScript type written qualified (`React.ReactNode`,
     // `TChat.ChatMessage`) is a member of what its qualifier names, which no
     // framework, import or name strategy may guess past by the name alone.
@@ -2185,6 +2194,9 @@ export class ReferenceResolver {
           // deliberately NOT resurrected for the same reason.
           refName: ref.original.referenceName,
           ...(ref.original.referenceKind !== kind ? { refKind: ref.original.referenceKind } : {}),
+          // A MATLAB function-syntax call's written name (`Cls::m` ← `m`, in
+          // its candidates), which its resolution reads: part of the ref text.
+          ...(ref.original.language === 'matlab' && ref.original.candidates ? { refCandidates: ref.original.candidates } : {}),
           // Uniform marker for function-as-value edges (#756), regardless of
           // which strategy resolved them (import vs matchFunctionRef) — lets
           // tooling label "callback registration" and lets validation diff
@@ -2489,6 +2501,7 @@ export class ReferenceResolver {
         filePath: raw.filePath || this.getFilePathFromNodeId(raw.fromNodeId),
         language: raw.language || this.getLanguageFromNodeId(raw.fromNodeId),
         rowId: raw.rowId,
+        candidates: raw.candidates,
       };
       const result = this.resolveOneTimed(ref);
       if (result) {
@@ -2609,6 +2622,7 @@ export class ReferenceResolver {
         filePath: raw.filePath || this.getFilePathFromNodeId(raw.fromNodeId),
         language: raw.language || this.getLanguageFromNodeId(raw.fromNodeId),
         rowId: raw.rowId,
+        candidates: raw.candidates,
       };
       const result = this.resolveOneTimed(ref);
       if (result) {
@@ -4759,8 +4773,11 @@ export class ReferenceResolver {
    */
   private gateFrameworkLanguage(result: ResolvedRef | null, ref: UnresolvedRef): ResolvedRef | null {
     if (!result) return result;
-    if (ref.referenceKind === 'calls') return result;
     const tgt = this.getLanguageFromNodeId(result.targetNodeId);
+    // No framework bridges into MATLAB: a Python view's `Robot()` is never a
+    // MATLAB classdef, whatever a framework's name lookup found.
+    if ((tgt as string) === 'matlab' && (ref.language as string) !== 'matlab') return null;
+    if (ref.referenceKind === 'calls') return result;
     // Package imports cannot target prose found by a framework's name lookup.
     if (ref.referenceKind === 'imports' && (tgt as string) === 'markdown' && (ref.language as string) !== 'markdown') return null;
     if (tgt && ref.language && crossesCodeBoundary(tgt, ref.language)) return null;

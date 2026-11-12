@@ -28,7 +28,6 @@ import { leavesWorkspaceRoot } from './workspace-packages';
 import { isMinifiedContent } from '../extraction/generated-detection';
 import { getCargoWorkspaceCrateMap, parsePackageName, parseTargetPaths, parseWorkspaceMembers } from './frameworks/cargo-workspace';
 import { blankRustCode, readRustScopes, rustBindingAt, rustInnerBlockAt, rustBoundsOf, rustFnAt, rustImplAt, splitRustTopLevel, type RustBinding, type RustPatternSite, type RustScopes } from './rust-scopes';
-import { matchMatlabReference } from './matlab-lookup';
 /**
  * Ceiling on how many same-named definitions a FUZZY name-match strategy will
  * score. A name defined more times than this is "ubiquitous" — a method/symbol
@@ -197,7 +196,7 @@ const CODE_FAMILY: Record<string, string> = {
   ...LANGUAGE_FAMILY,
   python: 'python', go: 'go', rust: 'rust', php: 'php', ruby: 'ruby', dart: 'dart',
   lua: 'lua', luau: 'lua', r: 'r', erlang: 'erlang', pascal: 'pascal', solidity: 'solidity',
-  nix: 'nix', cobol: 'cobol',
+  nix: 'nix', cobol: 'cobol', matlab: 'matlab',
 };
 
 export function crossesCodeBoundary(a: string, b: string): boolean {
@@ -32408,11 +32407,6 @@ function matchReferenceInner(
   ref: UnresolvedRef,
   context: ResolutionContext
 ): ResolvedRef | null {
-  // MATLAB looks a name up in its own fixed order (see matlab-lookup.ts); what
-  // that order does not reach is a built-in or a toolbox function, never a
-  // namesake elsewhere in the project.
-  if (ref.language === 'matlab') return matchMatlabReference(ref, context);
-
   // Function-as-value refs (#756) resolve ONLY through the dedicated matcher —
   // never the fuzzy/qualified fallthrough below (a wrong callback edge is
   // worse than none).

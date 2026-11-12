@@ -151,6 +151,7 @@ end
     c.area();
     s = struct();
     s.items(1);
+    x.items(1);
     cellfun(@transform, {a, b});
     setup_paths
 end
@@ -165,12 +166,14 @@ end
       'calls:geom::Circle::area', // the variable holds what geom.Circle(…) made
       'function_ref:transform',
       'calls:setup_paths',
-      'imports:geom',
     ]));
+    // `import geom.*` names a package, which no node stands for.
+    expect(refs.filter((r) => r.startsWith('imports:'))).toEqual([]);
     // Variables are indexed, not called.
     expect(refs).not.toContain('calls:data');
     expect(refs).not.toContain('calls:x');
-    expect(refs).toContain('calls:s.items'); // left to the resolver, which wants an unambiguous method
+    expect(refs).toContain('calls:x.items'); // left to the resolver, which wants an unambiguous method
+    expect(refs).not.toContain('calls:s.items'); // s = struct(): a field's value
     expect(result.nodes.find((n) => n.kind === 'import')?.name).toBe('geom.*');
   });
 });

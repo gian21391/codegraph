@@ -60,6 +60,7 @@ import { describeSynthesizedHop } from '../graph/synthesized-hop';
 import { callSiteLines, formatCallSiteLines } from '../graph/call-sites';
 import { DEFAULT_IMPACT_MAX_EDGES, DEFAULT_IMPACT_MAX_NODES, type CallSiteRow } from '../graph/traversal';
 import { isCopybookInclude, MAX_COPYBOOK_INCLUDES, type NamedCopybook } from '../graph/cobol-copybooks';
+import { MATLAB_CLASS_FOLDER_CONTAINS } from '../resolution/matlab-class-folders';
 import { groupFilesByPackage, packageGroupTitle, packageListingTitle } from '../graph/owning-package';
 import {
   findAllSymbols,
@@ -152,6 +153,9 @@ export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
 import { resolve as resolvePath, relative as relativePath, dirname } from 'path';
+
+/** A container symbol's member outline for `codegraph_node`. */
+interface ContainerOutline { text: string; crossFile: boolean }
 
 /** Maximum output length to prevent context bloat (characters) */
 const MAX_OUTPUT_LENGTH = 15000;
@@ -4760,10 +4764,27 @@ export class ToolHandler {
       const typeTokens = tokens.filter(
         (o) => /^[A-Z][A-Za-z0-9]{3,}/.test(o) && !projectNameTokens.has(normalizeNameToken(o)),
       );
-      /** Whether a qualified-name scope of the node is a type the query names (`SerialLink::fdyn` for "SerialLink fdyn"). */
-      const isMemberOfNamedType = (n: Node): boolean => {
-        const scopes = n.qualifiedName.toLowerCase().split('::').slice(0, -1);
-        return scopes.length > 0 && typeTokens.some((ct) => scopes.includes(ct.toLowerCase()));
+      const lcTypeTokens = new Set(typeTokens.map((ct) => ct.toLowerCase()));
+      /**
+       * The ids of `nodes` that are methods of a MATLAB class folder whose class
+       * the query names — the class `contains` them through the class-folder
+       * pass's edge. One batched edge read and one node read.
+       */
+      const classFolderMethodsOfNamedTypes = (nodes: readonly Node[]): Set<string> => {
+        const out = new Set<string>();
+        if (nodes.length === 0 || lcTypeTokens.size === 0) return out;
+        try {
+          const edges = cg
+            .getIncomingEdgesTo(nodes.map((n) => n.id), ['contains'])
+            .filter((e) => e.metadata?.synthesizedBy === MATLAB_CLASS_FOLDER_CONTAINS);
+          if (edges.length === 0) return out;
+          const owners = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
+          for (const e of edges) {
+            const owner = owners.get(e.source);
+            if (owner && lcTypeTokens.has(owner.name.toLowerCase())) out.add(e.target);
+          }
+        } catch { /* a probe failure corroborates nothing */ }
+        return out;
       };
       const inNamedContext = (n: Node) =>
         typeTokens.some((ct) => {
@@ -4869,13 +4890,16 @@ export class ToolHandler {
         // the guard uniformly to both branches below, including the >3-def
         // single-pick fallback — an uncorroborated bare `run` must not tier its
         // most-substantive namesake any more than a 1-def `check` may.
-        // A member of a type the query also names corroborates too: in
-        // "SerialLink fdyn accel rne" each is SerialLink's own method, but a
-        // MATLAB class folder gives every method a file of its own
-        // (`@SerialLink/fdyn.m`), where the class itself is never declared, so
-        // no other query token is named beside it.
+        // A MATLAB class-folder method of a class the query also names
+        // corroborates too, read from the graph ("SerialLink fdyn accel rne"):
+        // the folder keeps each method in a file of its own, where no other
+        // query token is named beside it. Only that edge — a capitalised first
+        // word ("Trace how …") must not corroborate a Go method another file
+        // of its package declares the receiver of.
         if (!isPreciseToken(t)) {
-          cands = cands.filter((n) => coNamedInFile(t, n.filePath) || isMemberOfNamedType(n));
+          const unnamedIds = new Set(cands.filter((n) => !coNamedInFile(t, n.filePath)).map((n) => n.id));
+          const ofNamedClass = classFolderMethodsOfNamedTypes(cands.filter((n) => unnamedIds.has(n.id)));
+          cands = cands.filter((n) => !unnamedIds.has(n.id) || ofNamedClass.has(n.id));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
@@ -8445,7 +8469,7 @@ export class ToolHandler {
       return this.renderStaleNodeSection(cg, node, includeCode);
     }
     let code: string | null = null;
-    let outline: string | null = null;
+    let outline: ContainerOutline | null = null;
     if (includeCode) {
       // For container symbols (class/interface/struct/…), the full body is the
       // sum of every method body — a wall of source. Return a structural outline
@@ -9132,25 +9156,32 @@ export class ToolHandler {
    * Build a compact structural outline of a container symbol from its
    * indexed children (methods, fields, properties, …) — name, kind,
    * line number, and signature — so the agent gets the shape of a class
-   * without the full source of every method. Returns '' when the container
-   * has no indexed children, so the caller can fall back to full source.
+   * without the full source of every method. Returns null when the container
+   * has no indexed children, so the caller can fall back to full source;
+   * `crossFile` is whether a member lives in another file than the container.
    */
-  private buildContainerOutline(cg: CodeGraph, node: Node): string {
+  private buildContainerOutline(cg: CodeGraph, node: Node): ContainerOutline | null {
+    // A member another file declares (a Go method beside its struct's file, a
+    // MATLAB class-folder method) is listed after the container's own, by its
+    // own file and line — its line means nothing in the container's file.
+    const elsewhere = (c: Node) => (c.filePath === node.filePath ? 0 : 1);
     const children = cg.getChildren(node.id)
       .filter(c => c.kind !== 'import' && c.kind !== 'export')
-      .sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
-    if (children.length === 0) return '';
+      .sort((a, b) => elsewhere(a) - elsewhere(b) || (elsewhere(a) ? a.filePath.localeCompare(b.filePath) : 0)
+        || (a.startLine ?? 0) - (b.startLine ?? 0));
+    if (children.length === 0) return null;
 
     const lines = [`**Members (${children.length}):**`, ''];
     for (const c of children) {
-      const loc = c.startLine ? `:${c.startLine}` : '';
+      const line = c.startLine ? `:${c.startLine}` : '';
+      const loc = c.filePath === node.filePath ? line : ` in \`${c.filePath}${line}\``;
       const sig = c.signature ? ` — \`${c.signature}\`` : '';
       lines.push(`- ${c.name} (${c.kind})${loc}${sig}`);
     }
-    return lines.join('\n');
+    return { text: lines.join('\n'), crossFile: children.some((c) => elsewhere(c) === 1) };
   }
 
-  private formatNodeDetails(node: Node, code: string | null, outline?: string | null): string {
+  private formatNodeDetails(node: Node, code: string | null, outline?: ContainerOutline | null): string {
     const location = node.startLine ? `:${node.startLine}` : '';
     const lines: string[] = [
       `**${node.name}** (${node.kind})`,
@@ -9168,8 +9199,11 @@ export class ToolHandler {
     }
 
     if (outline) {
-      lines.push('', outline, '',
-        `> Structural outline only. Read \`${node.filePath}\` or call codegraph_node on a specific member for its body.`);
+      // Members kept in other files are listed with their file; reading the
+      // container's own file would not show them.
+      lines.push('', outline.text, '', outline.crossFile
+        ? `> Structural outline only. A member listed with a file lives in that file — call codegraph_node on a specific member for its body.`
+        : `> Structural outline only. Read \`${node.filePath}\` or call codegraph_node on a specific member for its body.`);
     } else if (code) {
       // Line-numbered (cat -n style, like codegraph_explore and Read) so the
       // agent can cite/edit exact lines without re-Reading the file for them.

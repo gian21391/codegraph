@@ -26,6 +26,7 @@ export function resurrectRefFromDroppedEdge(
   const refName = e.metadata?.refName;
   if (typeof refName !== 'string' || refName.length === 0) return null;
   const refKind = typeof e.metadata?.refKind === 'string' ? (e.metadata.refKind as ReferenceKind) : e.kind;
+  const candidates = e.metadata?.refCandidates;
   return {
     fromNodeId: e.source,
     referenceName: refName,
@@ -34,5 +35,6 @@ export function resurrectRefFromDroppedEdge(
     column: e.column ?? 0,
     filePath: e.sourceFilePath,
     language: e.sourceLanguage,
+    ...(Array.isArray(candidates) && candidates.every((c) => typeof c === 'string') ? { candidates: candidates as string[] } : {}),
   };
 }
