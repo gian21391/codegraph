@@ -22,12 +22,13 @@
 import type { Edge, Node } from '../types';
 import type { QueryBuilder } from '../db/queries';
 import type { MaybeYield } from './cooperative-yield';
+import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 
 export const MATLAB_CLASS_FOLDER_CONTAINS = 'matlab-class-folder';
 
-/** Whether a file sits directly in a MATLAB class folder (`…/@Cls/m.m`). */
+/** Whether a file sits directly in a MATLAB class folder (`…/@Cls/m.m`, or `m.M`) under a name MATLAB can call. */
 export function isMatlabClassFolderFile(filePath: string): boolean {
-  return /(?:^|\/)@[^/]+\/[^/]+\.m$/.test(filePath);
+  return matlabFileStem(filePath) !== null && matlabPathScope(filePath).classFolder !== undefined;
 }
 
 export async function matlabClassFolderContainsEdges(queries: QueryBuilder, onYield: MaybeYield): Promise<Edge[]> {
@@ -38,18 +39,18 @@ export async function matlabClassFolderContainsEdges(queries: QueryBuilder, onYi
     if ((++scanned & 63) === 0) await onYield();
     if (!isMatlabClassFolderFile(method.filePath)) continue;
     const dir = method.filePath.slice(0, method.filePath.lastIndexOf('/'));
-    const className = dir.slice(dir.lastIndexOf('/') + 2);
-    const classFile = `${dir}/${className}.m`;
-    // The classdef file's own methods are contained by extraction.
-    if (method.filePath === classFile) continue;
+    const className = matlabPathScope(method.filePath).classFolder!;
     let cls = classOf.get(dir);
     if (cls === undefined) {
-      cls = queries
-        .getNodesByFileAndName(classFile, className)
+      // The class file is `Cls.m`, or `Cls.M`.
+      cls = matlabFileNames(className)
+        .flatMap((fileName) => queries.getNodesByFileAndName(`${dir}/${fileName}`, className))
         .find((n) => n.language === 'matlab' && (n.kind === 'class' || n.kind === 'enum')) ?? null;
       classOf.set(dir, cls);
     }
-    if (!cls || method.qualifiedName !== `${cls.qualifiedName}::${method.name}`) continue;
+    // The classdef file's own methods are contained by extraction.
+    if (!cls || method.filePath === cls.filePath) continue;
+    if (method.qualifiedName !== `${cls.qualifiedName}::${method.name}`) continue;
     edges.push({
       source: cls.id,
       target: method.id,

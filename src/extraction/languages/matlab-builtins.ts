@@ -1,4 +1,4 @@
-import { matlabPathScope } from './matlab-path';
+import { matlabFileNames, matlabFileStem, matlabPathScope } from './matlab-path';
 import { referenceNameTail } from '../../db/reference-tail';
 
 /**
@@ -16,8 +16,8 @@ import { referenceNameTail } from '../../db/reference-tail';
  * A bare call is discarded by its name alone: `numel(obj)` on a method's own
  * object is `Cls::numel` (a class's overload), and so is `set(c, …)` on a
  * variable the function says holds a class, discarded only when no symbol
- * carries the name either (see matlabUnmatchableKeys); `@size` is a function
- * reference.
+ * carries the name either (see matlabUnmatchableKeys). A handle to one
+ * (`@isempty`, `cellfun(@size, …)`) goes the same way as its call.
  *
  * What is discarded is gone for good: a sync that later adds `normpdf.m` links
  * the calls in the files it re-indexes, but not those in files it leaves alone,
@@ -120,9 +120,14 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'featureInputLayer', 'dlnetwork', 'adamupdate', 'mapminmax', 'radbas', 'addMF', 'sim', 'matlabFunction',
 ]);
 
-/** Whether `ref` is a bare MATLAB call of a built-in's name (`plot(x)`, not `Cls::plot`, `obj.plot` or `@plot`). */
+/** Whether a reference kind names a bare name the way a call does: a call (`plot(x)`) or a handle (`@plot`). */
+function callsByName(kind: string): boolean {
+  return kind === 'calls' || kind === 'function_ref';
+}
+
+/** Whether `ref` is a bare MATLAB call of a built-in's name, or a handle to one (`plot(x)`, `@plot` — not `Cls::plot` or `obj.plot`). */
 export function isMatlabBuiltinCall(ref: { referenceName: string; referenceKind: string; language?: string }): boolean {
-  return ref.language === 'matlab' && ref.referenceKind === 'calls' && MATLAB_BUILTINS.has(ref.referenceName);
+  return ref.language === 'matlab' && callsByName(ref.referenceKind) && MATLAB_BUILTINS.has(ref.referenceName);
 }
 
 /**
@@ -136,16 +141,16 @@ export function isMatlabBuiltinCall(ref: { referenceName: string; referenceKind:
  */
 export function addMatlabReachableNames(paths: Iterable<string>, into: Set<string>): void {
   for (const p of paths) {
-    if (!p.endsWith('.m')) continue;
-    const m = /(?:^|[\\/])([A-Za-z][A-Za-z0-9_]*)\.m$/.exec(p);
-    if (!m) continue;
+    const stem = matlabFileStem(p);
+    if (!stem) continue;
     const scope = matlabPathScope(p);
-    if (scope.packages.length === 0) into.add(scope.classFolder ?? m[1]!);
+    if (scope.packages.length === 0) into.add(scope.classFolder ?? stem);
   }
 }
 
 /**
- * `refs` of a MATLAB file without its bare built-in calls that nothing in the
+ * `refs` of a MATLAB file without its bare built-in calls (and handles to
+ * built-ins, `@isempty`) that nothing in the
  * project could answer — no function or class of the file itself (`defined`,
  * the file's nodes) and no `.m` file of that name (`reachable`) — so that they
  * are never written at all. A file that imports anything keeps them all: an
@@ -165,7 +170,7 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i]!;
     const name = ref.referenceName;
-    if (ref.referenceKind === 'calls' && MATLAB_BUILTINS.has(name) && !reachable.has(name)) {
+    if (callsByName(ref.referenceKind) && MATLAB_BUILTINS.has(name) && !reachable.has(name)) {
       if (!own) {
         if (defined.some((n) => n.kind === 'import' && !isJavaImport(n.name))) return refs;
         own = new Set(defined.map((n) => n.name));
@@ -229,7 +234,7 @@ export function matlabUnmatchableKeys(ref: {
   const name = ref.referenceName;
   const tail = ref.nameTail ?? referenceNameTail(name, ref.referenceKind);
   const names = tail === name ? [name] : [name, tail];
-  return [...names, ...names.map((n) => `${n}.m`)];
+  return [...names, ...names.flatMap(matlabFileNames)];
 }
 
 /** Whether a MATLAB reference name is a member or qualified one (`v.f`, `pkg::f`), not a bare name. */

@@ -65,7 +65,8 @@ import { lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
-import { isMatlabPathScript, matchMatlabReference } from './matlab-lookup';
+import { clearMatlabLookupMemos, isMatlabPathScript, matchMatlabReference } from './matlab-lookup';
+import { matlabFileNames, matlabFileStem } from '../extraction/languages/matlab-path';
 import { isDottedMatlabName, isMatlabBuiltinCall, matlabUnmatchableKeys, writtenWithArguments } from '../extraction/languages/matlab-builtins';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
@@ -773,6 +774,7 @@ export class ReferenceResolver {
       clearCFeatureVariantMemos(this.context);
       clearAmbientModuleMemos(this.context);
       clearDeclaredDependencies(this.context);
+      clearMatlabLookupMemos(this.context);
     }
   }
 
@@ -1083,16 +1085,6 @@ export class ReferenceResolver {
         if (cached !== undefined) return cached;
         const result = this.queries.getNodesByLowerName(lowerName);
         this.lowerNameCache.set(lowerName, result);
-        return result;
-      },
-
-      getNodesByLowerNames: (lowerNames: readonly string[]) => {
-        // A key no single name is: a name holds no NUL.
-        const key = lowerNames.join('\0');
-        const cached = this.lowerNameCache.get(key);
-        if (cached !== undefined) return cached;
-        const result = this.queries.getNodesByLowerNames(lowerNames);
-        this.lowerNameCache.set(key, result);
         return result;
       },
 
@@ -1856,7 +1848,7 @@ export class ReferenceResolver {
       isJsPathImportRef(ref) ||
       this.hasAnyPossibleMatch(existenceName) ||
       // A MATLAB script has no symbol but its file, named `setup_paths.m`.
-      (ref.language === 'matlab' && this.knownNames?.has(`${existenceName}.m`) === true) ||
+      (ref.language === 'matlab' && matlabFileNames(existenceName).some((n) => this.knownNames?.has(n) === true)) ||
       // PHP, Pascal, CFML, COBOL and VB.NET names ignore case: `formatprice()`
       // calls `FormatPrice`, which the exact-name set never lists.
       (CASE_INSENSITIVE_LANGUAGES.has(ref.language) && this.hasAnyPossibleMatchIgnoringCase(existenceName)) ||
@@ -2359,9 +2351,14 @@ export class ReferenceResolver {
       }
     }
     if (pending.length === 0) return discarded;
-    const carried = this.queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
+    // The names every node carries, read when the pass began, after its
+    // definitions were stored (nothing adds a node while it resolves). A pass
+    // whose caches were dropped since (a batched pass's deferred refs, between
+    // batches the workers resolve) asks the index.
+    const known = this.knownNames;
+    const carried = known ? null : this.queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
     for (const { ref, keys } of pending) {
-      if (keys.some((k) => carried.has(k))) continue;
+      if (keys.some((k) => (known ?? carried!).has(k))) continue;
       const name = ref.referenceName;
       if (isDottedMatlabName(name)) discarded.add(ref);
       else if (!writtenWithArguments(this.context.getFileLines?.(ref.filePath)?.[ref.line - 1], ref.column, name)) discarded.add(ref);
@@ -3596,6 +3593,22 @@ export class ReferenceResolver {
   }
 
   /**
+   * The files among a sync's `changedFilePaths` whose script verdict
+   * {@link reopenMatlabScriptRuns} has to settle: the MATLAB files, and an
+   * Objective-C `.m` that MATLAB code still calls into (one that was a MATLAB
+   * script before this sync re-read it) — one indexed read per `.m` path, so
+   * an Objective-C project's sync does no more.
+   */
+  matlabScriptCandidates(changedFilePaths: readonly string[]): string[] {
+    return changedFilePaths.filter((p) => {
+      if (matlabFileStem(p) === null) return false;
+      const language = this.queries.getFileByPath(p)?.language;
+      if (language === 'matlab') return true;
+      return language !== undefined && this.queries.hasCrossFileIncomingEdgeFromLanguage(`file:${p}`, p, 'matlab');
+    });
+  }
+
+  /**
    * Put back in the pending set the MATLAB calls a sync's `.m` files may now
    * answer differently because one became a script MATLAB runs by its name,
    * or stopped being one (a function went in, its code went out leaving only
@@ -3606,22 +3619,24 @@ export class ReferenceResolver {
    * references they were; the calls parked as failed under the name of one
    * that is a script (`setup_paths` for `setup_paths.m`) are retried. Calls
    * in `changedFilePaths` are left alone: the sync resolved them already.
-   * Returns the number of references put back.
+   * `matlabFilePaths` are the ones {@link matlabScriptCandidates} picks out
+   * of them. Returns the number of references put back.
    */
-  reopenMatlabScriptRuns(changedFilePaths: readonly string[]): number {
+  reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): number {
     const fresh = new Set(changedFilePaths);
     const edgeIds: number[] = [];
     const refs: UnresolvedReference[] = [];
     const stems = new Set<string>();
-    for (const filePath of changedFilePaths) {
-      const stem = /(?:^|\/)([A-Za-z][A-Za-z0-9_]*)\.m$/.exec(filePath)?.[1];
+    for (const filePath of matlabFilePaths) {
+      const stem = matlabFileStem(filePath);
       if (!stem) continue;
       if (isMatlabPathScript(filePath, this.context)) {
         stems.add(stem);
         continue;
       }
-      for (const edge of this.queries.getCrossFileIncomingEdgesWithTarget(filePath)) {
-        if (edge.target !== `file:${filePath}` || edge.sourceLanguage !== 'matlab' || fresh.has(edge.sourceFilePath)) continue;
+      // Only the edges into the file node: a script's calls end there.
+      for (const edge of this.queries.getCrossFileIncomingEdgesFromLanguage(`file:${filePath}`, filePath, 'matlab')) {
+        if (fresh.has(edge.sourceFilePath)) continue;
         const ref = resurrectRefFromDroppedEdge(edge);
         if (!ref) continue;
         edgeIds.push(edge.edgeId);

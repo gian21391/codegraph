@@ -60,7 +60,9 @@ import { describeSynthesizedHop } from '../graph/synthesized-hop';
 import { callSiteLines, formatCallSiteLines } from '../graph/call-sites';
 import { DEFAULT_IMPACT_MAX_EDGES, DEFAULT_IMPACT_MAX_NODES, type CallSiteRow } from '../graph/traversal';
 import { isCopybookInclude, MAX_COPYBOOK_INCLUDES, type NamedCopybook } from '../graph/cobol-copybooks';
-import { MATLAB_CLASS_FOLDER_CONTAINS } from '../resolution/matlab-class-folders';
+import { MATLAB_CLASS_FOLDER_CONTAINS, isMatlabClassFolderFile } from '../resolution/matlab-class-folders';
+import { indexedMatlabScriptLookup, isMatlabScriptFile, type MatlabScriptLookup } from '../graph/matlab-scripts';
+import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { groupFilesByPackage, packageGroupTitle, packageListingTitle } from '../graph/owning-package';
 import {
   findAllSymbols,
@@ -263,25 +265,16 @@ function filesDefiningSymbol(cg: CodeGraph, symbol: string): string[] {
 
 /**
  * The file nodes of the MATLAB scripts named `name` (`setup_paths.m` for
- * `setup_paths`): files that define no function or class, run by their name.
- * A script's only node is its file, so the file is the symbol explore shows.
+ * `setup_paths`): files MATLAB runs by their name, by the resolver's own rule
+ * (../graph/matlab-scripts). A script's only node is its file, so the file is
+ * the symbol explore shows.
  */
-function matlabScriptFilesNamed(cg: CodeGraph, name: string): Node[] {
+function matlabScriptFilesNamed(cg: CodeGraph, name: string, lookup: MatlabScriptLookup): Node[] {
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return [];
   try {
-    return cg.getNodesByName(`${name}.m`).filter((n) => isMatlabScriptFile(cg, n));
+    return matlabFileNames(name).flatMap((fileName) => cg.getNodesByName(fileName).filter((n) => isMatlabScriptFile(n, lookup)));
   } catch {
     return [];
-  }
-}
-
-/** Whether `n` is a MATLAB file node of a script: a file that defines no function or class. */
-function isMatlabScriptFile(cg: CodeGraph, n: Node): boolean {
-  if (n.kind !== 'file' || n.language !== 'matlab') return false;
-  try {
-    return cg.getNodesInFile(n.filePath).every((m) => m.kind === 'file' || m.kind === 'import');
-  } catch {
-    return false;
   }
 }
 
@@ -4443,6 +4436,13 @@ export class ToolHandler {
 
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const projectRoot = cg.getProjectRoot();
+    // The MATLAB-only probes below run where there is MATLAB to probe.
+    let hasMatlab = false;
+    try {
+      hasMatlab = cg.hasFilesOfLanguage('matlab');
+    } catch { /* no probe, no MATLAB answers */ }
+    // One per call: it keeps the nodes it read, so each file's script verdict is worked out once.
+    const matlabScripts = indexedMatlabScriptLookup(cg, projectRoot);
 
     // Resolve adaptive output budget from project size. Falls back to the
     // largest-tier defaults if stats aren't available, which preserves
@@ -4796,10 +4796,12 @@ export class ToolHandler {
        */
       const classFolderMethodsOfNamedTypes = (nodes: readonly Node[]): Set<string> => {
         const out = new Set<string>();
-        if (nodes.length === 0 || lcTypeTokens.size === 0) return out;
+        if (!hasMatlab || lcTypeTokens.size === 0) return out;
+        const methods = nodes.filter((n) => n.language === 'matlab' && n.kind === 'method' && isMatlabClassFolderFile(n.filePath));
+        if (methods.length === 0) return out;
         try {
           const edges = cg
-            .getIncomingEdgesTo(nodes.map((n) => n.id), ['contains'])
+            .getIncomingEdgesTo(methods.map((n) => n.id), ['contains'])
             .filter((e) => e.metadata?.synthesizedBy === MATLAB_CLASS_FOLDER_CONTAINS);
           if (edges.length === 0) return out;
           const owners = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
@@ -4818,6 +4820,7 @@ export class ToolHandler {
        */
       const matlabScriptsRunByNamed = (nodes: readonly Node[], self: string): Set<string> => {
         const out = new Set<string>();
+        if (!hasMatlab) return out;
         const scripts = nodes.filter((n) => n.kind === 'file' && n.language === 'matlab');
         if (scripts.length === 0) return out;
         try {
@@ -4932,7 +4935,7 @@ export class ToolHandler {
         }
         // A MATLAB script has no symbol but its file (`setup_paths.m`): the
         // file is what a name of one asks for, and its code is the body.
-        if (cands.length === 0 && !isQual) cands = matlabScriptFilesNamed(cg, t).filter((n) => !isTestPath(n.filePath));
+        if (cands.length === 0 && !isQual && hasMatlab) cands = matlabScriptFilesNamed(cg, t, matlabScripts).filter((n) => !isTestPath(n.filePath));
         if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
         // (see the NL-stopword guard above). Filtering CANDS (not picks) applies
@@ -4946,9 +4949,10 @@ export class ToolHandler {
         // word ("Trace how …") must not corroborate a Go method another file
         // of its package declares the receiver of.
         if (!isPreciseToken(t)) {
-          const unnamedIds = new Set(cands.filter((n) => !coNamedInFile(t, n.filePath)).map((n) => n.id));
-          const ofNamedClass = classFolderMethodsOfNamedTypes(cands.filter((n) => unnamedIds.has(n.id)));
-          const runByNamed = matlabScriptsRunByNamed(cands.filter((n) => unnamedIds.has(n.id)), t);
+          const unnamed = cands.filter((n) => !coNamedInFile(t, n.filePath));
+          const unnamedIds = new Set(unnamed.map((n) => n.id));
+          const ofNamedClass = classFolderMethodsOfNamedTypes(unnamed);
+          const runByNamed = matlabScriptsRunByNamed(unnamed, t);
           cands = cands.filter((n) => !unnamedIds.has(n.id) || ofNamedClass.has(n.id) || runByNamed.has(n.id));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
@@ -5017,12 +5021,15 @@ export class ToolHandler {
     // A MATLAB script on the flow, or named: its file node is the hop, and the
     // file's code its body, which the gather (symbols, not files) never
     // reaches. Seeded as the agent's own, so its file renders like a function's.
-    for (const id of [...flow.pathNodeIds, ...flow.namedNodeIds]) {
-      if (subgraph.nodes.has(id)) continue;
-      const n = cg.getNode(id);
-      if (!n || !isMatlabScriptFile(cg, n)) continue;
-      subgraph.nodes.set(id, n);
-      namedSeedIds.add(id);
+    const unseeded = hasMatlab ? [...new Set([...flow.pathNodeIds, ...flow.namedNodeIds])].filter((id) => !subgraph.nodes.has(id)) : [];
+    if (unseeded.length > 0) {
+      const found = cg.getNodesByIds(unseeded);
+      for (const id of unseeded) {
+        const n = found.get(id);
+        if (!n || !isMatlabScriptFile(n, matlabScripts)) continue;
+        subgraph.nodes.set(id, n);
+        namedSeedIds.add(id);
+      }
     }
 
     // Step 2: Group nodes by file, score by relevance

@@ -2,7 +2,7 @@ import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { Node, NodeKind } from '../../types';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
-import { matlabPathScope } from './matlab-path';
+import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
 import { JAVA_PACKAGE_ROOTS, MATLAB_BUILTINS, isJavaImport } from './matlab-builtins';
 
@@ -81,17 +81,15 @@ const VALUE_PARENTS = new Set([
   'range',
 ]);
 
+/** Statements whose `condition` is read as a value: `if isReady`, `while keepGoing`, `switch mode`, `case modeA`. */
+const CONDITION_PARENTS = new Set(['if_statement', 'elseif_clause', 'while_statement', 'switch_statement', 'case_clause']);
+
 // ---------------------------------------------------------------------------
 // Small AST helpers
 // ---------------------------------------------------------------------------
 
 function namedChildren(node: SyntaxNode): SyntaxNode[] {
-  const out: SyntaxNode[] = [];
-  for (let i = 0; i < node.namedChildCount; i++) {
-    const c = node.namedChild(i);
-    if (c) out.push(c);
-  }
-  return out;
+  return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
 }
 
 /** Identifiers directly under a node (e.g. `function_output`, `multioutput_variable`, `global_operator`). */
@@ -137,8 +135,8 @@ function visibilityFrom(attrs: Map<string, string>): 'public' | 'private' | 'pro
 }
 
 /** `%`-comment text of a function's or class's help block (the first comment child), markers stripped. */
-function helpText(node: SyntaxNode, source: string): string | undefined {
-  const comment = namedChildren(node).find((c) => c.type === 'comment');
+function helpText(children: readonly SyntaxNode[], source: string): string | undefined {
+  const comment = children.find((c) => c.type === 'comment');
   if (!comment) return undefined;
   const text = getNodeText(comment, source)
     .split(/\r?\n/)
@@ -169,8 +167,9 @@ function arrayEvidence(call: SyntaxNode): 'variable' | 'index' | null {
     if (n.type === 'function_call' || n.type === 'lambda') return false;
     return namedChildren(n).some(ownEnd);
   };
-  if (!isInCallArguments(call) && namedChildren(args).some(ownEnd)) return 'variable';
-  if (namedChildren(args).some((a) => a.type === 'spread_operator')) return 'index';
+  const argList = namedChildren(args);
+  if (!isInCallArguments(call) && argList.some(ownEnd)) return 'variable';
+  if (argList.some((a) => a.type === 'spread_operator')) return 'index';
   return null;
 }
 
@@ -392,7 +391,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
    * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
    * class] — a capitalised callee that is no variable reads as a constructor.
    * So does a bare `Cls` (`aa = ArchAppliance;`), the constructor called with
-   * no arguments, unless it is a built-in's name (`x = NaN;`).
+   * no arguments. Not a built-in's name, either way (`x = NaN;`, `x = NaN(n,
+   * 1)`, `e = MException(…)`): what it makes is MATLAB's, none of whose
+   * methods is the project's.
    */
   const constructed = (rhs: SyntaxNode | null): [string, string] | null => {
     if (rhs?.type === 'identifier') {
@@ -402,7 +403,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
     if (rhs?.type === 'function_call') {
       const name = getChildByField(rhs, 'name');
       const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
-      return /^[A-Z]/.test(text) ? [text, text] : null;
+      return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
     }
     if (rhs?.type === 'field_expression') {
       const parts = namedChildren(rhs);
@@ -534,8 +535,8 @@ function classHintsFrom(facts: ScopeFacts, isVariable: (name: string) => boolean
 }
 
 /** The single variable a function returns (`obj` in `function obj = Sub(…)`), or null. */
-function singleOutput(fn: SyntaxNode, source: string): string | null {
-  const out = namedChildren(fn).find((c) => c.type === 'function_output');
+function singleOutput(children: readonly SyntaxNode[], source: string): string | null {
+  const out = children.find((c) => c.type === 'function_output');
   if (!out) return null;
   const names = new Set<string>();
   identifiersIn(out, source, names);
@@ -543,8 +544,8 @@ function singleOutput(fn: SyntaxNode, source: string): string | null {
 }
 
 /** A function's first parameter, when it is a name (`~` ignores the object: no self). */
-function firstParameter(fn: SyntaxNode, source: string): string | null {
-  const args = namedChildren(fn).find((c) => c.type === 'function_arguments');
+function firstParameter(children: readonly SyntaxNode[], source: string): string | null {
+  const args = children.find((c) => c.type === 'function_arguments');
   const first = args?.namedChild(0);
   return first?.type === 'identifier' ? getNodeText(first, source) : null;
 }
@@ -562,7 +563,15 @@ function firstParameter(fn: SyntaxNode, source: string): string | null {
  * (`aa = Archive;`): then it carries the variable's own name, dotted
  * (`aa.getData`), for when that name is no class (see MemberRef).
  */
-function addRef(ctx: ExtractorContext, name: string, kind: 'calls' | 'function_ref' | 'extends' | 'imports', at: SyntaxNode, written?: string): void {
+function addRef(
+  ctx: ExtractorContext,
+  name: string,
+  kind: 'calls' | 'function_ref' | 'extends' | 'imports',
+  at: SyntaxNode,
+  written?: string,
+  /** Where on `at`'s line the name starts, when not where `at` does. */
+  column = at.startPosition.column,
+): void {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
   if (!fromNodeId || !name) return;
   ctx.addUnresolvedReference({
@@ -570,7 +579,7 @@ function addRef(ctx: ExtractorContext, name: string, kind: 'calls' | 'function_r
     referenceName: name,
     referenceKind: kind,
     line: at.startPosition.row + 1,
-    column: at.startPosition.column,
+    column,
     ...(written ? { candidates: [written] } : {}),
   });
 }
@@ -663,7 +672,8 @@ function handleRef(node: SyntaxNode, source: string): MemberRef | null {
  */
 function callRef(node: SyntaxNode, name: string, source: string): { name: string; dispatch: boolean } | null {
   const f = frame();
-  const sup = namedChildren(node).find((c) => c.type === 'superclass');
+  const children = namedChildren(node);
+  const sup = children.find((c) => c.type === 'superclass');
   if (sup) {
     const base = dottedName(sup, source);
     if (!base) return null;
@@ -673,7 +683,7 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
   if (isLocal(f, name)) return null;
   // `ArrayList()` where the file imports `java.util.ArrayList`: Java's constructor.
   if (javaImported.has(name)) return null;
-  const firstArg = namedChildren(node).find((c) => c.type === 'arguments')?.namedChild(0);
+  const firstArg = children.find((c) => c.type === 'arguments')?.namedChild(0);
   const first = firstArg?.type === 'identifier' ? getNodeText(firstArg, source) : null;
   const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first)?.cls;
   // On a Java object (`set(m, …)`), the function as written: no class of the project's.
@@ -693,25 +703,16 @@ function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext): void {
   const arg = args[0]!;
   const at = arg.type === 'string' ? namedChildren(arg).find((c) => c.type === 'string_content') : arg.type === 'command_argument' ? arg : undefined;
   if (!at) return;
-  const m = /^(['"]?)([A-Za-z][A-Za-z0-9_]*)(?:\.m)?\1$/.exec(getNodeText(at, ctx.source));
-  if (!m) return;
-  const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
-  if (!fromNodeId) return;
-  ctx.addUnresolvedReference({
-    fromNodeId,
-    referenceName: m[2]!,
-    referenceKind: 'calls',
-    line: at.startPosition.row + 1,
-    column: at.startPosition.column + m[1]!.length,
-  });
+  const m = /^(['"]?)([A-Za-z][A-Za-z0-9_]*)(?:\.[mM])?\1$/.exec(getNodeText(at, ctx.source));
+  if (m) addRef(ctx, m[2]!, 'calls', at, undefined, at.startPosition.column + m[1]!.length);
 }
 
 // ---------------------------------------------------------------------------
 // Definitions
 // ---------------------------------------------------------------------------
 
-function functionSignature(node: SyntaxNode, source: string): string {
-  const args = namedChildren(node).find((c) => c.type === 'function_arguments');
+function functionSignature(node: SyntaxNode, children: readonly SyntaxNode[], source: string): string {
+  const args = children.find((c) => c.type === 'function_arguments');
   const name = getChildByField(node, 'name');
   const end = args?.endIndex ?? name?.endIndex ?? node.endIndex;
   const text = source.slice(node.startIndex, end).replace(/\s+/g, ' ').trim();
@@ -753,17 +754,18 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
   // A file name that is no identifier (`my-tool.m`, `2go.m`) MATLAB cannot call
   // at all: its primary function keeps the declared name and is not exported,
   // so only its own file reaches it.
-  const stem = primary ? /^([A-Za-z][A-Za-z0-9_]*)\.m$/.exec(ctx.filePath.replace(/^.*[\\/]/, '')) : null;
-  if (stem) name = stem[1]!;
+  const stem = primary ? matlabFileStem(ctx.filePath) : null;
+  if (stem) name = stem;
   const scope = primary ? matlabPathScope(ctx.filePath) : null;
   const classFolder = scope?.classFolder;
   const kind: NodeKind = block || classFolder ? 'method' : 'function';
   const qual = classFolder ? [...scope!.packages, classFolder] : outer.qual;
 
+  const children = namedChildren(node);
   const extra: Partial<Node> = {
     qualifiedName: [...qual, name].join('::'),
-    signature: functionSignature(node, source),
-    docstring: helpText(node, source),
+    signature: functionSignature(node, children, source),
+    docstring: helpText(children, source),
   };
   if (block) {
     const vis = visibilityFrom(block.attrs);
@@ -796,7 +798,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
   const cls = block ? (block.attrs.get('static') === 'true' ? null : block.cls) : classFolder ? qual.join('::') : null;
   if (cls) {
     const isConstructor = name === (block ? block.className : classFolder);
-    const v = isConstructor ? singleOutput(node, source) : firstParameter(node, source);
+    const v = isConstructor ? singleOutput(children, source) : firstParameter(children, source);
     if (v) self = { name: v, cls };
   } else if (nested) {
     self = outer.self;
@@ -816,7 +818,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
 
   ctx.pushScope(fn.id);
   inFrame(f, () => {
-    for (const c of namedChildren(node)) {
+    for (const c of children) {
       if (c.type === 'block' || c.type === 'arguments_statement' || c.type === 'function_definition') ctx.visitNode(c);
     }
   });
@@ -853,7 +855,7 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   const outer = frame();
   const cls = ctx.createNode(isEnum ? 'enum' : 'class', name, node, {
     qualifiedName: [...outer.qual, name].join('::'),
-    docstring: helpText(node, source),
+    docstring: helpText(children, source),
     signature,
     ...(attrs.get('abstract') === 'true' ? { isAbstract: true } : {}),
   });
@@ -989,12 +991,13 @@ export const matlabExtractor: LanguageExtractor = {
         // any variable (or own object) of the same name around it.
         const outer = frame();
         const params = new Set<string>();
-        const args = namedChildren(node).find((c) => c.type === 'arguments');
+        const children = namedChildren(node);
+        const args = children.find((c) => c.type === 'arguments');
         if (args) identifiersIn(args, source, params);
         const self = outer.self && params.has(outer.self.name) ? null : outer.self;
         const lambda: Frame = { kind: 'lambda', qual: outer.qual, locals: params, classHints: NO_HINTS, structFields: EMPTY, self, parent: outer };
         inFrame(lambda, () => {
-          for (const c of namedChildren(node)) if (c.type !== 'arguments') ctx.visitNode(c);
+          for (const c of children) if (c.type !== 'arguments') ctx.visitNode(c);
         });
         return true;
       }
@@ -1030,6 +1033,10 @@ export const matlabExtractor: LanguageExtractor = {
         const asValue =
           VALUE_PARENTS.has(parent.type) ||
           (parent.type === 'assignment' && getChildByField(parent, 'right')?.id === node.id) ||
+          // `if isReady`, `while keepGoing`, `switch mode`, `case modeA`: the condition.
+          (CONDITION_PARENTS.has(parent.type) && getChildByField(parent, 'condition')?.id === node.id) ||
+          // `for k = getRange`: the range, not the loop variable.
+          (parent.type === 'iterator' && parent.namedChild(0)?.id !== node.id) ||
           // `go(x, Solver=1)`: `Solver` names the argument.
           (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=') ||
           // `catch⏎ cleanupAll`: a statement of its own, not the error variable.

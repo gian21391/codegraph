@@ -505,6 +505,9 @@ export class QueryBuilder {
     getNodesByQualifiedNameExact?: NodeStatement;
     getNodesByLowerName?: NodeStatement;
     hasFilesOfLanguage?: SqliteStatement;
+    getFilePathsOfLanguage?: SqliteStatement;
+    getCrossFileIncomingEdgesFromLanguage?: SqliteStatement;
+    hasCrossFileIncomingEdgeFromLanguage?: SqliteStatement;
     getCobolIncludesByMember?: SqliteStatement;
     getCobolFilesByStem?: SqliteStatement;
     getUnresolvedCount?: SqliteStatement;
@@ -1818,25 +1821,13 @@ export class QueryBuilder {
     return this.stmts.getNodesByLowerName.all(name);
   }
 
-  /** {@link getNodesByLowerName} for several names in one statement (each `IN` term seeks idx_nodes_lower_name). */
-  getNodesByLowerNames(names: readonly string[]): Node[] {
-    if (names.length === 0) return [];
-    if (names.length === 1) return this.getNodesByLowerName(names[0]!);
-    const out: Node[] = [];
-    for (let i = 0; i < names.length; i += SQLITE_PARAM_CHUNK_SIZE) {
-      const chunk = names.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
-      let stmt = this.lowerNamesStmts.get(chunk.length);
-      if (!stmt) {
-        stmt = prepareNodeStatement(this.db, `SELECT * FROM nodes WHERE lower(name) IN (${chunk.map(() => 'lower(?)').join(',')})`);
-        this.lowerNamesStmts.set(chunk.length, stmt);
-      }
-      out.push(...stmt.all(...chunk));
+  /** The paths of the files of one language. A range of idx_files_language. */
+  getFilePathsOfLanguage(language: Language): string[] {
+    if (!this.stmts.getFilePathsOfLanguage) {
+      this.stmts.getFilePathsOfLanguage = this.db.prepare('SELECT path FROM files WHERE language = ?');
     }
-    return out;
+    return (this.stmts.getFilePathsOfLanguage.all(language) as Array<{ path: string }>).map((r) => r.path);
   }
-
-  /** getNodesByLowerNames's statements, by how many names they take. */
-  private readonly lowerNamesStmts = new Map<number, NodeStatement>();
 
   /** Does the index hold any file of this language? One seek on idx_files_language. */
   hasFilesOfLanguage(language: string): boolean {
@@ -3744,6 +3735,55 @@ export class QueryBuilder {
       sourceFilePath: row.source_file_path,
       sourceLanguage: row.source_language,
     }));
+  }
+
+  /**
+   * The edges into the one node `targetId` of `filePath` from nodes of
+   * `sourceLanguage` in other files ({@link getCrossFileIncomingEdgesWithTarget}'s
+   * shape, for a single target): one seek on the edge target index, where
+   * that one reads the edges into every node of the file.
+   */
+  getCrossFileIncomingEdgesFromLanguage(
+    targetId: string,
+    filePath: string,
+    sourceLanguage: Language
+  ): Array<Edge & { edgeId: number; sourceFilePath: string; sourceLanguage: Language }> {
+    if (!this.stmts.getCrossFileIncomingEdgesFromLanguage) {
+      this.stmts.getCrossFileIncomingEdgesFromLanguage = this.db.prepare(
+        `SELECT e.*, src.file_path AS source_file_path, src.language AS source_language
+          FROM edges e
+          JOIN nodes src ON src.id = e.source
+         WHERE e.target = ?
+           AND e.kind != 'contains'
+           AND src.language = ?
+           AND src.file_path != ?`
+      );
+    }
+    const rows = this.stmts.getCrossFileIncomingEdgesFromLanguage
+      .all(targetId, sourceLanguage, filePath) as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
+    return rows.map((row) => ({
+      ...rowToEdge(row),
+      edgeId: row.id,
+      sourceFilePath: row.source_file_path,
+      sourceLanguage: row.source_language,
+    }));
+  }
+
+  /** Whether {@link getCrossFileIncomingEdgesFromLanguage} would return any edge: it stops at the first. */
+  hasCrossFileIncomingEdgeFromLanguage(targetId: string, filePath: string, sourceLanguage: Language): boolean {
+    if (!this.stmts.hasCrossFileIncomingEdgeFromLanguage) {
+      this.stmts.hasCrossFileIncomingEdgeFromLanguage = this.db.prepare(
+        `SELECT 1
+          FROM edges e
+          JOIN nodes src ON src.id = e.source
+         WHERE e.target = ?
+           AND e.kind != 'contains'
+           AND src.language = ?
+           AND src.file_path != ?
+         LIMIT 1`
+      );
+    }
+    return this.stmts.hasCrossFileIncomingEdgeFromLanguage.get(targetId, sourceLanguage, filePath) !== undefined;
   }
 
   /**

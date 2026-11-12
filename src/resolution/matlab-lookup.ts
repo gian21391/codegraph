@@ -49,8 +49,8 @@
 
 import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
-import { matlabPathScope } from '../extraction/languages/matlab-path';
-import { isOctave, maskMatlabBlockComments } from '../extraction/languages/matlab-syntax';
+import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
+import { isMatlabScriptFile } from '../graph/matlab-scripts';
 const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
 const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
 const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KINDS]);
@@ -91,7 +91,7 @@ function isPackageMember(n: Node): boolean {
 
 /** A class-folder method in its own file (`@Pt/norm2.m` → `Pt::norm2`): the one with the body. */
 function isMethodFile(n: Node): boolean {
-  return n.kind === 'method' && inClassFolder(n) && n.filePath.slice(n.filePath.lastIndexOf('/') + 1) === `${n.name}.m`;
+  return n.kind === 'method' && inClassFolder(n) && matlabFileStem(n.filePath) === n.name;
 }
 
 /**
@@ -272,18 +272,41 @@ function resolveType(written: string, caller: Pick<Caller, 'file' | 'imports'>, 
   return undefined;
 }
 
-/** Superclasses of a class, from its `classdef X < A & B` signature (the extractor writes it from the AST, one line). */
+/**
+ * Per context, by class id: superclassesOf's answers. They are read from
+ * node rows alone (the class's signature, the classes its names resolve to),
+ * so they hold as long as the context's node caches do, and go with them
+ * (clearMatlabLookupMemos, from ReferenceResolver.clearCaches).
+ */
+const SUPERCLASSES = new WeakMap<ResolutionContext, Map<string, Node[]>>();
+
+/** Drop the superclass memo (see ReferenceResolver.clearCaches). */
+export function clearMatlabLookupMemos(context: ResolutionContext): void {
+  SUPERCLASSES.delete(context);
+}
+
+/**
+ * Superclasses of a class, from its `classdef X < A & B` signature (the
+ * extractor writes it from the AST, one line) — not from its `extends` edges:
+ * a sync resolves the refs of the files it changed before it reopens the
+ * `extends` of an unchanged class whose superclass moved, and a call resolved
+ * in between would find the chain cut.
+ */
 function superclassesOf(cls: Node, context: ResolutionContext): Node[] {
-  const m = /<\s*(.+)$/.exec(cls.signature ?? '');
-  if (!m) return [];
+  let memo = SUPERCLASSES.get(context);
+  if (!memo) SUPERCLASSES.set(context, (memo = new Map()));
+  const hit = memo.get(cls.id);
+  if (hit) return hit;
   const out: Node[] = [];
-  for (const raw of m[1]!.split('&')) {
+  const m = /<\s*(.+)$/.exec(cls.signature ?? '');
+  for (const raw of m ? m[1]!.split('&') : []) {
     const name = raw.trim().replace(/\./g, '::');
     if (!name) continue;
     // A superclass list sees no import: it is outside every function.
     const sup = resolveType(name, { file: cls.filePath, imports: NO_IMPORTS }, context);
     if (sup && sup.id !== cls.id) out.push(sup);
   }
+  memo.set(cls.id, out);
   return out;
 }
 
@@ -439,14 +462,13 @@ function nearerInexactMatch(name: string, target: Node, callerFile: string, cont
   const bar = nearness(target.filePath, callerFile);
   if (bar === Number.MAX_SAFE_INTEGER) return false;
   const lower = name.toLowerCase();
-  const keys = [lower, `${lower}.m`];
-  const variants = context.getNodesByLowerNames?.(keys) ?? keys.flatMap((k) => context.getNodesByLowerName(k));
+  const variants = [lower, `${lower}.m`].flatMap((k) => context.getNodesByLowerName(k));
   return matlab(variants).some((n) => {
     if (nearness(n.filePath, callerFile) <= bar || !privateInReach(n, callerFile)) return false;
     const owner = ownerOf(n);
     // `@tps/TPS.m`: a constructor's file, its folder's name in another case or its own.
     if (n.kind === 'method') return isMethodFile(n) && !owner.includes('::') && owner.toLowerCase() === lower && (owner !== name || n.name !== name);
-    if (n.name === name || n.name === `${name}.m`) return false;
+    if (n.name === name || (n.kind === 'file' && matlabFileStem(n.name) === name)) return false;
     if (n.kind === 'file') {
       const scope = matlabPathScope(n.filePath);
       return n.name.toLowerCase() === `${lower}.m` && scope.packages.length === 0 && scope.classFolder === undefined;
@@ -456,36 +478,12 @@ function nearerInexactMatch(name: string, target: Node, callerFile: string, cont
 }
 
 /**
- * Per file, keyed by the node array the context returns for it (as
- * FILE_FACTS): whether the file is a script MATLAB can run by its name.
- */
-const SCRIPT_FILES = new WeakMap<Node[], boolean>();
-
-/**
- * The file nodes of the scripts named `name` (`name.m`) that the path holds:
- * outside every package, class and `private/` folder, defining no function
- * or class, with code in it — a file of comments only is the help text of a
- * MEX function of that name (`lcaPut.m` beside `lcaPut.mexa64`), which is
- * what MATLAB runs, and an Octave file (whose functions go unread) is no
- * script either.
+ * The file nodes of the scripts named `name` (`name.m`) that the path holds
+ * (see ../graph/matlab-scripts for what a script is).
  */
 function scriptsNamed(name: string, context: ResolutionContext): Node[] {
-  if (context.isAbsentName?.(`${name}.m`)) return [];
-  return context.getNodesByName(`${name}.m`).filter((file) => isPathScript(file, context));
-}
-
-/** Whether a node is the file node of a script on the path (see scriptsNamed). */
-function isPathScript(file: Node, context: ResolutionContext): boolean {
-  if (file.kind !== 'file' || file.language !== 'matlab') return false;
-  const scope = matlabPathScope(file.filePath);
-  if (scope.packages.length > 0 || scope.classFolder !== undefined || /(?:^|\/)private\//.test(file.filePath)) return false;
-  const nodes = context.getNodesInFile(file.filePath);
-  let script = SCRIPT_FILES.get(nodes);
-  if (script === undefined) {
-    script = !matlab(nodes).some((n) => NAMED_KINDS.has(n.kind)) && runsCode(context.readFile(file.filePath));
-    SCRIPT_FILES.set(nodes, script);
-  }
-  return script;
+  return matlabFileNames(name).flatMap((fileName) =>
+    context.isAbsentName?.(fileName) ? [] : context.getNodesByName(fileName).filter((file) => isMatlabScriptFile(file, context)));
 }
 
 /**
@@ -494,17 +492,7 @@ function isPathScript(file: Node, context: ResolutionContext): boolean {
  */
 export function isMatlabPathScript(filePath: string, context: ResolutionContext): boolean {
   const file = context.getNodesInFile(filePath).find((n) => n.kind === 'file');
-  return file !== undefined && isPathScript(file, context);
-}
-
-/**
- * Whether MATLAB source holds a statement: a line that is no comment, outside
- * every `%{ … %}` block. Not a file of control bytes — MATLAB Compiler's
- * encrypted `.m` files (`V1MCC4000MEC…`) in a deployed runtime tree.
- */
-function runsCode(source: string | null): boolean {
-  if (source === null || isOctave(source) || /[\x00-\x08\x0E-\x19\x1B-\x1F]/.test(source)) return false;
-  return maskMatlabBlockComments(source).split(/\r?\n/).some((line) => !/^\s*(?:%.*)?$/.test(line));
+  return file !== undefined && isMatlabScriptFile(file, context);
 }
 
 /**
@@ -522,8 +510,8 @@ function writtenAsStatement(lines: readonly string[] | null | undefined, row: nu
   const after = text.slice(column + name.length);
   const prev = row >= 2 ? lines![row - 2]! : '';
   if (/\.\.\./.test(prev.replace(/%.*$/, ''))) return false;
-  if (/^\s*run\s*\(\s*['"]$/.test(before)) return /^(?:\.m)?['"]\s*\)\s*(?:[;,%]|$)/.test(after);
-  if (/^\s*run\s+['"]?$/.test(before)) return /^(?:\.m)?['"]?\s*(?:[;,%]|$)/.test(after);
+  if (/^\s*run\s*\(\s*['"]$/.test(before)) return /^(?:\.[mM])?['"]\s*\)\s*(?:[;,%]|$)/.test(after);
+  if (/^\s*run\s+['"]?$/.test(before)) return /^(?:\.[mM])?['"]?\s*(?:[;,%]|$)/.test(after);
   if (!/^\s*(?:[;,%]|$)/.test(after)) return false;
   return /(?:^|[;,])\s*(?:(?:else|try|otherwise)\s+)?$/.test(before) && atTopLevel(before);
 }

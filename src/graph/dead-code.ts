@@ -807,7 +807,7 @@ function normalizeKinds(requested: readonly NodeKind[] | undefined): NodeKind[] 
  * themselves — never a lookup per row. Only type-ish containers are returned: a
  * function's container is the file, which tells us nothing.
  */
-function containersOf(cg: CodeGraph, nodes: readonly Node[]): Map<string, Node> {
+export function containersOf(cg: CodeGraph, nodes: readonly Node[]): Map<string, Node> {
   const memberIds = nodes.filter((node) => OVERRIDABLE_KINDS.has(node.kind)).map((n) => n.id);
   const out = new Map<string, Node>();
   if (memberIds.length === 0) return out;

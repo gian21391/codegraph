@@ -30,3 +30,19 @@ export function matlabPathScope(filePath: string): MatlabPathScope {
   for (let i = end - 1; i >= 0 && dirs[i]!.startsWith('+'); i--) packages.unshift(dirs[i]!.slice(1));
   return { packages, classFolder };
 }
+
+/**
+ * The name MATLAB calls a file by — `f` for `…/f.m` — or null when the file is
+ * no `.m` file or its name is no identifier (`my-tool.m`, `2go.m`), which
+ * MATLAB cannot call. The extension is matched in either case (`Foo.M`), and
+ * either separator is accepted.
+ */
+export function matlabFileStem(filePath: string): string | null {
+  const m = /(?:^|[\\/])([A-Za-z][A-Za-z0-9_]*)\.[mM]$/.exec(filePath);
+  return m ? m[1]! : null;
+}
+
+/** The names a file node of the `.m` file `stem` may carry (`f.m`, `f.M`): what a lookup by the file's name asks for. */
+export function matlabFileNames(stem: string): [string, string] {
+  return [`${stem}.m`, `${stem}.M`];
+}

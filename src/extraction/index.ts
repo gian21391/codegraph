@@ -3341,10 +3341,13 @@ export class ExtractionOrchestrator {
    * Files a run will store: their MATLAB names are reachable from the files it
    * stores before them. `now` reads the stored ones at once, before a full
    * index's parse loop, in which the main thread must not read the database.
+   * A path here has no language yet — an Objective-C `.m` reads as MATLAB
+   * only from its content — so its name is taken too: it keeps a built-in's
+   * call of that name a row until resolution discards it, never an edge.
    */
   private expectFiles(paths: readonly string[], now = false): void {
     for (const p of paths) {
-      if (!p.endsWith('.m')) continue;
+      if (!p.toLowerCase().endsWith('.m')) continue;
       if (this.matlabReachable) addMatlabReachableNames([p], this.matlabReachable);
       else this.expectedMatlabPaths.push(p);
     }
@@ -3354,7 +3357,7 @@ export class ExtractionOrchestrator {
   private matlabReachableNames(): Set<string> {
     if (!this.matlabReachable) {
       this.matlabReachable = new Set();
-      addMatlabReachableNames(this.queries.getAllFilePaths(), this.matlabReachable);
+      addMatlabReachableNames(this.queries.getFilePathsOfLanguage('matlab'), this.matlabReachable);
       addMatlabReachableNames(this.expectedMatlabPaths, this.matlabReachable);
       this.expectedMatlabPaths = [];
     }

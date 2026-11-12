@@ -322,6 +322,58 @@ end
       'calls:tolerance <- f',
     ]);
   });
+
+  it('reads a bare name as a condition or a `for` range as a zero-argument call, and a variable there as nothing', () => {
+    const code = `function r = f(x)
+    items = 3;
+    if isReady
+        r = 1;
+    elseif isOther
+        r = 2;
+    end
+    while keepGoing
+        r = 3;
+    end
+    switch pickMode
+        case 1
+            r = 4;
+        case caseName
+            r = 5;
+        case {caseCell, 3}
+            r = 6;
+        case items
+            r = 7;
+    end
+    for k = getRange
+        r = k;
+    end
+    parfor j = getChunks
+        r = j;
+    end
+    for k = 1:upper_bound
+    end
+    if x
+    end
+    while r
+    end
+    for k = items
+    end
+end
+`;
+    expect(refs('f.m', code)).toEqual([
+      'calls:isReady <- f',
+      'calls:isOther <- f',
+      'calls:keepGoing <- f',
+      'calls:pickMode <- f',
+      'calls:caseName <- f',
+      'calls:caseCell <- f',
+      'calls:getRange <- f',
+      'calls:getChunks <- f',
+      'calls:upper_bound <- f',
+    ]);
+    // In a script, the same: the loop variable is assigned, the range is read.
+    expect(refs('s.m', 'if isReady\nend\nfor k = getRange\ndisp(k);\nend\n')).toEqual(['calls:isReady <- s.m', 'calls:getRange <- s.m']);
+  });
 });
 
 describe('MATLAB method calls on variables', () => {
@@ -413,6 +465,21 @@ end
     ]);
   });
 
+  it('takes no class from a built-in constructor\'s call, with arguments or without', () => {
+    const code = 'function f(n)\n    x = NaN(n, 1);\n    x.fill();\n    y = Inf;\n    y.fill();\n    e = MException(\'a:b\', \'m\');\n    e.report();\n    throw(e);\n    c = Shape(2);\n    c.fill();\nend\n';
+    expect(allRefs('f.m', code)).toEqual([
+      'calls:NaN <- f',
+      'calls:x.fill <- f',
+      'calls:Inf <- f',
+      'calls:y.fill <- f',
+      'calls:MException <- f',
+      'calls:e.report <- f',
+      'calls:throw <- f',
+      'calls:Shape <- f',
+      'calls:Shape::fill <- f',
+    ]);
+  });
+
   it('leaves unwritten only the built-in calls no project file or function of the file could answer', () => {
     const reachable = new Set<string>();
     // A path function, a private one, a class folder's class and method file, a package member.
@@ -423,13 +490,16 @@ end
       return withoutUnanswerableMatlabBuiltins(r.unresolvedReferences, r.nodes, reachable).map((u) => `${u.referenceKind}:${u.referenceName}`);
     };
     // plot is a method of AccObj only, set a package's: no bare call reaches either; grid is the file's own.
-    expect(kept('a.m', 'function a(x)\nnormpdf(x); strsplit(x); plot(x); set(x); grid(x); mine(x); h = @plot;\nend\nfunction grid(x)\nend\n')).toEqual([
-      'calls:normpdf', 'calls:strsplit', 'calls:grid', 'calls:mine', 'function_ref:plot',
+    // A handle to a built-in goes the way its call does.
+    expect(kept('a.m', 'function a(x)\nnormpdf(x); strsplit(x); plot(x); set(x); grid(x); mine(x); h = @plot;\ng = @grid; k = @normpdf; m = @isempty; o = @mine;\nend\nfunction grid(x)\nend\n')).toEqual([
+      'calls:normpdf', 'calls:strsplit', 'calls:grid', 'calls:mine', 'function_ref:grid', 'function_ref:normpdf', 'function_ref:mine',
     ]);
     // An import may reach a package's function or a class's method by its bare name: all are kept.
     expect(kept('b.m', 'function b(x)\nimport uix.*\nset(x);\nplot(x);\nend\n')).toEqual(['calls:set', 'calls:plot']);
     // Java's reaches none.
     expect(kept('c.m', 'function c(x)\nimport java.util.*\nimport javax.swing.JFrame\nplot(x);\nmine(x);\nend\n')).toEqual(['calls:mine']);
+    // An import keeps the handles too.
+    expect(kept('d.m', 'function d(x)\nimport uix.*\nh = @set;\nend\n')).toEqual(['function_ref:set']);
   });
 
   it('tells a call written with arguments from a bare read by the source, keeping what it cannot see', () => {
@@ -587,6 +657,14 @@ describe('MATLAB function files', () => {
       'foo true function y = bar(x)',
       'baz false function z = baz(x)',
     ]);
+    // The extension in either case.
+    for (const file of ['lib/foo.M', 'lib\\foo.m']) {
+      const fn = extractFromSource(file, 'function y = bar(x)\ny = x;\nend\n', 'matlab').nodes.find((n) => n.kind === 'function');
+      expect(`${fn?.qualifiedName} ${fn?.isExported}`).toBe('foo true');
+    }
+    const reachable = new Set<string>();
+    addMatlabReachableNames(['lib/Foo.M', 'lib\\Bar.m', 'lib/baz.mm', 'lib/qux.txt'], reachable);
+    expect([...reachable].sort()).toEqual(['Bar', 'Foo']);
     // A file name MATLAB cannot call keeps the declared name, and nothing outside the file reaches it.
     for (const file of ['my-tool.m', '2go.m', 'lib/go.now.m']) {
       const fn = extractFromSource(file, 'function mytool()\nend\n', 'matlab').nodes.find((n) => n.kind === 'function');
@@ -694,6 +772,18 @@ describe('MATLAB nested-function workspaces (pinned: MathWorks semantics)', () =
     // Sibling nested functions are separate workspaces.
     const sibs = 'function sibs()\n    function A()\n        total = 1;\n    end\n    function B()\n        y = total;\n    end\nend\n';
     expect(refs('sibs.m', sibs)).toEqual(['calls:total <- sibs::B']);
+  });
+
+  it('reads a condition the parent never assigns as a call, though a nested callback sets it, and one it initializes as its variable', () => {
+    // Since R2019b a nested function shares a name with its parent only when
+    // the parent declares it a variable; else the parent's name is a function
+    // (called when one is on the path, an error otherwise). The GUI idiom
+    // initializes the flag in the parent first.
+    const callback = '    function onClick(src, evt)\n        done = true;\n    end\n';
+    const bare = `function wait1()\nwhile done\n    pause(1);\nend\nwhile ~done\n    pause(1);\nend\n${callback}end\n`;
+    expect(refs('wait1.m', bare)).toEqual(['calls:done <- wait1', 'calls:done <- wait1']);
+    const initialized = `function wait2()\ndone = false;\nwhile done\n    pause(1);\nend\nwhile ~done\n    pause(1);\nend\n${callback}end\n`;
+    expect(refs('wait2.m', initialized)).toEqual([]);
   });
 });
 

@@ -10,6 +10,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
 import { ToolHandler } from '../src/mcp/tools';
+import { buildSteps } from '../src/ui-server/api/steps';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 
 beforeAll(async () => {
@@ -157,6 +158,101 @@ describe('MATLAB scripts in codegraph_explore', () => {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('MATLAB scripts in codegraph_explore are the resolver\'s scripts', () => {
+  it('shows a script named alone, and no Octave file, help text or package file of the name', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-explore-scripts-')));
+    writeFiles(root, {
+      'real_script.m': 'z = 3;\n',
+      'oct_script.m': '# an Octave comment\nx = 1;\n',
+      'mex_help.m': '% MEX_HELP  help text of a MEX function\n',
+      '+pkg/pkg_script.m': 'y = 2;\n',
+      'helper_fn.m': 'function helper_fn(x)\ndisp(x);\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      /** The file nodes explore shows the source of for `helper_fn <name>`. */
+      const shown = async (name: string): Promise<string[]> => {
+        const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: `helper_fn ${name}` })).content[0]!.text;
+        return [...text.matchAll(/^\*\*`([^`]+)`\*\* — \S+\(file\)$/gm)].map((m) => m[1]!);
+      };
+      expect(await shown('real_script')).toEqual(['real_script.m']);
+      for (const name of ['oct_script', 'mex_help', 'pkg_script']) expect(await shown(name)).toEqual([]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('asks nothing of a project with no MATLAB file', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-explore-none-')));
+    writeFiles(root, { 'src/app.ts': 'export function startApp(): number {\n  return 1;\n}\n' });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const names: string[] = [];
+      const byName = cg.getNodesByName.bind(cg);
+      cg.getNodesByName = (name: string) => {
+        names.push(name);
+        return byName(name);
+      };
+      await new ToolHandler(cg).execute('codegraph_explore', { query: 'startApp setup_paths' });
+      expect(names.filter((n) => /\.m$/i.test(n))).toEqual([]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MATLAB scripts in the viewer\'s steps', () => {
+  it('judges a script the walk reaches once per request, and again in the next', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-steps-')));
+    writeFiles(root, {
+      'main.m': 'function main()\nsetup_paths\nhelper(1);\nsetup_paths\nend\n',
+      'helper.m': 'function helper(x)\nsetup_paths\nend\n',
+      'setup_paths.m': 'addpath(pwd);\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      // Three calls reach the script, from two functions.
+      expect(edgesOf(cg).edges).toEqual([
+        'helper.m helper -calls-> setup_paths.m @ setup_paths.m',
+        'main.m main -calls-> helper @ helper.m',
+        'main.m main -calls-> setup_paths.m @ setup_paths.m',
+        'main.m main -calls-> setup_paths.m @ setup_paths.m',
+      ]);
+      let reads = 0;
+      const getNodesInFile = cg.getNodesInFile.bind(cg);
+      cg.getNodesInFile = (filePath: string) => {
+        if (filePath === 'setup_paths.m') reads++;
+        return getNodesInFile(filePath);
+      };
+      const main = cg.getNodesInFile('main.m').find((n) => n.name === 'main')!;
+      const payload = await buildSteps(cg, root, new URLSearchParams({ anchor: main.id }));
+      expect(payload.steps.map((st) => [st.label, st.kind])).toEqual([['main', 'anchor']]);
+      expect(reads).toBe(1);
+      await buildSteps(cg, root, new URLSearchParams({ anchor: main.id }));
+      expect(reads).toBe(2);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MATLAB files with an upper-case `.M`', () => {
+  it('are called by their name: a function file and a script', async () => {
+    const { edges } = await indexOfProject({
+      'main.m': 'function main()\nFoo(1);\nSetup\nend\n',
+      'lib/Foo.M': 'function y = Foo(x)\ny = x;\nend\n',
+      'Setup.M': 'addpath(pwd);\n',
+    });
+    expect(edges).toEqual([
+      'main.m main -calls-> Foo @ lib/Foo.M',
+      'main.m main -calls-> Setup.M @ Setup.M',
+    ]);
   });
 });
 
@@ -412,5 +508,115 @@ describe('MATLAB sync converges on a fresh index', () => {
     );
     expect(steps).toEqual([linked, [], linked]);
     expect(synced).toEqual(fresh);
+  });
+
+  it('when the class a method is inherited from moves, goes and comes back', async () => {
+    const base = 'classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n';
+    const inherited = 'main.m main -calls-> Base::greet @ Base.m';
+    const { steps, synced, fresh } = await syncedAndFresh(
+      {
+        'main.m': 'function main()\ns = Sub();\ns.greet();\nend\n',
+        'Sub.m': 'classdef Sub < Base\nend\n',
+        'Base.m': base,
+      },
+      { 'Base.m': `% moved down\n\n${base}` },
+      { 'Base.m': null },
+      { 'Base.m': base },
+      { 'Sub.m': '% moved down\nclassdef Sub < Base\nend\n' },
+    );
+    const made = 'main.m main -instantiates-> Sub @ Sub.m';
+    const extendsEdge = 'Sub.m Sub -extends-> Base @ Base.m';
+    expect(steps).toEqual([
+      [extendsEdge, inherited, made],
+      [extendsEdge, inherited, made],
+      [made],
+      [extendsEdge, inherited, made],
+      [extendsEdge, inherited, made],
+    ]);
+    expect(synced).toEqual(fresh);
+  });
+
+  it('when the middle class of three moves folders in the sync that edits the caller, and moves back', async () => {
+    const mid = 'classdef Mid < Base\nend\n';
+    const { steps, synced, fresh } = await syncedAndFresh(
+      {
+        'main.m': 'function main()\ns = Sub();\ns.greet();\nend\n',
+        'a/Sub.m': 'classdef Sub < Mid\nend\n',
+        'm/Mid.m': mid,
+        'b/Base.m': 'classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n',
+      },
+      { 'm/Mid.m': null, 'n/Mid.m': mid, 'main.m': 'function main()\n\ns = Sub();\ns.greet();\nend\n' },
+      { 'n/Mid.m': null, 'm/Mid.m': mid },
+    );
+    const at = (dir: string) => [
+      `a/Sub.m Sub -extends-> Mid @ ${dir}/Mid.m`,
+      'main.m main -calls-> Base::greet @ b/Base.m',
+      'main.m main -instantiates-> Sub @ a/Sub.m',
+      `${dir}/Mid.m Mid -extends-> Base @ b/Base.m`,
+    ].sort();
+    expect(steps).toEqual([at('m'), at('n'), at('m')]);
+    expect(synced).toEqual(fresh);
+  });
+
+  it('when a nearer copy of the superclass is added in the sync that edits the caller, and removed', async () => {
+    const base = 'classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n';
+    const { steps, synced, fresh } = await syncedAndFresh(
+      {
+        'main.m': 'function main()\ns = Sub();\ns.greet();\nend\n',
+        'a/Sub.m': 'classdef Sub < Base\nend\n',
+        'b/Base.m': base,
+      },
+      { 'a/Base.m': base, 'main.m': 'function main()\n\ns = Sub();\ns.greet();\nend\n' },
+      { 'a/Base.m': null, 'main.m': 'function main()\ns = Sub();\ns.greet();\nend\n' },
+    );
+    const via = (dir: string) => [
+      `a/Sub.m Sub -extends-> Base @ ${dir}/Base.m`,
+      `main.m main -calls-> Base::greet @ ${dir}/Base.m`,
+      'main.m main -instantiates-> Sub @ a/Sub.m',
+    ];
+    expect(steps).toEqual([via('b'), via('a'), via('b')]);
+    expect(synced).toEqual(fresh);
+  });
+});
+
+describe('MATLAB sync in a project with Objective-C', () => {
+  it('settles script verdicts for the MATLAB files a sync changes, never for an Objective-C `.m`', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-objc-sync-')));
+    writeFiles(root, {
+      'main.m': 'function main()\nsetup_paths\nend\n',
+      'setup_paths.m': 'addpath(pwd);\n',
+      'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n- (void)go {\n}\n@end\n',
+      'objc/Thing.h': '#import <Foundation/Foundation.h>\n@interface Thing : NSObject\n- (void)go;\n@end\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const resolver = (cg as unknown as { resolver: { reopenMatlabScriptRuns: (...a: unknown[]) => number } }).resolver;
+      const calls: unknown[][] = [];
+      const reopen = resolver.reopenMatlabScriptRuns.bind(resolver);
+      resolver.reopenMatlabScriptRuns = (...a: unknown[]) => {
+        calls.push(a);
+        return reopen(...a);
+      };
+      writeFiles(root, { 'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n- (void)go {\n    [self stop];\n}\n- (void)stop {\n}\n@end\n' });
+      await cg.sync();
+      expect(calls).toEqual([]);
+      writeFiles(root, { 'setup_paths.m': 'addpath(pwd);\ndisp(1);\n', 'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n@end\n' });
+      await cg.sync();
+      expect(calls.map(([matlabFiles, changed]) => [matlabFiles, [...(changed as string[])].sort()])).toEqual([
+        [['setup_paths.m'], ['objc/Thing.m', 'setup_paths.m']],
+      ]);
+      expect(edgesOf(cg).edges.filter((e) => e.startsWith('main.m '))).toEqual(['main.m main -calls-> setup_paths.m @ setup_paths.m']);
+      // The script re-read as Objective-C: the MATLAB call into it still has
+      // to go, though the file is no MATLAB file any more.
+      calls.length = 0;
+      writeFiles(root, { 'setup_paths.m': '#import <Foundation/Foundation.h>\n@implementation Setup\n- (void)go {\n}\n@end\n' });
+      await cg.sync();
+      expect(cg.getFiles().find((f) => f.path === 'setup_paths.m')?.language).toBe('objc');
+      expect(edgesOf(cg).edges.filter((e) => e.startsWith('main.m '))).toEqual([]);
+      expect(calls).toEqual([[['setup_paths.m'], ['setup_paths.m']]]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

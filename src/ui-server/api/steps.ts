@@ -38,6 +38,7 @@
  */
 
 import type CodeGraph from '../../index';
+import { indexedMatlabScriptLookup, isMatlabScriptFile } from '../../graph/matlab-scripts';
 import type { Edge, Language, Node, UnresolvedReference } from '../../types';
 import { badRequest, intParam, notFound } from './respond';
 import { createSiteReader } from './when';
@@ -712,6 +713,8 @@ export async function buildSteps(cg: CodeGraph, projectRoot: string, query: URLS
   const chromeParents = new Map<string, number>();
   const fileScopeRefs = new Map<string, Edge[]>();
   const fileScopeUnresolved = new Map<string, UnresolvedReference[]>();
+  // What MATLAB runs by name: a script's file, by the resolver's own rule.
+  const matlabScripts = indexedMatlabScriptLookup(cg, projectRoot);
 
   /**
    * The spans of the calls that became effect steps, per function — and the
@@ -1232,7 +1235,7 @@ export async function buildSteps(cg: CodeGraph, projectRoot: string, query: URLS
           const found = targets.get(e.target);
           // A file is no step — but a MATLAB script, which runs by its name:
           // its file is all there is of it, the code its body.
-          if (!found || (found.kind === 'file' && !(found.language === 'matlab' && e.kind === 'calls'))) continue;
+          if (!found || (found.kind === 'file' && !(e.kind === 'calls' && isMatlabScriptFile(found, matlabScripts)))) continue;
           const meta = (e.metadata ?? {}) as Record<string, unknown>;
 
           // A member call the index kept only the last segment of (`create`

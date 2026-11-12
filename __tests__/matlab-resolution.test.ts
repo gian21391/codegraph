@@ -12,6 +12,7 @@ import { QueryBuilder } from '../src/db/queries';
 import { createResolver } from '../src/resolution';
 import { buildDeadCodeReport } from '../src/graph/dead-code';
 import { ToolHandler } from '../src/mcp/tools';
+import { isMatlabClassFolderFile } from '../src/resolution/matlab-class-folders';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 
 beforeAll(async () => {
@@ -206,6 +207,9 @@ describe('MATLAB class-folder methods are contained by their class', () => {
       // An enumeration kept in a class folder.
       '@Color/Color.m': 'classdef Color\n    enumeration\n        Red, Green\n    end\nend\n',
       '@Color/describe.m': 'function s = describe(c)\n    s = char(c);\nend\n',
+      // Upper-case `.M` files: the classdef and a method file.
+      '@Gauge/Gauge.M': 'classdef Gauge < handle\n    properties\n        V\n    end\nend\n',
+      '@Gauge/read.M': 'function v = read(g)\n    v = g.V;\nend\n',
       'main.m': 'function main()\n    r = Robot();\n    move(r, 1);\nend\n',
     });
     cg = await CodeGraph.init(root, { index: true });
@@ -220,6 +224,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     // move.m's local `aux` is no method.
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::move @ @Robot/move.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
@@ -240,11 +245,17 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     expect(text).not.toContain('Read `@Robot/Robot.m`');
   });
 
+  it('reads a file directly in a class folder, `.m` or `.M`, as the class\'s (the pass and explore\'s pre-filter share the test)', () => {
+    const files = ['@Gauge/read.M', '@Gauge/Gauge.M', '+geo/@Shape/area.m', 'read.M', '@Gauge/sub/read.m', '@Gauge/my-tool.m', '@Gauge/read.mm'];
+    expect(files.filter(isMatlabClassFolderFile)).toEqual(['@Gauge/read.M', '@Gauge/Gauge.M', '+geo/@Shape/area.m']);
+  });
+
   it('keeps one edge per method when a method file is edited', async () => {
     write('@Robot/step.m', 'function step(r, x)\n    % moved down a line\n    r.Q = r.Q + 2 * x;\nend\n');
     await cg.sync({ paths: ['@Robot/step.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::move @ @Robot/move.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
@@ -259,6 +270,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/move.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
@@ -272,6 +284,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
@@ -281,6 +294,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'geo::Shape > geo::Shape::area @ +geo/@Shape/area.m [matlab-class-folder] structural',
     ]);
@@ -288,6 +302,7 @@ describe('MATLAB class-folder methods are contained by their class', () => {
     await cg.sync({ paths: ['@Robot/Robot.m'] });
     expect(crossFileContains()).toEqual([
       'Color > Color::describe @ @Color/describe.m [matlab-class-folder] structural',
+      'Gauge > Gauge::read @ @Gauge/read.M [matlab-class-folder] structural',
       'Legacy > Legacy::show @ @Legacy/show.m [matlab-class-folder] structural',
       'Robot > Robot::reset @ @Robot/reset.m [matlab-class-folder] structural',
       'Robot > Robot::step @ @Robot/step.m [matlab-class-folder] structural',
@@ -849,6 +864,27 @@ describe('MATLAB unresolved rows', () => {
       ]);
       // What the dead-code check sees: every name a symbol carries still has its rows.
       expect([...cg.getUnresolvedNamesAmong(['getData', 'gain', 'value', 'cfgval', 'missing'])].sort()).toEqual(['gain', 'getData']);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a handle to a built-in that resolves to nothing, as its call, and links one the project answers', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-rows-handles-')));
+    writeTree(root, {
+      // The import keeps every built-in's name at insert: what fails is dropped when it fails.
+      'user.m': 'function user(xs)\nimport util.*\na = cellfun(@isempty, xs);\nb = cellfun(@numel, xs);\nc = arrayfun(@size, xs);\nd = cellfun(@mystery, xs);\ne = cellfun(@normpdf, xs);\nend\n',
+      '+util/numel.m': 'function n = numel(x)\nn = 1;\nend\n',
+      'stats/normpdf.m': 'function p = normpdf(x)\np = x;\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(allEdges(cg).filter((e) => e.startsWith('user.m '))).toEqual([
+        'user.m user -references-> normpdf @ stats/normpdf.m',
+        'user.m user -references-> util::numel @ +util/numel.m',
+      ]);
+      expect(unresolvedRows(root)).toEqual(['user.m function_ref:mystery']);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });

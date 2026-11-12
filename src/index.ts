@@ -1650,10 +1650,12 @@ export class CodeGraph {
         }
 
         // A MATLAB file that became a script, or stopped being one: the calls
-        // that run it by name in files this sync left alone.
-        if (result.changedFilePaths?.some((p) => p.endsWith('.m'))) {
+        // that run it by name in files this sync left alone. Only a MATLAB
+        // file: an Objective-C `.m` is none of this.
+        const matlabChanged = result.changedFilePaths ? this.resolver.matlabScriptCandidates(result.changedFilePaths) : [];
+        if (matlabChanged.length > 0) {
           const tScripts = Date.now();
-          const reopened = this.resolver.reopenMatlabScriptRuns(result.changedFilePaths);
+          const reopened = this.resolver.reopenMatlabScriptRuns(matlabChanged, result.changedFilePaths!);
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
             console.error(`[phase-timing] sync-matlab-scripts: ${Date.now() - tScripts}ms (${reopened} refs re-opened)`);
           }
@@ -2365,6 +2367,11 @@ export class CodeGraph {
    */
   getNodesByIds(ids: readonly string[]): Map<string, Node> {
     return this.queries.getNodesByIds(ids);
+  }
+
+  /** Whether the index holds any file of `language`: one indexed seek, for gating a language's own probes. */
+  hasFilesOfLanguage(language: Language): boolean {
+    return this.queries.hasFilesOfLanguage(language);
   }
 
   /**
