@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CodeGraph } from '../src';
+import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
 import { ToolHandler } from '../src/mcp/tools';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 
@@ -360,17 +360,34 @@ describe('codegraph_explore ranking stays language-neutral', () => {
   });
 });
 
-/** Every non-`contains` edge of a throwaway project holding `files` (see allEdges). */
-async function edgesOfProject(files: Record<string, string>): Promise<string[]> {
+/** `file kind:name` of every row left in `root`'s unresolved_refs, sorted. */
+function unresolvedRows(root: string): string[] {
+  const db = DatabaseConnection.open(getDatabasePath(root));
+  try {
+    const rows = db.getDb().prepare('SELECT file_path AS file, reference_kind AS kind, reference_name AS name FROM unresolved_refs').all() as Array<{ file: string; kind: string; name: string }>;
+    return rows.map((r) => `${r.file} ${r.kind}:${r.name}`).sort();
+  } finally {
+    db.close();
+  }
+}
+
+/** Every non-`contains` edge of a throwaway project holding `files` (see allEdges), and its unresolved rows. */
+async function indexOfProject(files: Record<string, string>): Promise<{ edges: string[]; unresolved: string[] }> {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-order-')));
   writeTree(root, files);
   const cg = await CodeGraph.init(root, { index: true });
   try {
-    return allEdges(cg);
+    const edges = allEdges(cg);
+    cg.close();
+    return { edges, unresolved: unresolvedRows(root) };
   } finally {
     cg.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+async function edgesOfProject(files: Record<string, string>): Promise<string[]> {
+  return (await indexOfProject(files)).edges;
 }
 
 describe('MATLAB function precedence', () => {
@@ -566,6 +583,104 @@ describe('MATLAB function precedence', () => {
       'useShape.m useShape -instantiates-> Shape @ Shape.m',
       'useShape.m useShape -instantiates-> Tri @ Tri.m',
     ]);
+  });
+
+  it('dispatches set/get on an object of a class-folder class to its method files, and keeps no row for another call of a built-in', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      '@AccObj/AccObj.m': 'function obj = AccObj(v)\nobj.v = v;\nobj = class(obj, \'AccObj\');\nend\n',
+      '@AccObj/set.m': 'function obj = set(obj, name, v)\nend\n',
+      '@AccObj/get.m': 'function v = get(obj, name)\nv = 1;\nend\n',
+      // On its own object, inside a method file.
+      '@AccObj/bump.m': 'function obj = bump(obj)\nobj = set(obj, \'v\', 2);\nend\n',
+      // `set(h, …)` on a parameter, `plot`, `uicontrol`, `strtrim`, `fclose`: the built-ins, which leave no row.
+      'useAcc.m': 'function useAcc(h, fid)\na = AccObj(1);\na = set(a, \'v\', 2);\nv = get(a, \'v\');\nset(h, \'Visible\', \'off\');\nplot(1:3);\nuicontrol(\'Style\', \'text\');\ns = strtrim(\' x \');\nfclose(fid);\nmissing(h);\nend\n',
+    });
+    expect(edges.filter((e) => e.includes(' -calls-> '))).toEqual([
+      '@AccObj/bump.m AccObj::bump -calls-> AccObj::set @ @AccObj/set.m',
+      'useAcc.m useAcc -calls-> AccObj::get @ @AccObj/get.m',
+      'useAcc.m useAcc -calls-> AccObj::set @ @AccObj/set.m',
+    ]);
+    // What resolves to nothing and is no bare call of a built-in's name is kept, for a later sync to
+    // retry: `class(obj, …)` on the method's own object is `AccObj::class`.
+    expect(unresolved).toEqual(['@AccObj/AccObj.m calls:AccObj::class', 'useAcc.m calls:AccObj', 'useAcc.m calls:missing']);
+  });
+
+  it('reaches a project function named like a built-in — on the path, in private/, local to the file — and keeps no row for one it does not define', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      // Stand-ins for toolbox functions and a compat shim, on the path.
+      'normpdf.m': 'function p = normpdf(x)\np = x;\nend\n',
+      'strsplit.m': 'function c = strsplit(s)\nc = {s};\nend\n',
+      'prctile.m': 'function y = prctile(x, p)\ny = x;\nend\n',
+      'useStats.m': 'function useStats(x)\np = normpdf(x);\nc = strsplit(\'a b\');\ny = prctile(x, 50);\nplot(x);\nend\n',
+      // A private function shadows the path one, from beside it only.
+      'lib/private/normpdf.m': 'function p = normpdf(x)\np = 0;\nend\n',
+      'lib/useP.m': 'function useP(x)\np = normpdf(x);\nend\n',
+      // The file's own `grid`, and `pause.m` shipped as a project's own (a deployed toolbox's copy).
+      'useGrid.m': 'function useGrid()\ng = grid(3);\nhold on\nend\nfunction g = grid(n)\ng = n;\nend\n',
+      'pause.m': 'function pause(t)\nend\n',
+      'usePause.m': 'function usePause()\npause(1);\nend\n',
+    });
+    expect(edges).toEqual([
+      'lib/useP.m useP -calls-> normpdf @ lib/private/normpdf.m',
+      'useGrid.m useGrid -calls-> grid @ useGrid.m',
+      'usePause.m usePause -calls-> pause @ pause.m',
+      'useStats.m useStats -calls-> normpdf @ normpdf.m',
+      'useStats.m useStats -calls-> prctile @ prctile.m',
+      'useStats.m useStats -calls-> strsplit @ strsplit.m',
+    ]);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('takes a classdef file\'s local function before the method of the same name, and a script\'s local function before the built-in', async () => {
+    expect(await edgesOfProject({
+      // MATLAB order: a local function comes before the method of the first argument's class.
+      'Viz.m': 'classdef Viz\n    methods\n        function plot(obj)\n        end\n        function draw(obj, x)\n            plot(x);\n            plot(obj);\n        end\n    end\nend\nfunction plot(x)\nend\n',
+      'Bare.m': 'classdef Bare\n    methods\n        function plot(obj)\n        end\n        function draw(obj, x)\n            plot(x);\n            plot(obj);\n        end\n    end\nend\n',
+      'runIt.m': 'x = 1:3;\nplot(x);\nfunction plot(x)\nend\n',
+    })).toEqual([
+      // Bare's plot(obj) is its method; its plot(x) is the built-in.
+      'Bare.m Bare::draw -calls-> Bare::plot @ Bare.m',
+      'Viz.m Viz::draw -calls-> plot @ Viz.m',
+      'Viz.m Viz::draw -calls-> plot @ Viz.m',
+      'runIt.m runIt.m -calls-> plot @ runIt.m',
+    ]);
+  });
+
+  it('never resolves a bare call in a package file to the package function itself, only to the file\'s local functions', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      '+util/size.m': 'function n = size(x)\nn = size(x, 1) + helper(x);\nend\nfunction h = helper(x)\nh = 0;\nend\n',
+      '+util/plot.m': 'function plot(x)\nplot(x);\nend\n',
+      'useUtil.m': 'function useUtil(x)\nn = util.size(x);\nutil.plot(x);\nend\n',
+    });
+    expect(edges).toEqual([
+      '+util/size.m util::size -calls-> util::helper @ +util/size.m',
+      'useUtil.m useUtil -calls-> util::plot @ +util/plot.m',
+      'useUtil.m useUtil -calls-> util::size @ +util/size.m',
+    ]);
+    // The built-ins those are: no row.
+    expect(unresolved).toEqual([]);
+  });
+
+  it('on a sync, links a call of a built-in\'s name to a function added beside it only in the files it re-indexes (a full index links them all)', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-sync-')));
+    const caller = (name: string) => `function ${name}(x)\np = normpdf(x);\nend\n`;
+    writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(allEdges(cg)).toEqual([]);
+      expect(unresolvedRows(root)).toEqual([]);
+      // The project gains its own normpdf, and one caller is edited in the same sync.
+      writeTree(root, { 'normpdf.m': 'function p = normpdf(x)\np = x;\nend\n', 'edited.m': caller('edited') + '% edited\n', 'added.m': caller('added') });
+      await cg.sync();
+      // untouched.m's call was discarded as the built-in's when it was indexed, and no row is left to retry.
+      expect(allEdges(cg)).toEqual([
+        'added.m added -calls-> normpdf @ normpdf.m',
+        'edited.m edited -calls-> normpdf @ normpdf.m',
+      ]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('holds a script\'s import in the script\'s code, not in its local functions', async () => {

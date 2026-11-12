@@ -1,7 +1,7 @@
 /**
  * MATLAB extraction semantics: what a function's frame makes of a name (its
  * variables, its own object, what a variable holds), superclass calls,
- * `catch`, lambdas, `Name=Value` arguments, imports, the built-ins left out,
+ * `catch`, lambdas, `Name=Value` arguments, imports, calls of built-ins' names,
  * class signatures and attributes, Octave files, and `.m` detection against
  * Objective-C.
  */
@@ -13,6 +13,7 @@ import { CodeGraph } from '../src';
 import { extractFromSource } from '../src/extraction';
 import { detectLanguage, getParser, initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
+import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
 
 beforeAll(async () => {
   await initGrammars();
@@ -20,10 +21,19 @@ beforeAll(async () => {
 });
 
 /** `kind:name <- from-qualified-name` of every ref a file emits, in source order. */
-function refs(file: string, code: string): string[] {
+function allRefs(file: string, code: string): string[] {
   const r = extractFromSource(file, code, 'matlab');
   const byId = new Map(r.nodes.map((n) => [n.id, n]));
   return r.unresolvedReferences.map((u) => `${u.referenceKind}:${u.referenceName} <- ${byId.get(u.fromNodeId)?.qualifiedName}`);
+}
+
+/**
+ * The same, less the bare calls of a built-in's name (`calls:numel`), which
+ * the extractor emits like any other and only the resolver tells apart: see
+ * 'MATLAB built-ins'.
+ */
+function refs(file: string, code: string): string[] {
+  return allRefs(file, code).filter((r) => !(r.startsWith('calls:') && MATLAB_BUILTINS.has(r.slice(6, r.indexOf(' <- ')))));
 }
 
 /**
@@ -361,26 +371,31 @@ describe('MATLAB imports', () => {
 });
 
 describe('MATLAB built-ins', () => {
-  it('leaves out bare calls to the hottest built-ins, never a class\'s own overload or a handle', () => {
+  it('records a bare call of a built-in\'s name like any other call, and one on an object of a known class as that class\'s', () => {
     const code = `classdef K < handle
     methods
         function r = go(obj, x)
-            n = numel(x) + size(x, 1) + pi;
-            r = zeros(n, 1);
+            n = numel(x) + pi;
             k = numel(obj);
-            disp(obj);
             h = @size;
-            if isempty(x), error('empty'); end
-            mine(x);
+            figure; hold on
+            set(gca, 'XLim', [0 1]);
+            set(obj, 'x', 1);
         end
     end
 end
 `;
-    expect(refs('K.m', code)).toEqual([
+    // Whether a project function of the name is what one reaches is the resolver's to say.
+    expect(allRefs('K.m', code)).toEqual([
+      'calls:numel <- K::go',
+      'calls:pi <- K::go',
       'calls:K::numel <- K::go',
-      'calls:K::disp <- K::go',
       'function_ref:size <- K::go',
-      'calls:mine <- K::go',
+      'calls:figure <- K::go',
+      'calls:hold <- K::go',
+      'calls:set <- K::go',
+      'calls:gca <- K::go',
+      'calls:K::set <- K::go',
     ]);
   });
 
@@ -393,7 +408,26 @@ end
       'Shape::disp ["disp"]',
       'Shape::numel ["numel"]',
       'Shape::area ["area"]',
+      'disp null',
+      'numel null',
     ]);
+  });
+
+  it('leaves unwritten only the built-in calls no project file or function of the file could answer', () => {
+    const reachable = new Set<string>();
+    // A path function, a private one, a class folder's class and method file, a package member.
+    addMatlabReachableNames(['stats/normpdf.m', 'lib/private/strsplit.m', '@AccObj/plot.m', '@AccObj/AccObj.m', '+uix/set.m', 'notes.txt'], reachable);
+    expect([...reachable].sort()).toEqual(['AccObj', 'normpdf', 'strsplit']);
+    const kept = (file: string, code: string): string[] => {
+      const r = extractFromSource(file, code, 'matlab');
+      return withoutUnanswerableMatlabBuiltins(r.unresolvedReferences, r.nodes, reachable).map((u) => `${u.referenceKind}:${u.referenceName}`);
+    };
+    // plot is a method of AccObj only, set a package's: no bare call reaches either; grid is the file's own.
+    expect(kept('a.m', 'function a(x)\nnormpdf(x); strsplit(x); plot(x); set(x); grid(x); mine(x); h = @plot;\nend\nfunction grid(x)\nend\n')).toEqual([
+      'calls:normpdf', 'calls:strsplit', 'calls:grid', 'calls:mine', 'function_ref:plot',
+    ]);
+    // An import may reach a package's function or a class's method by its bare name: all are kept.
+    expect(kept('b.m', 'function b(x)\nimport uix.*\nset(x);\nplot(x);\nend\n')).toEqual(['calls:set', 'calls:plot']);
   });
 });
 

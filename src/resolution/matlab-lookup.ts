@@ -8,7 +8,8 @@
  *   2. a nested function the caller can see: one nested in the caller or in a
  *      function the caller is nested in (its parent's, its siblings');
  *   3. a local function of the calling file — any function of the file not
- *      nested in another — or a class the file itself defines;
+ *      nested in another — or a class the file itself defines, unless the
+ *      file is a package's (`+util/size.m` is `util.size` from itself too);
  *   4. a member of a package the calling function imports (`import pkg.*`);
  *   5. a function in a `private/` folder beside the calling file;
  *   6. a method of the class of the call's first argument, when the extractor
@@ -76,6 +77,11 @@ function privateInReach(candidate: Node, callerFile: string): boolean {
 /** Whether a node sits in a class folder (`…/@Cls/x.m`). */
 function inClassFolder(n: Node): boolean {
   return /(?:^|\/)@[^/]+\/[^/]+$/.test(n.filePath);
+}
+
+/** The function or class a package file defines (`+util/size.m` → `util::size`); its local functions are not. */
+function isPackageMember(n: Node): boolean {
+  return ownerOf(n) !== '' && (TYPE_KINDS.has(n.kind) || (n.kind === 'function' && n.isExported === true));
 }
 
 /** A class-folder method in its own file (`@Pt/norm2.m` → `Pt::norm2`): the one with the body. */
@@ -353,12 +359,15 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
     if (hit) return hit;
   }
   // 2–3. A nested function the caller sees (the innermost), then a local
-  // function of the file, or a class it defines.
+  // function of the file, or a class it defines — but not the package
+  // function or class the file is (`+util/size.m`): that is `util.size`
+  // even from its own file, and a bare `size` there is the built-in.
   const { functions } = caller.facts;
   let local: Node | undefined;
   let nested: Node | undefined;
   let nestedDepth = Infinity;
   for (const n of caller.facts.byName.get(name) ?? []) {
+    if (isPackageMember(n)) continue;
     if (n.kind === 'function') {
       const parent = nestingParent(n, functions);
       if (parent === null) local ??= n;

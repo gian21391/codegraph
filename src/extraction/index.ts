@@ -23,6 +23,7 @@ import { extractFromSource } from './tree-sitter';
 import { ParseWorkerPool, parseWindowSize, resolveParsePoolSize, resolveParseTimeoutMs } from './parse-pool';
 import { StoreWriter, StoreBundle, finalizeStoreBundle } from './store-writer';
 import { materializeKernelResult } from './kernel';
+import { addMatlabReachableNames, withoutUnanswerableMatlabBuiltins } from './languages/matlab-builtins';
 import { detectGeneratedFile } from './generated-detection';
 import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages, readGrammarWasmBytes, isMpegTransportStream, hasMpegTsExtension, MPEG_TS_SNIFF_BYTES, hasGrammarLoadFailure } from './grammars';
 import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns, loadIncludePatterns, PROJECT_CONFIG_FILENAME } from '../project-config';
@@ -2174,6 +2175,16 @@ export class ExtractionOrchestrator {
    * {@link scopedSyncMatcher}.
    */
   private scopedMatcher: { key: string; matcher: ScopeIgnore } | null = null;
+  /**
+   * The names a bare MATLAB call can reach outside its own file, which decide
+   * the built-in calls not worth storing (see withoutUnanswerableMatlabBuiltins):
+   * those of the `.m` files already stored, read when the first MATLAB file is
+   * stored, and of every file a run is about to store (`expectFiles`), which a
+   * file it stores before them may call. Only ever grows: a name kept that no
+   * file defines any more costs a row, never an edge.
+   */
+  private matlabReachable: Set<string> | null = null;
+  private expectedMatlabPaths: string[] = [];
 
   constructor(rootDir: string, queries: QueryBuilder) {
     this.rootDir = rootDir;
@@ -2492,6 +2503,7 @@ export class ExtractionOrchestrator {
       });
     }, skipStats);
     if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] scan: ${Date.now() - tScan}ms (${files.length} files)`);
+    this.expectFiles(files, true);
     /** Only meaningful when nothing was indexable — see IndexResult (#1502). */
     const skipSummary = (): Pick<IndexResult, 'filesSkippedUnsupported' | 'topUnsupportedExtensions'> => {
       let total = 0;
@@ -2692,7 +2704,7 @@ export class ExtractionOrchestrator {
             ...(result.unresolvedReferences.length > 0 ? { extraRefs: result.unresolvedReferences } : {}),
           });
         } else {
-          storeWriter.send(this.buildFreshStoreBundle(filePath, content, language, stats, result));
+          storeWriter.send(this.buildFreshStoreBundle(filePath, content, language, stats, this.withoutUnanswerableBuiltins(result, filePath, language)));
         }
         await storeWriter.waitBelow(STORE_WRITER_WINDOW);
       } else {
@@ -3136,6 +3148,7 @@ export class ExtractionOrchestrator {
     let totalNodes = 0;
     let totalEdges = 0;
 
+    this.expectFiles(filePaths);
     for (const filePath of filePaths) {
       const result = await this.indexFile(filePath);
 
@@ -3324,6 +3337,39 @@ export class ExtractionOrchestrator {
     }
   }
 
+  /**
+   * Files a run will store: their MATLAB names are reachable from the files it
+   * stores before them. `now` reads the stored ones at once, before a full
+   * index's parse loop, in which the main thread must not read the database.
+   */
+  private expectFiles(paths: readonly string[], now = false): void {
+    for (const p of paths) {
+      if (!p.endsWith('.m')) continue;
+      if (this.matlabReachable) addMatlabReachableNames([p], this.matlabReachable);
+      else this.expectedMatlabPaths.push(p);
+    }
+    if (now && this.expectedMatlabPaths.length > 0) this.matlabReachableNames();
+  }
+
+  private matlabReachableNames(): Set<string> {
+    if (!this.matlabReachable) {
+      this.matlabReachable = new Set();
+      addMatlabReachableNames(this.queries.getAllFilePaths(), this.matlabReachable);
+      addMatlabReachableNames(this.expectedMatlabPaths, this.matlabReachable);
+      this.expectedMatlabPaths = [];
+    }
+    return this.matlabReachable;
+  }
+
+  /** `result` without the MATLAB built-in calls nothing in the project could answer (see matlab-builtins). */
+  private withoutUnanswerableBuiltins(result: ExtractionResult, filePath: string, language: Language): ExtractionResult {
+    if (language !== 'matlab' || result.unresolvedReferences.length === 0) return result;
+    const reachable = this.matlabReachableNames();
+    addMatlabReachableNames([filePath], reachable);
+    const refs = withoutUnanswerableMatlabBuiltins(result.unresolvedReferences, result.nodes, reachable);
+    return refs === result.unresolvedReferences ? result : { ...result, unresolvedReferences: refs };
+  }
+
   private async storeExtractionResult(
     filePath: string,
     content: string,
@@ -3343,6 +3389,7 @@ export class ExtractionOrchestrator {
     // storing — persisting the transport as-is records the file as having no
     // symbols at all (#1541). No-op for already-decoded results.
     result = materializeKernelResult(result, filePath, language);
+    result = this.withoutUnanswerableBuiltins(result, filePath, language);
 
     // Bulk inserts run in bounded sub-transactions with a yield between, so a
     // giant generated file (tens of thousands of symbols) can't block the
@@ -4062,6 +4109,7 @@ export class ExtractionOrchestrator {
 
     // Index changed files
     const total = filesToIndex.length;
+    this.expectFiles(filesToIndex);
     for (let i = 0; i < filesToIndex.length; i++) {
       const filePath = filesToIndex[i]!;
       onProgress?.({

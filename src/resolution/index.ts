@@ -66,6 +66,7 @@ import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
 import { matchMatlabReference } from './matlab-lookup';
+import { isMatlabBuiltinCall } from '../extraction/languages/matlab-builtins';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
 import { builtinModules } from 'module';
@@ -2276,6 +2277,28 @@ export class ReferenceResolver {
     return unresolved.filter((ref) => ref.rowId == null || !this.deferredRowIds.has(ref.rowId));
   }
 
+  /**
+   * `failures` less the bare MATLAB calls of a built-in's name (`plot(x)`,
+   * `set(h, …)`), whose rows are deleted instead of parked as failed: no
+   * project function answered one, so it is MATLAB's own, and kept it would
+   * be one row in every function that calls it. A sync that later adds a
+   * project function of the name reaches only the calls in the files it
+   * re-indexes (see matlab-builtins). `removed` counts the rows deleted.
+   */
+  private discardBuiltinFailures(failures: UnresolvedRef[]): { kept: UnresolvedRef[]; removed: number } {
+    if (!failures.some(isMatlabBuiltinCall)) return { kept: failures, removed: 0 };
+    const kept: UnresolvedRef[] = [];
+    const rowIds: number[] = [];
+    const legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> = [];
+    for (const ref of failures) {
+      if (!isMatlabBuiltinCall(ref)) kept.push(ref);
+      else if (ref.rowId != null) rowIds.push(ref.rowId);
+      else legacyKeys.push({ fromNodeId: ref.fromNodeId, referenceName: ref.referenceName, referenceKind: ref.referenceKind });
+    }
+    const removed = this.queries.deleteReferencesByRowIds(rowIds) + this.queries.deleteSpecificResolvedReferences(legacyKeys);
+    return { kept, removed };
+  }
+
   private deferReference(ref: UnresolvedRef, queue: UnresolvedRef[]): void {
     queue.push(ref);
     if (ref.rowId != null) this.deferredRowIds.add(ref.rowId);
@@ -2324,7 +2347,8 @@ export class ReferenceResolver {
     // is still 'pending', so any pending row at rest belongs to an
     // interrupted run and the sweep can key off the pending count.
     if (result.unresolved.length > 0) {
-      const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(this.nonDeferredFailures(result.unresolved));
+      const { kept } = this.discardBuiltinFailures(this.nonDeferredFailures(result.unresolved));
+      const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(kept);
       this.queries.markReferencesFailedByRowIds(byRowId);
       this.queries.markReferencesFailed(legacyKeys);
     }
@@ -2372,7 +2396,7 @@ export class ReferenceResolver {
       await maybeYield();
     }
 
-    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.nonDeferredFailures(result.unresolved));
+    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.discardBuiltinFailures(this.nonDeferredFailures(result.unresolved)).kept);
     for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
       this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));
       await maybeYield();
@@ -3066,8 +3090,10 @@ export class ReferenceResolver {
       // only see pending rows) but stay retryable when a later sync adds a
       // symbol that could satisfy them (#1240).
       tLp = Date.now();
-      const failures = this.nonDeferredFailures(result.unresolved);
-      const deferredCount = result.unresolved.length - failures.length;
+      const nonDeferred = this.nonDeferredFailures(result.unresolved);
+      const deferredCount = result.unresolved.length - nonDeferred.length;
+      const { kept: failures, removed: discarded } = this.discardBuiltinFailures(nonDeferred);
+      removedThisBatch += discarded;
       const failedCleanup = ReferenceResolver.partitionFailedCleanup(failures);
       for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
         removedThisBatch += this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));

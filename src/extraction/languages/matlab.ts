@@ -44,9 +44,10 @@ import { isOctave } from './matlab-syntax';
  *                 `v.m()` on any other variable is `v.m`, which the resolver
  *                 links only to an unambiguous method (a struct field indexed
  *                 reads the same, and one the function itself fills in emits
- *                 nothing). The
- *                 hottest built-ins (`size`, `zeros`, `pi`, …) are not
- *                 recorded at all: see MATLAB_BUILTINS.
+ *                 nothing). A call of a built-in's name is recorded like
+ *                 any other: whether a project function of that name is
+ *                 what it reaches is the resolver's to say (see
+ *                 MATLAB_BUILTINS, matlab-builtins.ts).
  *   - handles:    `@f` / `@pkg.f` / `@obj.m` are function references
  *                 (callbacks: `cellfun(@f, …)`, `'Callback', @onClick`).
  *   - imports:    `import pkg.Cls` (command syntax); `import pkg.*` is an
@@ -60,37 +61,6 @@ import { isOctave } from './matlab-syntax';
 /** Built-in base classes: never a project symbol, so no extends edge to guess at. */
 const BUILTIN_BASES =
   /^(?:handle|dynamicprops|hgsetget|matlab\..*|matlab|double|single|logical|char|u?int(?:8|16|32|64))$/;
-
-/**
- * The hottest MATLAB built-ins, never recorded as a bare call: they would
- * stay unresolved refs in every function that uses them (on PlatEMO, the
- * most-called names here are most of the unresolved refs, and over half the
- * database). Core MATLAB only — no toolbox function, nothing a project
- * commonly defines itself (`load`, `set`, `delete`, `plot`), nor `char` /
- * `class`, which classes overload and call bare on other values. A project MAY
- * shadow one (`size.m` on its path) — calls to that are lost, the price of
- * the set. Only a bare call is skipped: `numel(obj)` on a method's own object
- * is `Cls::numel` (a class's overload) and is kept, so is `disp(c)` on a
- * variable the function says holds a class (see callRef), and so is `@size`.
- */
-const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
-  // constants and argument counts
-  'pi', 'true', 'false', 'Inf', 'inf', 'NaN', 'nan', 'eps', 'nargin', 'nargout',
-  // array construction and shape
-  'size', 'length', 'numel', 'isscalar', 'zeros', 'ones', 'eye', 'rand', 'randn', 'randi', 'randperm',
-  'repmat', 'reshape', 'cat', 'linspace', 'meshgrid', 'cell', 'struct', 'deal',
-  'transpose', 'fliplr', 'diag', 'full', 'sparse', 'cell2mat',
-  // arithmetic, reductions and sets
-  'sum', 'prod', 'cumsum', 'cumprod', 'mean', 'std', 'max', 'min', 'abs', 'sqrt', 'exp', 'log', 'sin', 'cos',
-  'acos', 'asin', 'atan', 'real', 'imag', 'conj', 'floor', 'ceil', 'round', 'mod', 'rem', 'sign', 'norm',
-  'sort', 'sortrows', 'unique', 'setdiff', 'intersect', 'ismember', 'any', 'all', 'find',
-  // predicates and conversion
-  'isempty', 'isfield', 'isnumeric', 'ischar', 'iscell', 'isstruct', 'isnan', 'isinf', 'isa',
-  'isequal', 'strcmp', 'strcmpi', 'num2str', 'str2double', 'sprintf', 'double', 'logical', 'fieldnames',
-  'func2str', 'feval', 'cellfun', 'arrayfun', 'fullfile', 'fileparts', 'mfilename', 'exist',
-  // output and errors
-  'disp', 'fprintf', 'error', 'warning', 'assert', 'rethrow',
-]);
 
 /** Parent node types under which a bare identifier is READ as a value (or called with no arguments). */
 const VALUE_PARENTS = new Set([
@@ -513,8 +483,7 @@ function handleRef(node: SyntaxNode, source: string): string | null {
  * `dispatch` set: MATLAB takes the class's method when it has one, behind the
  * caller's own and imported functions and ahead of the path — the resolver
  * decides from the class. Any other call is a function call, even of a name
- * the class overloads (`char(s, '…')`); a hot built-in (MATLAB_BUILTINS) is
- * then no call worth recording.
+ * the class overloads (`char(s, '…')`).
  */
 function callRef(node: SyntaxNode, name: string, source: string): { name: string; dispatch: boolean } | null {
   const f = frame();
@@ -530,7 +499,7 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
   const first = firstArg?.type === 'identifier' ? getNodeText(firstArg, source) : null;
   const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first);
   if (cls) return { name: `${cls}::${name}`, dispatch: true };
-  return MATLAB_BUILTINS.has(name) ? null : { name, dispatch: false };
+  return { name, dispatch: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -839,7 +808,7 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'catch_clause' && errorVariable(parent)?.id !== node.id);
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!MATLAB_BUILTINS.has(name) && !isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
+        if (!isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
         return false;
       }
 
@@ -848,7 +817,7 @@ export const matlabExtractor: LanguageExtractor = {
         if (!cmd) return true;
         const name = getNodeText(cmd, source);
         if (name === 'import') extractImport(node, ctx);
-        else if (!MATLAB_BUILTINS.has(name) && !isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
+        else if (!isLocal(frame(), name)) addRef(ctx, name, 'calls', node);
         return true;
       }
 
