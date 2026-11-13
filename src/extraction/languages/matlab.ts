@@ -7,17 +7,28 @@ import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
 import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
-import { RUNTIME_TAG, matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
+import { MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
+import { GuardScope, type MatlabGuard } from './matlab-guards';
 import {
   HOLE,
   MAX_TEXT,
   NAME_SHAPED,
+  argValue,
+  bracesIndex,
   callArgs,
+  callersUnknown,
+  chainHead,
   commandItems,
   errorVariable,
   evaluate,
+  fieldOf,
+  isColonIndex,
+  isOneBuiltStruct,
+  literalIndex,
   namedChildren,
+  parseSymPath,
   stringLiteral,
+  templateOf,
   type FnVal,
   type Val,
   type ValueHost,
@@ -104,6 +115,15 @@ import {
  *                 workspace: the resolver drops one nothing answers. In a
  *                 script such a name is a variable. `S = load(f)` is a
  *                 struct.
+ *   - what calls pass: a call of a function written with arguments records
+ *                 what each argument holds where the code says (the
+ *                 `args` fact, see matlab-ref-facts.ts), and
+ *                 matlabParamSinks finds where a function calls what its
+ *                 caller passes (`feval(regr, S)`), and under which tests
+ *                 of what the caller passed (matlab-guards.ts): the two
+ *                 halves ../../resolution/matlab-argument-synthesizer.ts
+ *                 joins. A parameter passed on under such a test is not
+ *                 recorded.
  *   - imports:    `import pkg.Cls` (command syntax); `import pkg.*` is an
  *                 import node only, since no node stands for a package.
  *
@@ -344,6 +364,20 @@ interface Frame {
    * lets the resolver drop one nothing answers.
    */
   runtime?: ReadonlySet<string>;
+  /**
+   * A function's parameters in order (null for an ignored `~`), when each
+   * holds what the caller passed (see Sym in matlab-values.ts): a function's
+   * own, not a nested one's (it shares its workspace), not a lambda's.
+   */
+  params?: readonly (string | null)[];
+  /** Where the function is defined (`line:column` of its first line, 1-based line): the key its parameter sinks are listed under. */
+  site?: string;
+  /** Its parameters passed on unchanged wherever read (see forwardable). */
+  forwards?: ReadonlySet<string>;
+  /** Its definition, which the conditions of its sinks and calls are read from (see guardScope). */
+  def?: SyntaxNode;
+  /** Those conditions, read when first asked for (see guardScope). */
+  guards?: GuardScope;
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
@@ -481,7 +515,25 @@ interface ScopeFacts {
   evalCodes: Array<{ callee: string; arg: SyntaxNode }>;
   /** The names `load(f, 'a', 'b')` / `load f a b` statements here make (in a script, variables too). */
   loaded: Set<string>;
+  /** Every name written here: assigned, indexed or field-assigned into, a loop's, a `catch`'s, a global. */
+  assigned: Set<string>;
+  /** The names written here from a value the interpreter may know of itself: a text, a handle, a cell, a struct, a text built. */
+  valued: Set<string>;
+  /** `x = y`, `x = y.f`, `x = y{k}`: [x, y], x known when y is (see knownNames). */
+  copies: Array<[string, string]>;
+  /** The variables (heads of `v` / `v.f`) passed to a call that is no built-in's. */
+  passed: Set<string>;
+  /** Whether something here may set names it does not spell: `load`, `clear`, `eval`, `run`, a statement that may run a script. */
+  clobbers: boolean;
+  /** Whether functions are nested in it, which share its variables. */
+  nested: boolean;
 }
+
+/** Calls that may set names the code does not spell: a `load`, a `clear`, code run by `eval`, a script `run`. */
+const CLOBBERING_CALL = /^(?:load|clear|clearvars|eval|evalc|evalin|run)$/;
+
+/** Calls whose value the interpreter computes (see evaluateCall in matlab-values.ts). */
+const VALUE_CALLS = /^(?:struct|strcat|sprintf|upper|lower|strtrim|deblank|char|func2str|str2func|mfilename)$/;
 
 /**
  * The variables of `scope` (a function_definition or a script's source_file)
@@ -502,6 +554,48 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const structFields = new Set<string>();
   const evalCodes: ScopeFacts['evalCodes'] = [];
   const loaded = new Set<string>();
+  const assigned = new Set<string>();
+  const valued = new Set<string>();
+  const copies: ScopeFacts['copies'] = [];
+  const passed = new Set<string>();
+  let clobbers = false;
+  let nested = false;
+
+  /**
+   * What an assignment's right side may be known as (see ScopeFacts): a
+   * value of itself, a copy of another variable (its head), or nothing.
+   */
+  const valueish = (rhs: SyntaxNode | null): 'value' | SyntaxNode | null => {
+    if (!rhs) return null;
+    switch (rhs.type) {
+      case 'string':
+      case 'handle_operator':
+      case 'cell':
+        return 'value';
+      case 'identifier':
+      case 'field_expression':
+        return chainHead(rhs);
+      case 'matrix':
+        return /['"]/.test(getNodeText(rhs, source)) ? 'value' : null;
+      case 'function_call': {
+        const name = getChildByField(rhs, 'name');
+        if (name?.type !== 'identifier') return null;
+        if (VALUE_CALLS.test(getNodeText(name, source))) return 'value';
+        return arrayEvidence(rhs) === 'variable' ? name : null;
+      }
+    }
+    return null;
+  };
+  /** Notes `node`'s head as written, from `rhs`. */
+  const written = (node: SyntaxNode | null, rhs: SyntaxNode | null): void => {
+    const head = chainHead(node);
+    if (!head) return;
+    const name = getNodeText(head, source);
+    assigned.add(name);
+    const from = valueish(rhs);
+    if (from === 'value') valued.add(name);
+    else if (from) copies.push([name, getNodeText(from, source)]);
+  };
 
   /**
    * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
@@ -560,17 +654,29 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
       if (!c) continue;
       switch (c.type) {
         case 'function_definition':
+          nested = true;
+          continue;
         case 'class_definition':
         case 'lambda': // its parameters are its own; it assigns nothing
           continue;
         case 'function_output':
         case 'function_arguments':
+          identifiersIn(c, source, locals);
+          continue;
         case 'global_operator':
         case 'persistent_operator':
           identifiersIn(c, source, locals);
+          identifiersIn(c, source, assigned);
           continue;
+        case 'identifier':
+          // `setup_vars`: a statement that may run a script.
+          if ((n.type === 'block' || n.type === 'source_file') && !MATLAB_BUILTINS.has(getNodeText(c, source))) clobbers = true;
+          break;
         case 'assignment': {
           const left = getChildByField(c, 'left');
+          const right = getChildByField(c, 'right');
+          if (left?.type === 'multioutput_variable') for (const out of namedChildren(left)) written(out, null);
+          else written(left, right);
           if (left?.type === 'identifier') {
             const v = getNodeText(left, source);
             locals.add(v);
@@ -594,6 +700,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         case 'iterator': {
           const v = c.namedChild(0);
           if (v?.type === 'identifier') locals.add(getNodeText(v, source));
+          written(v, c.namedChild(1));
           break;
         }
         case 'catch_clause': {
@@ -601,6 +708,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           // identifier on a later line is a statement (a command-syntax call).
           const v = errorVariable(c);
           if (v) locals.add(getNodeText(v, source));
+          written(v, null);
           break;
         }
         case 'function_call': {
@@ -614,13 +722,23 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           } else if (name === 'eval' || name === 'evalc') {
             for (const arg of callArgs(c).slice(0, 2)) evalCodes.push({ callee: name, arg });
           }
+          const args = callArgs(c);
+          if (CLOBBERING_CALL.test(name) || (args.length === 0 && isStatement(c) && !MATLAB_BUILTINS.has(name))) clobbers = true;
+          if (!MATLAB_BUILTINS.has(name)) {
+            for (const a of args) {
+              const head = a.type === 'identifier' || a.type === 'field_expression' || (a.type === 'function_call' && bracesIndex(a)) ? chainHead(a) : null;
+              if (head) passed.add(getNodeText(head, source));
+            }
+          }
           // `c{k}` / `a(end)` in a function: c and a are its variables.
           if (isFunction && arrayEvidence(c) === 'variable') locals.add(name);
           break;
         }
         case 'command': {
           const cmd = namedChildren(c).find((a) => a.type === 'command_name');
-          if (!cmd || getNodeText(cmd, source) !== 'load') break;
+          const name = cmd ? getNodeText(cmd, source) : '';
+          if (CLOBBERING_CALL.test(name) || !MATLAB_BUILTINS.has(name)) clobbers = true;
+          if (name !== 'load') break;
           for (const v of loadedNames(commandItems(c, source))) loaded.add(v);
           break;
         }
@@ -630,7 +748,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   };
   walk(scope);
   if (!isFunction) for (const v of loaded) locals.add(v);
-  return { locals, constructions, structFields, evalCodes, loaded };
+  return { locals, constructions, structFields, evalCodes, loaded, assigned, valued, copies, passed, clobbers, nested };
 }
 
 /**
@@ -659,6 +777,15 @@ function singleOutput(children: readonly SyntaxNode[], source: string): string |
   const names = new Set<string>();
   identifiersIn(out, source, names);
   return names.size === 1 ? [...names][0]! : null;
+}
+
+/** A function's parameters in order, null for an ignored one (`~`). */
+function parameterList(children: readonly SyntaxNode[], source: string): (string | null)[] {
+  const args = children.find((c) => c.type === 'function_arguments');
+  if (!args) return [];
+  return namedChildren(args)
+    .filter((c) => c.type !== 'comment' && c.type !== 'line_continuation')
+    .map((c) => (c.type === 'identifier' ? getNodeText(c, source) : null));
 }
 
 /** A function's first parameter, when it is a name (`~` ignores the object: no self). */
@@ -953,15 +1080,70 @@ function recordedValue(node: SyntaxNode): Val | undefined {
   return undefined;
 }
 
-/** What `node` holds where it is: as recorded, else as written (its literals). */
-function valueAt(node: SyntaxNode, source: string): Val {
+/** What `node` holds where it is, what the caller passed included: as recorded, else as written (its literals). */
+function rawValueAt(node: SyntaxNode, source: string): Val {
   return recordedValue(node) ?? evaluate(node, null, valueHost(source));
 }
 
-/** The values a scope's dynamic calls read (see matlab-interp.ts), when its code has any. */
-function scopeValues(scope: SyntaxNode, options: ScopeOptions, source: string): ScopeValues {
-  if (!SINK_WORDS.test(getNodeText(scope, source))) return NO_VALUES;
-  return interpretScope(scope, options, interpHost(source, (name) => isLocal(frame(), name)));
+/** What `node` holds where it is, as this file alone says it (what the caller passed unknown: see callersUnknown). */
+function valueAt(node: SyntaxNode, source: string): Val {
+  return callersUnknown(rawValueAt(node, source));
+}
+
+/**
+ * The names a walk may know the value of where they are passed (see
+ * needsWalk): one written from a value (ScopeFacts.valued), or copied from
+ * one so known or from a parameter (`r = regr`, `t = s.f`); a parameter
+ * itself when it is assigned, or when something may set names unspelled.
+ */
+function knownNames(facts: ScopeFacts, params: ReadonlySet<string>): Set<string> {
+  const known = new Set(facts.valued);
+  for (const p of params) if (facts.assigned.has(p) || facts.clobbers) known.add(p);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [to, from] of facts.copies) {
+      if (!known.has(to) && (known.has(from) || params.has(from))) {
+        known.add(to);
+        grew = true;
+      }
+    }
+  }
+  return known;
+}
+
+/**
+ * Whether a scope is worth interpreting: its code has a call built from
+ * text, or passes a call (no built-in's) a variable the walk may know the
+ * value of (see knownNames). A parameter passed on as it is needs no walk
+ * (see forwardable). A walk for parameter sinks reads every function it is
+ * asked for: a call of a parameter (`fh(x)`) is a sink too.
+ */
+function needsWalk(scope: SyntaxNode, params: readonly (string | null)[] | undefined, source: string, facts: ScopeFacts): boolean {
+  if (sinkCollector || SINK_WORDS.test(getNodeText(scope, source))) return true;
+  if (facts.passed.size === 0) return false;
+  const known = knownNames(facts, new Set(params?.filter((p): p is string => p !== null)));
+  for (const v of facts.passed) if (known.has(v)) return true;
+  return false;
+}
+
+/** The values a scope's dynamic calls read and its calls pass (see matlab-interp.ts), when it is walked (see needsWalk). */
+function scopeValues(scope: SyntaxNode, options: ScopeOptions, source: string, walk: boolean): ScopeValues {
+  return walk ? interpretScope(scope, options, interpHost(source, (name) => isLocal(frame(), name))) : NO_VALUES;
+}
+
+/**
+ * The parameters a function that is not walked passes on unchanged wherever
+ * it reads them: none written anywhere in it, and nothing in it that may set
+ * names it does not spell or write them unseen — no `load`, `clear`, `eval`
+ * or `run`, no statement that may run a script, no nested function (it
+ * shares the workspace). What a call passes as one is what the function was
+ * passed (see forwardedArg). A walked function's calls pass what its walk
+ * says, and nothing where the walk says nothing (it hit its budget, or the
+ * parameter is unknown there).
+ */
+function forwardable(params: readonly (string | null)[], facts: ScopeFacts, walked: boolean): ReadonlySet<string> {
+  if (walked || facts.clobbers || facts.nested) return EMPTY;
+  return new Set(params.filter((p): p is string => p !== null && !facts.assigned.has(p)));
 }
 
 /**
@@ -998,6 +1180,7 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
   for (const { index, kind } of sinkInputs(name, args, source)) {
     if (kind === 'run' || (!named && kind !== 'callback')) continue;
     const arg = args[index]!;
+    if (sinkCollector) collectParamSink(arg, name, kind, args, index, isStatement(node), source);
     const v = valueAt(arg, source);
     switch (kind) {
       case 'feval':
@@ -1146,8 +1329,9 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, st
     visitFunctionBody: () => {},
     walkInitializer: () => {},
     addUnresolvedReference: (ref) => {
-      if (ref.referenceName.includes(PLACEHOLDER) || ref.candidates?.some((c) => c.includes(PLACEHOLDER))) return;
-      let candidates = ref.candidates ?? [];
+      // An argument with a part nothing here knows is no value the call is known to pass: its record goes, the call stays.
+      let candidates = (ref.candidates ?? []).filter((c) => !(isMatlabArgsCandidate(c) && c.includes(PLACEHOLDER)));
+      if (ref.referenceName.includes(PLACEHOLDER) || candidates.some((c) => c.includes(PLACEHOLDER))) return;
       if (style.asValue) candidates = candidates.map((c) => (c === 'statement' ? 'bare' : c));
       if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = [...candidates, RUNTIME_TAG];
       const out: UnresolvedReference = { ...ref, line, column };
@@ -1173,15 +1357,337 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, st
 }
 
 // ---------------------------------------------------------------------------
+// What calls pass, and what functions do with what they are passed
+// ---------------------------------------------------------------------------
+
+/** Arguments a call's `args` fact covers, from the first: past them, none is recorded. */
+const MAX_RECORDED_ARGS = MATLAB_ARG_PLACES;
+
+/**
+ * Whether an argument may stand for several (a comma-separated list):
+ * `c{:}`, `c{k}` with k no literal, `s(2:3).f` — every argument after it is
+ * at a place nothing here can count to.
+ */
+function mayExpand(arg: SyntaxNode, source: string): boolean {
+  if (arg.type === 'function_call') return bracesIndex(arg) && literalIndex(arg, source) === null;
+  if (arg.type !== 'field_expression') return false;
+  const parts = namedChildren(arg);
+  return parts.some((p, i) => p.type === 'function_call' && literalIndex(p, source) === null && (bracesIndex(p) || (i < parts.length - 1 && callArgs(p).length > 0)));
+}
+
+/**
+ * Whether a field read passed as an argument (`s.f`, `s.a.b`) may stand for
+ * several: of a struct array its field is a list (`f(s.name, 'x')` of a 1×2
+ * `s` passes three), so unless each struct it reads through is one the code
+ * built, of one element, as the walk recorded it, the argument's place and
+ * every one after it are unknown.
+ */
+function fieldMayExpand(arg: SyntaxNode, source: string): boolean {
+  if (arg.type !== 'field_expression') return false;
+  const parts = namedChildren(arg);
+  let v = parts[0]?.type === 'identifier' ? recordedValue(parts[0]) : undefined;
+  for (const p of parts.slice(1)) {
+    if (!isOneBuiltStruct(v) || p.type !== 'identifier') return true;
+    v = fieldOf(v, getNodeText(p, source));
+  }
+  return false;
+}
+
+/** Whether an argument's place, and every one after it, cannot be counted to (see mayExpand, fieldMayExpand). */
+function uncountable(arg: SyntaxNode, source: string): boolean {
+  return mayExpand(arg, source) || fieldMayExpand(arg, source);
+}
+
+/**
+ * What an argument passes when it is a parameter the function passes on
+ * unchanged (see forwardable): that parameter, sealed (no field read off it
+ * is claimed), or, for `varargin{:}`, the parameters from its place on.
+ */
+function forwardedArg(arg: SyntaxNode, source: string): ReturnType<typeof argValue> {
+  const f = frame();
+  if (f.kind !== 'function' || !f.params || !f.forwards || f.forwards.size === 0) return null;
+  const spread = arg.type === 'function_call' && bracesIndex(arg) && isColonIndex(arg);
+  const head = arg.type === 'identifier' ? arg : spread ? getChildByField(arg, 'name') : null;
+  const name = head?.type === 'identifier' ? getNodeText(head, source) : null;
+  if (!name || !f.forwards.has(name)) return null;
+  const k = f.params.indexOf(name);
+  const variadic = name === 'varargin' && k === f.params.length - 1;
+  if (spread) return variadic ? { r: k, s: 1 } : null;
+  return variadic ? null : { p: k, s: 1 };
+}
+
+/**
+ * The `args` fact of `f(a, b, …)` (see matlab-ref-facts.ts): each argument
+ * whose every value is known, by its place — counted up to the first that
+ * may stand for several (see uncountable), or, in code given as text, one
+ * with a part nothing knows (`['f(' args ', ''x'')']`: any number of
+ * arguments), and including `varargin{:}` when it is the last.
+ */
+function callArgsFact(node: SyntaxNode, source: string): MatlabCallArgs | undefined {
+  const args = callArgs(node);
+  let out: MatlabCallArgs | undefined;
+  let guarded: boolean | undefined;
+  for (let i = 0; i < Math.min(args.length, MAX_RECORDED_ARGS); i++) {
+    const arg = args[i]!;
+    if (arg.type !== 'string' && getNodeText(arg, source).includes(PLACEHOLDER)) break;
+    let v = argValue(rawValueAt(arg, source)) ?? forwardedArg(arg, source);
+    // A parameter passed on under a condition a caller decides: the callee cannot tell which callers get here.
+    if (v !== null && passesParameter(v) && (guarded ??= guardScope(frame(), source)?.guarded(node) ?? true)) {
+      if (spreadItem(v)) break;
+      v = null;
+    }
+    if (v !== null && spreadItem(v)) {
+      if (!Array.isArray(v) && i === args.length - 1) (out ??= {})[i] = v;
+      break;
+    }
+    if (uncountable(arg, source)) break;
+    if (v !== null) (out ??= {})[i] = v;
+  }
+  return out;
+}
+
+/** Whether an argument's values include what the caller passed (its parameter, `varargin{:}`, a struct field holding one). */
+function passesParameter(v: MatlabArgValue): boolean {
+  return argItemsOf(v).some((x) => typeof x === 'number' || (typeof x === 'object' && ('p' in x || 'r' in x || Object.values(x.o).some(passesParameter))));
+}
+
+/** What a parameter sink does with the value it reads (see MatlabParamSink). */
+interface SinkUse {
+  /** The call that reads it: `feval`, `str2func`, `eval`, or the variable called (`fh(x)`). */
+  readonly sink: string;
+  /** What values it takes: any (`feval`), texts only (`str2func`, a template, code), handles only (`fh(x)`: a text there is indexed). */
+  readonly takes: 'any' | 'text' | 'handle';
+  /** What it makes of one: a call, a reference (a function named as a handle), or code it runs here. */
+  readonly edge: 'calls' | 'function_ref' | 'code';
+  /** Code evaluated for a value (`x = eval(c)`): a statement there runs no script. */
+  readonly asValue: boolean;
+}
+
+/**
+ * A place where a function does with a value its caller passed what it would
+ * do with a literal written there (`feval(regr, S)`, `str2func(varargin{1})`,
+ * `eval(code)`, `fh(x)`, `feval(['ft_' method], …)`): which parameter (and
+ * field of it), the text around it, and where.
+ */
+export interface MatlabParamSink extends SinkUse {
+  /** The function's site (see Frame.site). */
+  readonly fn: string;
+  /** The parameter's position (a variadic one counts on from the positional ones). */
+  readonly position: number;
+  /** The fields read off it (`cfg.winfunc` → [winfunc]). */
+  readonly path: readonly string[];
+  /** The text before and after it, for a template (`ft_` and ``); '' and '' for the value as it is. */
+  readonly prefix: string;
+  readonly suffix: string;
+  /** The parameter as the code names it: `regr`, `varargin{1}`, `cfg.winfunc`. */
+  readonly param: string;
+  /** Where the reference a literal would make is (1-based line). */
+  readonly line: number;
+  readonly column: number;
+  /** The tests of this value it runs under: only a value they admit reaches it (see matlab-guards.ts). */
+  readonly guards?: readonly MatlabGuard[];
+}
+
+/** The parameter sinks a walk collects (see matlabParamSinks). */
+interface SinkCollector {
+  /** Whether a function at this site is one to walk. */
+  wants(site: string): boolean;
+  /** Notes the sinks `v` (what a sink reads at `at`) holds, in the function walked now. */
+  add(v: Val, use: SinkUse, at: SyntaxNode): void;
+  readonly sinks: MatlabParamSink[];
+  /** Each sink's frame and node, for the code a caller passes to an `eval` sink. */
+  readonly places: Map<MatlabParamSink, { frame: Frame; at: SyntaxNode }>;
+}
+
+/** Set while matlabParamSinks walks a file: the extractor's sinks report to it. */
+let sinkCollector: SinkCollector | null = null;
+
+/** The parameter at `position` with `path` as the code names it, in a function whose parameters are `params`; null when it has none there. */
+function paramName(params: readonly (string | null)[], position: number, path: readonly string[]): string | null {
+  const last = params.length - 1;
+  const name = params[last] === 'varargin' && position >= last ? `varargin{${position - last + 1}}` : params[position];
+  return name ? [name, ...path].join('.') : null;
+}
+
+/** A collector for the functions at `sites` of a file whose text is `source` (see SinkCollector). */
+function newSinkCollector(sites: ReadonlySet<string>, source: string): SinkCollector {
+  const sinks: MatlabParamSink[] = [];
+  const places = new Map<MatlabParamSink, { frame: Frame; at: SyntaxNode }>();
+  return {
+    sinks,
+    places,
+    wants: (site) => sites.has(site),
+    add(v, use, at) {
+      const f = frame();
+      if (!f.params || !f.site) return;
+      const found: Array<{ position: number; path: readonly string[]; prefix: string; suffix: string; takes: SinkUse['takes'] }> = [];
+      for (const s of v.syms) {
+        const p = parseSymPath(s.path);
+        if (p?.kind === 'spread') found.push({ position: p.position, path: [], prefix: '', suffix: '', takes: use.takes });
+        else if (p?.kind === 'param') found.push({ position: p.position, path: p.fields, prefix: '', suffix: '', takes: use.takes });
+      }
+      if (use.takes !== 'handle') {
+        for (const text of v.strs) {
+          const t = templateOf(text);
+          const p = t && parseSymPath(t.path);
+          if (p?.kind === 'param') found.push({ position: p.position, path: p.fields, prefix: t!.prefix, suffix: t!.suffix, takes: 'text' });
+        }
+      }
+      // What one of several parameters holds (`if nargin < 2, b = a; end; feval(b)`): which one depends on
+      // how many the caller passed, which no call's record says. Nothing, rather than each caller's every one.
+      const positions = new Set(found.map((one) => one.position));
+      if (positions.size > 1) return;
+      for (const one of found) {
+        const param = paramName(f.params, one.position, one.path);
+        if (param === null) continue;
+        // Under a condition what a caller passes decides (`if strcmp(action, 'run')`, an earlier `return`): only
+        // the values it admits when it tests this very one, nothing when it tests anything else (see matlab-guards.ts).
+        const guards = guardScope(f, source)?.sinkGuards(at, one) ?? null;
+        if (guards === null) continue;
+        const sink: MatlabParamSink = {
+          ...use,
+          ...(guards.length > 0 ? { guards } : {}),
+          takes: one.takes,
+          fn: f.site,
+          position: one.position,
+          path: one.path,
+          prefix: one.prefix,
+          suffix: one.suffix,
+          param,
+          line: at.startPosition.row + 1,
+          column: at.startPosition.column,
+        };
+        sinks.push(sink);
+        places.set(sink, { frame: f, at });
+      }
+    },
+  };
+}
+
+/**
+ * The conditions frame `f`'s code runs under (see matlab-guards.ts): its
+ * function's, read once. Null where no function's own walk is (a nested
+ * function's, a script's), or the code is text run by `eval`, whose tree is
+ * not the function's.
+ */
+function guardScope(f: Frame, source: string): GuardScope | null {
+  let g: Frame | null = f;
+  while (g && g.kind === 'lambda') g = g.parent;
+  if (!g || g.kind !== 'function' || !g.def || !g.params) return null;
+  return (g.guards ??= new GuardScope(g.def, g.params, source));
+}
+
+/**
+ * Notes the parameter sink a dynamic call's argument may be (see
+ * MatlabParamSink): `feval`'s function, a text `str2func` or a function
+ * taker reads, code `eval` / `evalc` run here. Not `evalin` or a callback
+ * (another workspace), and not where an argument before it may stand for
+ * several (its place is not this one), nor a `feval` that would dispatch on
+ * its object's class.
+ */
+function collectParamSink(arg: SyntaxNode, name: string, kind: string, args: readonly SyntaxNode[], index: number, statement: boolean, source: string): void {
+  if (!sinkCollector || args.slice(0, index).some((a) => uncountable(a, source))) return;
+  let use: SinkUse;
+  if (kind === 'feval') {
+    if (dispatchClass(args[1], source) !== undefined) return;
+    use = { sink: name, takes: 'any', edge: 'calls', asValue: false };
+  } else if (kind === 'function') use = { sink: name, takes: name === 'str2func' ? 'text' : 'any', edge: 'function_ref', asValue: false };
+  else if (kind === 'eval') use = { sink: name, takes: 'text', edge: 'code', asValue: name === 'eval' && !statement };
+  else return;
+  sinkCollector.add(rawValueAt(arg, source), use, arg);
+}
+
+/** A context that walks a file for what it reads, keeping no node: its references go to `refs`, from `from` when no function is on the stack. */
+function collectingContext(source: string, filePath: string, refs: UnresolvedReference[], from: string | null): ExtractorContext {
+  let ids = 0;
+  const stack: string[] = from ? [from] : [];
+  const ctx: ExtractorContext = {
+    createNode: (kind, name) => ({ id: `matlab-sink-walk:${++ids}`, kind, name }) as Node,
+    visitNode: (n) => {
+      if (!matlabExtractor.visitNode!(n, ctx)) for (const c of namedChildren(n)) ctx.visitNode(c);
+    },
+    visitFunctionBody: () => {},
+    walkInitializer: () => {},
+    addUnresolvedReference: (ref) => refs.push(ref),
+    pushScope: (id) => stack.push(id),
+    popScope: () => void stack.pop(),
+    filePath,
+    source,
+    nodeStack: stack,
+    nodes: [],
+  };
+  return ctx;
+}
+
+/**
+ * The parameter sinks of the functions of a MATLAB file defined at `sites`
+ * (see Frame.site), found by the walk extraction makes of them — the same
+ * frames, values and sinks — and, while the file's tree lives, what code a
+ * caller passes to one of its `eval` sinks references, read in that
+ * function's frame as code `eval` runs there (its references from
+ * `CALLEE`). `root` is the file's parsed tree — of its whole text, or of the
+ * lines of the functions asked for, the others blank — and `functions` the
+ * names of every function the file defines; the tree's owner deletes it.
+ */
+export function matlabParamSinks<T>(
+  root: SyntaxNode,
+  source: string,
+  filePath: string,
+  sites: ReadonlySet<string>,
+  functions: ReadonlySet<string>,
+  use: (sinks: readonly MatlabParamSink[], codeRefs: (sink: MatlabParamSink, code: string) => UnresolvedReference[]) => T,
+): T {
+  if (isOctave(source)) return use([], () => []);
+  return inFile(root, source, filePath, () => {
+    // `source` may hold only the functions asked for: the file's others are named by the caller.
+    fileFunctions = new Set([...fileFunctions, ...functions]);
+    const collector = newSinkCollector(sites, source);
+    sinkCollector = collector;
+    try {
+      walkFile(root, collectingContext(source, filePath, [], null));
+    } finally {
+      sinkCollector = null;
+    }
+    const codeRefsOf = (sink: MatlabParamSink, code: string): UnresolvedReference[] => {
+      const place = collector.places.get(sink);
+      if (!place || sink.edge !== 'code') return [];
+      const out: UnresolvedReference[] = [];
+      const sub = collectingContext(source, filePath, out, CALLEE);
+      inFrame(place.frame, () => codeRefs([code], place.at, sub, 'here', sink.asValue));
+      return out;
+    };
+    return use(collector.sinks, codeRefsOf);
+  });
+}
+
+/** The `fromNodeId` of the references matlabParamSinks reads off code a caller passes: the function holding the sink. */
+export const CALLEE = 'matlab-param-sink:callee';
+
+// ---------------------------------------------------------------------------
 // Definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * A function's first line as written, its parameter list as parameterList
+ * reads it (`function y = f(a, ~, varargin)`: no comment, no `...`), which
+ * matlabParameterNames reads back.
+ */
 function functionSignature(node: SyntaxNode, children: readonly SyntaxNode[], source: string): string {
   const args = children.find((c) => c.type === 'function_arguments');
   const name = getChildByField(node, 'name');
-  const end = args?.endIndex ?? name?.endIndex ?? node.endIndex;
-  const text = source.slice(node.startIndex, end).replace(/\s+/g, ' ').trim();
+  const head = source.slice(node.startIndex, args?.startIndex ?? name?.endIndex ?? node.endIndex).replace(/\s+/g, ' ').trim();
+  const params = args ? `(${parameterList(children, source).map((p) => p ?? '~').join(', ')})` : '';
+  const text = head + params;
   return node.type === 'function_signature' && !text.startsWith('function') ? `function ${text}` : text;
+}
+
+/** A MATLAB function's parameter names in order, as its signature lists them (see functionSignature; `~` for an ignored one); null for none it could read. */
+export function matlabParameterNames(signature: string | undefined): string[] | null {
+  const list = /\(([^()]*)\)\s*$/.exec(signature ?? '')?.[1];
+  if (list === undefined) return signature !== undefined && !signature.trimEnd().endsWith(')') ? [] : null;
+  if (list.trim() === '') return [];
+  const params = list.split(',').map((p) => p.trim());
+  return params.every((p) => p === '~' || /^[A-Za-z]\w*$/.test(p)) ? params : null;
 }
 
 /** Whether this top-level function is the file's own (the first thing in a function file). */
@@ -1251,9 +1757,11 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     : null;
   if (oldStyleClass) ctx.pushScope(oldStyleClass.id);
   const fn = ctx.createNode(kind, name, node, extra);
-  if (!fn || node.type === 'function_signature') {
+  const site = `${node.startPosition.row + 1}:${node.startPosition.column}`;
+  // A declaration has no body to walk; a walk for parameter sinks walks only the functions it was asked for.
+  if (!fn || node.type === 'function_signature' || (sinkCollector && !sinkCollector.wants(site))) {
     if (oldStyleClass) ctx.popScope();
-    return; // a declaration: no body to walk
+    return;
   }
 
   // The method's own object: a constructor's output, any other non-static
@@ -1271,6 +1779,9 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
 
   const facts = scanScope(node, source, true);
   const parent = nested ? outer : null;
+  // A nested function's parameters are variables of the workspace it shares: what they hold is not followed.
+  const params = nested ? undefined : parameterList(children, source);
+  const walk = needsWalk(node, params, source, facts);
   const f: Frame = {
     kind: 'function',
     qual: [...qual, name],
@@ -1279,6 +1790,8 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     structFields: facts.structFields,
     self,
     parent,
+    ...(params ? { params, forwards: forwardable(params, facts, walk), def: node } : {}),
+    site,
   };
 
   // What holds something on entry: the parameters, and a method's output (a constructor's is the object).
@@ -1293,11 +1806,12 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     inputs,
     // A nested function shares its parent's variables (its own parameters and outputs aside).
     shared: parent ? (v) => !own.has(v) && isLocal(parent, v) : () => false,
+    ...(params ? { params } : {}),
   };
 
   ctx.pushScope(fn.id);
   inFrame(f, () => {
-    f.values = scopeValues(node, options, source);
+    f.values = scopeValues(node, options, source, walk);
     addRuntimeNames(facts, f, source, true);
     for (const c of children) {
       if (c.type === 'block' || c.type === 'arguments_statement' || c.type === 'function_definition') ctx.visitNode(c);
@@ -1403,28 +1917,16 @@ function extractImport(node: SyntaxNode, ctx: ExtractorContext): void {
 
 /** A script's top level, or a function file's (its code outside every function is a script's). */
 function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
-  const source = ctx.source;
-  javaImported = javaImportsOf(node, source);
-  fileFunctions = fileFunctionsOf(node, source);
-  fileStem = matlabFileStem(ctx.filePath);
+  inFile(node, ctx.source, ctx.filePath, () => walkFile(node, ctx));
+}
+
+/** Runs `body` with what the walk keeps of the file `root` is (its Java imports, its functions, its name), all of it dropped after. */
+function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () => T): T {
+  javaImported = javaImportsOf(root, source);
+  fileFunctions = fileFunctionsOf(root, source);
+  fileStem = matlabFileStem(filePath);
   try {
-    const facts = scanScope(node, source, false);
-    const f: Frame = {
-      kind: 'file',
-      qual: matlabPathScope(ctx.filePath).packages,
-      locals: facts.locals,
-      classHints: classHintsFrom(facts, (v) => facts.locals.has(v)),
-      structFields: facts.structFields,
-      self: null,
-      parent: null,
-    };
-    inFrame(f, () => {
-      // A function file's or a class file's top level runs nothing of its own.
-      const script = namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
-      f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source) : NO_VALUES;
-      addRuntimeNames(facts, f, source, false);
-      for (const c of namedChildren(node)) ctx.visitNode(c);
-    });
+    return body();
   } finally {
     javaImported = EMPTY;
     arrayEvidenceMemo = new Map();
@@ -1434,6 +1936,28 @@ function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
     for (const { tree } of codeTrees.values()) tree?.delete();
     codeTrees = new Map();
   }
+}
+
+/** Walks a file from its root (see extractFile); a walk for parameter sinks walks its definitions only. */
+function walkFile(node: SyntaxNode, ctx: ExtractorContext): void {
+  const source = ctx.source;
+  const facts = scanScope(node, source, false);
+  const f: Frame = {
+    kind: 'file',
+    qual: matlabPathScope(ctx.filePath).packages,
+    locals: facts.locals,
+    classHints: classHintsFrom(facts, (v) => facts.locals.has(v)),
+    structFields: facts.structFields,
+    self: null,
+    parent: null,
+  };
+  inFrame(f, () => {
+    // A function file's or a class file's top level runs nothing of its own.
+    const script = !sinkCollector && namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
+    f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source, needsWalk(node, undefined, source, facts)) : NO_VALUES;
+    addRuntimeNames(facts, f, source, false);
+    for (const c of namedChildren(node)) if (!sinkCollector || DEFINITIONS.has(c.type)) ctx.visitNode(c);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1505,13 +2029,18 @@ export const matlabExtractor: LanguageExtractor = {
         // parse that recovered from an error put something else between
         // (`Tune = (0.2, 0.1)` in a notes file read as MATLAB).
         const form = callee.nextSibling?.type === '(' ? undefined : 'bare';
-        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtimeFact(frame(), written) });
+        // (A walk for parameter sinks keeps no reference: what calls pass is no part of it.)
+        const args = form || sinkCollector || MATLAB_BUILTINS.has(written) ? undefined : callArgsFact(node, source);
+        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtimeFact(frame(), written), ...(args ? { args } : {}) });
         if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx, isStatement(node));
         if (ref) dynamicCallRefs(node, written, ctx, ref.name === written);
         else if (isLocal(frame(), written)) {
           // `fh(x)` after `fh = @solve`: a call of what the handle holds.
           const held = recordedValue(callee);
           if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx);
+          if (held && sinkCollector && dispatchClass(callArgs(node)[0], source) === undefined) {
+            sinkCollector.add(held, { sink: written, takes: 'handle', edge: 'calls', asValue: false }, node);
+          }
         }
         return false; // arguments still walked
       }

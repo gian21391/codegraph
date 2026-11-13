@@ -89,6 +89,17 @@ export function describeSynthesizedHop(edge: Edge | null | undefined): Synthesiz
       // Go: a call through a struct field holding a function, `d.refreshf(ctx)`;
       // `via` is the field it was copied from, which the wiring site writes.
       return hop(`func field ${quoted(m.field, 'a func field')}${m.via ? ` (set from \`${String(m.via)}\`)` : ''}`);
+    case 'matlab-argument': {
+      // MATLAB: a call of what the caller passes, `feval(regr, S)` given `'regpoly0'`
+      // (`value`) at the caller's call (`registeredAt`); a call of the parameter
+      // itself (`fh(x)`) names it alone, and `str2func(varargin{1})` refers to the
+      // function rather than calling it (a `references` edge).
+      const sink = String(m.sink ?? 'feval');
+      const param = m.param ? String(m.param) : '…';
+      const site = sink === param ? `\`${param}\`` : `through \`${sink}(${param})\``;
+      const given = m.value ? ` given \`${String(m.value)}\`` : '';
+      return hop(`${edge!.kind === 'references' ? 'references' : 'calls'} ${site}${given}`);
+    }
     default:
       // redux-thunk, cpp-override, gin-middleware-chain, flutter-build, …
       return hop(by.replace(/-/g, ' '));

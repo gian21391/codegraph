@@ -2682,6 +2682,25 @@ export class QueryBuilder {
     ).get(`${filePath}:`, `${filePath};`);
   }
 
+  /**
+   * The targets of the edges whose call records what it passes (a MATLAB
+   * call's `args`, see extraction/languages/matlab-ref-facts.ts): the
+   * functions the MATLAB argument synthesis may look at.
+   */
+  getMatlabArgumentTargets(): string[] {
+    return (this.db.prepare(
+      "SELECT DISTINCT target FROM edges WHERE kind IN ('calls', 'references') AND metadata LIKE '%\"args\":%'"
+    ).all() as Array<{ target: string }>).map((r) => r.target);
+  }
+
+  /** The edges into `target` whose call records what it passes (see getMatlabArgumentTargets): source, place, and the record as JSON text. */
+  getMatlabArgumentEdgesInto(target: string): Array<{ source: string; line: number | null; args: string }> {
+    return this.edgeKindStmt(`SELECT source, line, args FROM (
+        SELECT source, line, CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.args') END AS args
+        FROM edges WHERE target = ? AND kind IN ('calls', 'references') AND metadata LIKE '%"args":%'
+      ) WHERE args IS NOT NULL`).all(target) as Array<{ source: string; line: number | null; args: string }>;
+  }
+
   wasSynthesisInput(filePath: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM synthesis_inputs WHERE file_path = ?').get(filePath);
   }

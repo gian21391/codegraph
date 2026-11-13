@@ -1,5 +1,6 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
+import type { MatlabArgItem, MatlabArgValue } from './matlab-ref-facts';
 
 /**
  * What a MATLAB expression can hold, as far as the names a program spells out
@@ -14,7 +15,12 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
  *     row built where it is read (`{'a', 'b'}`), each element in its place;
  *   - a struct: a value per field any element has, and, for one built where
  *     it is read (`s = struct(…)`, `s(2).f = …`), each element's;
- *   - `open`: other values are possible (a parameter, what a call returns).
+ *   - what the function's caller passed: a parameter (`regr`), a field of
+ *     one (`cfg.winfunc`, two levels at most), `varargin{2}` — a symbolic
+ *     value (see Sym), which only the call sites know. In a text it is a
+ *     MARK-delimited part (`['ft_' method]` is `ft_⁁1⁁`): a template the
+ *     caller's value completes;
+ *   - `open`: other values are possible (what a call returns).
  *
  * Every possibility kept is a value the expression can have along some path
  * of the code (which branch is taken aside), so that each reference made of
@@ -25,6 +31,13 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 
 /** A part of a string nothing here knows: any text, the empty one included. */
 export const HOLE = '\u0000';
+
+/**
+ * Delimits a symbolic value's part of a text: `MARK + path + MARK` (see Sym).
+ * Anything that reads text as text (code to parse, a name to call) reads such
+ * a part as a HOLE (see holed).
+ */
+export const MARK = '\u0001';
 
 /** Possibilities (strings and handles together) one value keeps. */
 const MAX_POSSIBILITIES = 16;
@@ -43,12 +56,34 @@ export interface FnVal {
   readonly variable?: string;
 }
 
+/**
+ * A value the function's caller passed (see the top of this file), by path:
+ *   - `k` — the k-th parameter (0-based), as passed: `regr`, `varargin{2}`
+ *     (a variadic argument counts on from the positional ones);
+ *   - `k.f`, `k.f.g` — a field of it, read before any code could change it;
+ *   - `vk` — the `varargin` cell, whose first element is parameter k;
+ *   - `sk` — `varargin{:}`: the variadic arguments from parameter k on, of
+ *     which an argument list's first is parameter k.
+ * `sealed`: code that may change an object the value is has run since it was
+ * read (a call of the project's, a method call), so a field read off it no
+ * longer says what the caller passed. The value itself is still the caller's.
+ */
+export interface Sym {
+  readonly path: string;
+  readonly sealed: boolean;
+}
+
+/** Fields a symbolic path follows off a parameter. */
+const MAX_SYM_FIELDS = 2;
+
 /** A struct element's fields: field → value. */
 export type Fields = ReadonlyMap<string, Val>;
 
 export interface Val {
   readonly strs: readonly string[];
   readonly fns: readonly FnVal[];
+  /** What the caller passed (see Sym). */
+  readonly syms: readonly Sym[];
   /** A cell array: the value of any of its elements. */
   readonly cell: Val | null;
   /** A cell row's elements in order, when each is known (`{'a', 'b'}`). */
@@ -76,6 +111,7 @@ export interface Val {
 interface Parts {
   strs?: readonly string[];
   fns?: readonly FnVal[];
+  syms?: readonly Sym[];
   cell?: Val | null;
   cellItems?: readonly Val[] | null;
   fields?: Fields | null;
@@ -96,6 +132,11 @@ function make(p: Parts): Val {
     fns = fns.slice(0, MAX_POSSIBILITIES - strs.length);
     open = true;
   }
+  let syms = p.syms ?? [];
+  if (syms.length > MAX_POSSIBILITIES) {
+    syms = syms.slice(0, MAX_POSSIBILITIES);
+    open = true;
+  }
   const cell = p.cell ?? null;
   const fields = p.fields ?? null;
   // Items in place only for a value that is one kind of array.
@@ -107,10 +148,11 @@ function make(p: Parts): Val {
   let depth = 0;
   if (cell) depth = 1 + cell.depth;
   if (fields) for (const f of fields.values()) depth = Math.max(depth, 1 + f.depth);
-  if (depth > MAX_DEPTH) return { strs, fns, cell: null, cellItems: null, fields: null, records: null, row: false, built: false, stringObject: strs.length > 0 && (p.stringObject ?? false), open: true, depth: 0 };
+  if (depth > MAX_DEPTH) return { strs, fns, syms, cell: null, cellItems: null, fields: null, records: null, row: false, built: false, stringObject: strs.length > 0 && (p.stringObject ?? false), open: true, depth: 0 };
   return {
     strs,
     fns,
+    syms,
     cell,
     cellItems,
     fields,
@@ -127,6 +169,16 @@ function make(p: Parts): Val {
 export const OPEN: Val = make({ open: true });
 /** Nothing at all (the elements of `{}`). */
 export const NONE: Val = make({});
+
+/** Parameter k as the caller passed it (see Sym). */
+export function paramVal(k: number): Val {
+  return make({ syms: [{ path: String(k), sealed: false }] });
+}
+
+/** `varargin`, its first element parameter k (see Sym). */
+export function variadicVal(k: number): Val {
+  return make({ syms: [{ path: `v${k}`, sealed: false }] });
+}
 
 /** `s` as text, its HOLEs merged and cut at MAX_TEXT; a string object when `object`. */
 export function strVal(s: string, object = false): Val {
@@ -176,22 +228,143 @@ export function withOpen(v: Val): Val {
 
 /** Whether `v` knows nothing: open, and no possibility. */
 export function isUnknown(v: Val): boolean {
-  return v.open && v.strs.length === 0 && v.fns.length === 0 && !v.cell && !v.fields;
+  return v.open && v.strs.length === 0 && v.fns.length === 0 && v.syms.length === 0 && !v.cell && !v.fields;
 }
 
-/** Whether `v` may be something besides a cell. */
+/** Whether `v` may be something besides a cell (what a caller passed may be anything). */
 function besidesCell(v: Val): boolean {
-  return v.open || v.strs.length > 0 || v.fns.length > 0 || v.fields !== null;
+  return v.open || v.strs.length > 0 || v.fns.length > 0 || v.syms.length > 0 || v.fields !== null;
 }
 
 /** Whether `v` may be something besides a struct. */
 function besidesStruct(v: Val): boolean {
-  return v.open || v.strs.length > 0 || v.fns.length > 0 || v.cell !== null;
+  return v.open || v.strs.length > 0 || v.fns.length > 0 || v.syms.length > 0 || v.cell !== null;
 }
 
 /** Whether `v` may be something besides text. */
 export function besidesText(v: Val): boolean {
+  return v.open || v.fns.length > 0 || v.syms.length > 0 || v.cell !== null || v.fields !== null;
+}
+
+/** Whether `v` may be something besides text or what the caller passed: a part of a text that no template can stand for. */
+function besidesTextOrSym(v: Val): boolean {
   return v.open || v.fns.length > 0 || v.cell !== null || v.fields !== null;
+}
+
+/** A symbolic path read (see Sym): a parameter or a field of one, `varargin` whole (`vk`), or `varargin{:}` (`sk`). */
+export type SymPath =
+  | { readonly kind: 'param'; readonly position: number; readonly fields: readonly string[] }
+  | { readonly kind: 'variadic' | 'spread'; readonly position: number };
+
+/** `path` read (see SymPath); null for none. */
+export function parseSymPath(path: string): SymPath | null {
+  const m = /^([vs]?)(\d+)((?:\.[^.]+)*)$/.exec(path);
+  if (!m) return null;
+  const position = Number(m[2]);
+  if (m[1] === 'v') return m[3] ? null : { kind: 'variadic', position };
+  if (m[1] === 's') return m[3] ? null : { kind: 'spread', position };
+  return { kind: 'param', position, fields: m[3] ? m[3].slice(1).split('.') : [] };
+}
+
+/** Whether a symbolic path is a parameter or a field of one (not `varargin` whole, nor its `{:}`). */
+function isValuePath(path: string): boolean {
+  return parseSymPath(path)?.kind === 'param';
+}
+
+/** A text's MARK-delimited part for `s` (see MARK). */
+function markOf(s: Sym): string {
+  return MARK + s.path + MARK;
+}
+
+/** `s` with every MARK-delimited part a HOLE: text as anything but a template reads it. */
+export function holed(s: string): string {
+  return s.includes(MARK) ? normalText(s.replace(/\u0001[^\u0001]*\u0001?/g, HOLE)) : s;
+}
+
+/** Whether `s` has a part nothing here knows: a HOLE, or what the caller passed. */
+export function hasHole(s: string): boolean {
+  return s.includes(HOLE) || s.includes(MARK);
+}
+
+/** A template: text around ONE parameter's value (`ft_` + `1` + ``), every other part known. */
+export interface Template {
+  readonly prefix: string;
+  readonly path: string;
+  readonly suffix: string;
+}
+
+/** `s` as a template (see Template), or null when it has no MARK-delimited part, two, or a HOLE. */
+export function templateOf(s: string): Template | null {
+  const m = /^([^\u0001\u0000]*)\u0001([^\u0001]+)\u0001([^\u0001\u0000]*)$/.exec(s);
+  return m && isValuePath(m[2]!) ? { prefix: m[1]!, path: m[2]!, suffix: m[3]! } : null;
+}
+
+/**
+ * `v` as code that knows nothing of its caller reads it: what the caller
+ * passed is unknown (open), and a text's part of it a HOLE — all the
+ * extractor's own reading of names and code needs (the caller's side is
+ * read in ../../resolution/matlab-argument-synthesizer.ts).
+ */
+export function callersUnknown(v: Val): Val {
+  if (v.syms.length === 0 && !v.strs.some((s) => s.includes(MARK))) return v;
+  return make({ ...v, strs: [...new Set(v.strs.map(holed))], syms: [], open: v.open || v.syms.length > 0 });
+}
+
+/** Whether `v` is one struct the code built, one element and nothing else: its field is one value, a struct array's a list. */
+export function isOneBuiltStruct(v: Val | undefined): boolean {
+  return !!v && v.built && !v.open && v.records?.length === 1 && v.strs.length === 0 && v.fns.length === 0 && v.syms.length === 0 && !v.cell;
+}
+
+/** Whether `v` holds what the caller passed, anywhere in it, unsealed (see Sym). */
+export function hasUnsealed(v: Val): boolean {
+  if (v.syms.some((s) => !s.sealed)) return true;
+  if (v.cell && hasUnsealed(v.cell)) return true;
+  if (v.fields) for (const f of v.fields.values()) if (hasUnsealed(f)) return true;
+  return false;
+}
+
+/**
+ * `v` with what the caller passed sealed, anywhere in it (see Sym): code
+ * that may change an object has run. Its texts' templates stay: a text is
+ * no object.
+ */
+export function sealed(v: Val): Val {
+  if (!hasUnsealed(v)) return v;
+  const mapFields = (r: Fields): Fields => new Map([...r].map(([k, f]) => [k, sealed(f)]));
+  return make({
+    strs: v.strs,
+    fns: v.fns,
+    syms: v.syms.map((s) => (s.sealed ? s : { path: s.path, sealed: true })),
+    cell: v.cell && sealed(v.cell),
+    cellItems: v.cellItems?.map(sealed) ?? null,
+    fields: v.fields && mapFields(v.fields),
+    records: v.records?.map(mapFields) ?? null,
+    row: v.row,
+    built: v.built,
+    stringObject: v.stringObject,
+    open: v.open,
+  });
+}
+
+/** The symbolic value field `f` of `s` is, or null past MAX_SYM_FIELDS, on a sealed one, or on `varargin`. */
+function symField(s: Sym, f: string): Sym | null {
+  if (s.sealed || !isValuePath(s.path) || s.path.split('.').length > MAX_SYM_FIELDS) return null;
+  return { path: `${s.path}.${f}`, sealed: false };
+}
+
+/** A symbolic set's identity: path and seal. */
+const symKey = (s: Sym): string => `${s.path}\u0001${s.sealed ? 1 : 0}`;
+
+/** Either set of symbolic values: one path, sealed when either side's is. */
+function joinSyms(a: readonly Sym[], b: readonly Sym[]): readonly Sym[] {
+  if (b.length === 0) return a;
+  if (a.length === 0) return b;
+  const out = new Map<string, Sym>();
+  for (const s of [...a, ...b]) {
+    const had = out.get(s.path);
+    out.set(s.path, had && !had.sealed ? s : had ?? s);
+  }
+  return [...out.values()];
 }
 
 /**
@@ -219,6 +392,7 @@ export function join(a: Val, b: Val): Val {
     const seen = new Set(a.fns.map(fnKey));
     fns = [...a.fns, ...b.fns.filter((f) => !seen.has(fnKey(f)))];
   }
+  const syms = joinSyms(a.syms, b.syms);
   const cell = a.cell && b.cell ? join(a.cell, b.cell) : (a.cell ?? b.cell);
   const cellItems = !a.cell ? b.cellItems : !b.cell ? a.cellItems : pairwise(a.cellItems, b.cellItems, join);
   let fields = a.fields ?? b.fields;
@@ -232,6 +406,7 @@ export function join(a: Val, b: Val): Val {
   return make({
     strs,
     fns,
+    syms,
     cell,
     cellItems,
     fields,
@@ -271,6 +446,11 @@ export function sameVal(a: Val | undefined, b: Val | undefined): boolean {
     const fns = new Set(b.fns.map(fnKey));
     if (a.fns.some((f) => !fns.has(fnKey(f)))) return false;
   }
+  if (a.syms.length !== b.syms.length) return false;
+  if (a.syms.length > 0) {
+    const syms = new Set(b.syms.map(symKey));
+    if (a.syms.some((s) => !syms.has(symKey(s)))) return false;
+  }
   // A cell's union and a struct's fields follow from its items and records, when both sides know them.
   if (!a.cell !== !b.cell || !sameList(a.cellItems, b.cellItems, sameVal)) return false;
   if (a.cell && !a.cellItems && !sameVal(a.cell, b.cell!)) return false;
@@ -292,14 +472,98 @@ function sameFields(a: Fields, b: Fields): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// What a call passes (the `args` fact, see matlab-ref-facts.ts)
+// ---------------------------------------------------------------------------
+
+/** Values one argument's record keeps; past them it is not recorded. */
+const MAX_ARG_VALUES = 8;
+/** Fields a struct argument's record keeps, all levels together. */
+const MAX_ARG_FIELDS = 16;
+/** Struct levels an argument's record follows (`s.a.b`). */
+const MAX_ARG_LEVELS = 2;
+/** Code given as text an argument's record keeps: a short call (`'helper(3)'`), no longer. */
+const MAX_ARG_CODE = 200;
+
+/**
+ * What an argument holding `v` passes, as the `args` fact records it (see
+ * MatlabArgItem), or null when not every value it may hold is one the record
+ * can say: anything open, a text that is no name and no short call, a cell,
+ * a handle known only through a bare name's class, a struct not built here.
+ */
+export function argValue(v: Val): MatlabArgValue | null {
+  const budget = { fields: MAX_ARG_FIELDS };
+  const items = argItems(v, 0, budget);
+  if (!items || items.length === 0 || items.length > MAX_ARG_VALUES) return null;
+  return items.length === 1 ? items[0]! : items;
+}
+
+/** argValue's items for `v` at struct level `level`, `budget` the fields left to record. */
+function argItems(v: Val, level: number, budget: { fields: number }): MatlabArgItem[] | null {
+  if (v.open || v.cell) return null;
+  const items: MatlabArgItem[] = [];
+  for (const s of v.strs) {
+    if (!NAME_SHAPED.test(s) && !(s.length <= MAX_ARG_CODE && s.includes('(') && !hasHole(s))) return null;
+    items.push(`'${s}`);
+  }
+  for (const f of v.fns) {
+    if (f.variable) return null;
+    items.push(`@${f.name}`);
+  }
+  for (const s of v.syms) {
+    const sealedTag = s.sealed ? { s: 1 as const } : {};
+    const path = parseSymPath(s.path);
+    if (path?.kind === 'spread') {
+      if (level > 0) return null; // a list of values is no field's
+      items.push({ r: path.position, ...sealedTag });
+    } else if (path?.kind !== 'param') return null;
+    else {
+      const f = path.fields;
+      items.push(f.length === 0 && !s.sealed ? path.position : { p: path.position, ...(f.length > 0 ? { f: f.join('.') } : {}), ...sealedTag });
+    }
+  }
+  if (v.fields) {
+    if (!v.built || items.length > 0 || v.records?.length !== 1 || level >= MAX_ARG_LEVELS) return null;
+    const o: { [field: string]: MatlabArgValue } = {};
+    let any = false;
+    for (const [k, f] of v.records[0]!) {
+      if (budget.fields <= 0) return null;
+      const got = argItems(f, level + 1, budget);
+      if (!got || got.length === 0 || got.length > MAX_ARG_VALUES) continue;
+      budget.fields--;
+      o[k] = got.length === 1 ? got[0]! : got;
+      any = true;
+    }
+    if (!any) return null;
+    items.push({ o });
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
 // Reading arrays and fields
 // ---------------------------------------------------------------------------
 
-/** What `v{k}` reads: element k when `k` (a positive integer literal) is given and known, any element when no `k` is given. */
-export function elementOf(v: Val | undefined, k: number | null): Val {
-  if (!v?.cell) return OPEN;
-  const got = k === null ? v.cell : (v.cellItems?.[k - 1] ?? OPEN);
-  return besidesCell(v) ? withOpen(got) : got;
+/**
+ * What `v{k}` reads: element k when `k` (a positive integer literal) is given
+ * and known, any element when no `k` is given. Of `varargin`, element k is a
+ * parameter (see Sym), and `varargin{:}` (`spread`) the variadic arguments.
+ */
+export function elementOf(v: Val | undefined, k: number | null, spread = false): Val {
+  if (!v) return OPEN;
+  let got: Val | null = null;
+  let open = v.open || v.strs.length > 0 || v.fns.length > 0 || v.fields !== null;
+  if (v.cell) got = k === null ? v.cell : (v.cellItems?.[k - 1] ?? OPEN);
+  for (const s of v.syms) {
+    const from = parseSymPath(s.path);
+    if (from?.kind !== 'variadic' || (k === null && !spread)) {
+      open = true;
+      continue;
+    }
+    const one = make({ syms: [{ path: k === null ? `s${from.position}` : String(from.position + k - 1), sealed: s.sealed }] });
+    got = got ? join(got, one) : one;
+  }
+  if (!got) return OPEN;
+  return open ? withOpen(got) : got;
 }
 
 /**
@@ -329,12 +593,30 @@ export function partOf(v: Val | undefined, k: number | null): Val {
   return OPEN;
 }
 
-/** What `v.f` reads: of a struct array, its first element's (where one value is read). */
+/**
+ * What `v.f` reads: of a struct array, its first element's (where one value
+ * is read); of what the caller passed, that field of it, unless sealed (see
+ * Sym).
+ */
 export function fieldOf(v: Val | undefined, f: string): Val {
-  if (!v?.fields) return OPEN;
-  const from = v.records ? v.records[0] : v.fields;
-  const got = from?.get(f) ?? OPEN;
-  return besidesStruct(v) ? withOpen(got) : got;
+  if (!v) return OPEN;
+  let got: Val | null = null;
+  let open = v.open || v.strs.length > 0 || v.fns.length > 0 || v.cell !== null;
+  if (v.fields) {
+    const from = v.records ? v.records[0] : v.fields;
+    got = from?.get(f) ?? OPEN;
+  }
+  for (const s of v.syms) {
+    const field = symField(s, f);
+    if (!field) {
+      open = true;
+      continue;
+    }
+    const one = make({ syms: [field] });
+    got = got ? join(got, one) : one;
+  }
+  if (!got) return OPEN;
+  return open ? withOpen(got) : got;
 }
 
 /** Whether `v` is a struct with a field `f` written for it. */
@@ -510,6 +792,12 @@ export function literalIndex(call: SyntaxNode, source: string): number | null {
   return /^[1-9]\d{0,5}$/.test(text) ? Number(text) : null;
 }
 
+/** Whether `c{:}`'s index is a lone `:` (every element, as a list). */
+export function isColonIndex(call: SyntaxNode): boolean {
+  const args = callArgs(call);
+  return args.length === 1 && args[0]!.type === 'spread_operator';
+}
+
 /** The first block under a statement or clause (its body). */
 export function firstBlock(node: SyntaxNode): SyntaxNode | undefined {
   return namedChildren(node).find((c) => c.type === 'block');
@@ -635,7 +923,8 @@ function evaluateNode(node: SyntaxNode, env: EnvReader | null, host: ValueHost, 
   switch (node.type) {
     case 'string': {
       const text = stringLiteral(node, source);
-      return text === null ? OPEN : strVal(text, isStringObjectLiteral(node, source));
+      // A MARK in the code's own text would read as a caller's part: such a text is not followed.
+      return text === null || text.includes(MARK) ? OPEN : strVal(text, isStringObjectLiteral(node, source));
     }
     case 'identifier': {
       const name = getNodeText(node, source);
@@ -724,8 +1013,9 @@ function evaluateField(node: SyntaxNode, env: EnvReader | null, host: ValueHost,
     evaluate(head, env, host, rec);
     v = undefined;
   }
+  // A field of what the caller passed is read, not computed (see Sym): no call runs there.
   const mayRunCode = (name: string): void => {
-    if (rec && env && !(v?.built && !v.open) && !hasField(v, name)) rec.invalidate(env);
+    if (rec && env && !(v?.built && !v.open) && !hasField(v, name) && !(v && v.syms.length > 0 && !v.fields && !v.open)) rec.invalidate(env);
   };
   for (let i = 1; i < parts.length; i++) {
     const p = parts[i]!;
@@ -765,7 +1055,7 @@ function evaluateCall(node: SyntaxNode, env: EnvReader | null, host: ValueHost, 
   const own = env && !rec?.isUntracked(name) ? env.get(name) : undefined;
   if (own || host.isLocal(name)) {
     const k = literalIndex(node, source);
-    return bracesIndex(node) ? elementOf(own, k) : partOf(own, k);
+    return bracesIndex(node) ? elementOf(own, k, isColonIndex(node)) : partOf(own, k);
   }
   const one = vals.length === 1 ? vals[0]! : null;
   switch (name) {
@@ -785,12 +1075,12 @@ function evaluateCall(node: SyntaxNode, env: EnvReader | null, host: ValueHost, 
     case 'func2str': {
       if (!one) return OPEN;
       const names = one.fns.filter((f) => /^[A-Za-z]\w*$/.test(f.name)).map((f) => f.name);
-      return make({ strs: names, open: one.open || one.strs.length > 0 || names.length < one.fns.length || one.cell !== null || one.fields !== null });
+      return make({ strs: names, open: one.open || one.strs.length > 0 || one.syms.length > 0 || names.length < one.fns.length || one.cell !== null || one.fields !== null });
     }
     case 'str2func': {
       if (!one) return OPEN;
       const fns: FnVal[] = [];
-      let open = besidesText(one) && (one.open || one.cell !== null || one.fields !== null || one.fns.length > 0);
+      let open = besidesText(one);
       for (const text of one.strs) {
         const f = NAME_SHAPED.test(text) ? host.named(text.split('.')) : null;
         if (f) fns.push(f);
@@ -837,9 +1127,9 @@ function structLiteral(args: readonly SyntaxNode[], vals: readonly Val[], source
   return structOfRecords(records, true);
 }
 
-/** `v`'s strings through `f` (a HOLE kept as one); its other possibilities unknown. */
+/** `v`'s strings through `f` (a HOLE kept as one, a caller's part read as one); its other possibilities unknown. */
 function mapStrings(v: Val, f: (s: string) => string): Val {
-  return make({ strs: v.strs.map((s) => normalText(f(s))), stringObject: v.stringObject, open: besidesText(v) });
+  return make({ strs: v.strs.map((s) => normalText(f(holed(s)))), stringObject: v.stringObject, open: besidesText(v) });
 }
 
 /** Whether a character is whitespace as `strtrim` reads it. */
@@ -865,7 +1155,8 @@ function trimEnd(s: string): string {
 }
 
 /**
- * `[a b c]`: each part's strings in turn. A part that may be anything else —
+ * `[a b c]`: each part's strings in turn. What the caller passed is a
+ * MARK-delimited part (see Sym); a part that may be anything else —
  * unknown, a number, a handle — is a HOLE there. Cut at the bounds.
  */
 export function concat(parts: readonly Val[]): Val {
@@ -873,7 +1164,12 @@ export function concat(parts: readonly Val[]): Val {
   let open = false;
   for (const p of parts) {
     const options = [...p.strs];
-    if (besidesText(p) || options.length === 0) options.push(HOLE);
+    let other = besidesTextOrSym(p);
+    for (const s of p.syms) {
+      if (isValuePath(s.path)) options.push(markOf(s));
+      else other = true;
+    }
+    if (other || options.length === 0) options.push(HOLE);
     const next: string[] = [];
     for (const a of out) {
       for (const b of options) {
@@ -917,7 +1213,7 @@ function strcat(args: readonly SyntaxNode[], vals: readonly Val[], source: strin
       if (literal === "'" || (last && !v.stringObject)) return trimEnd(s);
       return /[ \t\n\r\f\v]$/.test(s) ? trimEnd(s) + HOLE : s;
     });
-    return make({ strs, open: besidesText(v) });
+    return make({ strs, syms: v.syms, open: besidesTextOrSym(v) });
   });
   const out = concat(parts);
   return object ? { ...out, stringObject: out.strs.length > 0 } : out;
@@ -934,7 +1230,7 @@ function sprintf(vals: readonly Val[]): Val {
   if (!fmt || fmt.strs.length === 0) return OPEN;
   let out = NONE;
   for (const f of fmt.strs) {
-    if (f.includes(HOLE)) return OPEN;
+    if (hasHole(f)) return OPEN;
     const parts: Val[] = [];
     let arg = 1;
     let text = '';

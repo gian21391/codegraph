@@ -4,6 +4,7 @@
  */
 
 import type { Edge, Language, ReferenceKind, UnresolvedReference } from '../types';
+import { joinMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 
 /**
  * Resurrect a resolution edge that is about to be dropped (its target symbol
@@ -26,7 +27,10 @@ export function resurrectRefFromDroppedEdge(
   const refName = e.metadata?.refName;
   if (typeof refName !== 'string' || refName.length === 0) return null;
   const refKind = typeof e.metadata?.refKind === 'string' ? (e.metadata.refKind as ReferenceKind) : e.kind;
-  const candidates = e.metadata?.refCandidates;
+  const listed = e.metadata?.refCandidates;
+  const written = Array.isArray(listed) && listed.every((c) => typeof c === 'string') ? (listed as string[]) : [];
+  // A MATLAB call's `args` fact rides in its own key (see matlab-ref-facts.ts): back among the candidates.
+  const candidates = e.sourceLanguage === 'matlab' ? joinMatlabArgs(written, e.metadata?.args) : written;
   return {
     fromNodeId: e.source,
     referenceName: refName,
@@ -35,6 +39,6 @@ export function resurrectRefFromDroppedEdge(
     column: e.column ?? 0,
     filePath: e.sourceFilePath,
     language: e.sourceLanguage,
-    ...(Array.isArray(candidates) && candidates.every((c) => typeof c === 'string') ? { candidates: candidates as string[] } : {}),
+    ...(candidates.length > 0 ? { candidates } : {}),
   };
 }

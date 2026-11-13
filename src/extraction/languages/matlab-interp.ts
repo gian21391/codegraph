@@ -18,11 +18,15 @@ import {
   evaluate,
   firstBlock,
   hasForeign,
+  hasHole,
+  hasUnsealed,
   isUnknown,
   join,
   literalIndex,
   namedChildren,
+  paramVal,
   sameVal,
+  sealed,
   stringLiteral,
   besidesText,
   withCellElement,
@@ -31,7 +35,7 @@ import {
   withOpen,
   withChildrenMemo,
   withPath,
-  HOLE,
+  variadicVal,
 } from './matlab-values';
 
 /**
@@ -63,6 +67,14 @@ import {
  * the project's code, or through another variable it was handed to: its
  * fields are forgotten then. A function called here that reaches back into
  * this workspace (`assignin('caller', …)`) is not followed.
+ *
+ * A function's parameters hold what its caller passed (see Sym in
+ * matlab-values.ts): `feval(regr, S)` reads parameter `regr`, which only the
+ * call sites know, and a call of the project's passing a value records it
+ * (see Recorder.call), so that each side of a call can be read against the
+ * other (../../resolution/matlab-argument-synthesizer.ts). What the caller
+ * passed stays exact until the parameter is assigned; a field of it, until
+ * code that may change an object has run (it is sealed then).
  */
 
 /** A scope's recorded values: node id → value. */
@@ -71,13 +83,20 @@ export type ScopeValues = ReadonlyMap<number, Val>;
 export const NO_VALUES: ScopeValues = new Map();
 
 /**
- * Words without which a scope has nothing to interpret: no call built from
- * text, no callback property, no named handle assigned to a variable (a
- * lambda's value is never known, and a handle passed on is referenced where
- * it is written).
+ * The calls that call, name or run what an argument holds, which can read a
+ * parameter the caller fills (see sinkInputs): a parameter sink's words (see
+ * matlabParamSinks in matlab.ts and the argument synthesis).
  */
-export const SINK_WORDS =
-  /\b(?:feval|evalc?|evalin|str2func|run|cellfun|arrayfun|structfun|ode\w+|fzero|fmin\w+|fsolve|lsq\w+|quadgk|integral\d?)\b|[Ff][Cc][Nn]\b|[Cc]allback|=\s*@\s*[A-Za-z]/;
+export const PARAM_SINK_CALLS: readonly string[] = ['feval', 'str2func', 'eval', 'evalc', ...MATLAB_FUNCTION_TAKERS];
+
+/**
+ * Words without which a scope has nothing to interpret: no call built from
+ * text (a parameter sink's, `evalin`, `run`), no callback property, no named
+ * handle assigned to a variable or opening a cell (`fs = {@a, @b}`; a lambda's
+ * value is never known, and a handle passed on is referenced where it is
+ * written).
+ */
+export const SINK_WORDS = new RegExp(`\\b(?:${[...PARAM_SINK_CALLS, 'evalin', 'run'].join('|')})\\b|[Ff][Cc][Nn]\\b|[Cc]allback|[={]\\s*@\\s*[A-Za-z]`);
 
 /** A GUI property whose value is a callback: `'Callback'`, `'ButtonDownFcn'`, `'TimerFcn'`, … */
 export const CALLBACK_PROPERTY = /^(?:callback|\w*fcn)$/i;
@@ -181,6 +200,8 @@ export interface ScopeOptions {
   readonly inputs: ReadonlySet<string>;
   /** Whether a name is a variable the scope shares with a function around it (it is a nested function's): never known. */
   readonly shared: (name: string) => boolean;
+  /** A function's parameters, in order (null for an ignored `~`), when each holds what the caller passed (see Sym); `varargin` last is the variadic ones. */
+  readonly params?: readonly (string | null)[];
 }
 
 /** Thrown when a walk passes its budget: the scope falls back to literal evaluation. */
@@ -253,6 +274,10 @@ class Interpreter implements Recorder {
   private readonly tries: TryExits[] = [];
   /** Variables that held a struct the code did not build (see Recorder.invalidate). */
   private readonly foreign = new Set<string>();
+  /** Variables that held what the caller passed, unsealed (see Recorder.invalidate). */
+  private readonly symbolic = new Set<string>();
+  /** Arguments of calls of the project's some walk reached knowing nothing of them (see call). */
+  private readonly unknownArgs = new Set<number>();
   /** What this walk changed, for code given as text (see codeEffect). */
   observed: Observer | null = null;
 
@@ -284,11 +309,23 @@ class Interpreter implements Recorder {
   run(scope: SyntaxNode): Env {
     let env = new Env(null, this.observed);
     if (this.observed) env = env.fork();
+    if (this.codeDepth === 0) this.enterParameters(env);
     for (const c of namedChildren(scope)) {
       if (!this.options.isFunction || this.codeDepth > 0) env = this.statement(c, env);
       else if (c.type === 'block') env = this.block(c, env);
     }
     return env;
+  }
+
+  /** Sets each parameter to what the caller passed (see ScopeOptions.params). */
+  private enterParameters(env: Env): void {
+    const params = this.options.params;
+    if (!params) return;
+    const last = params.length - 1;
+    params.forEach((name, k) => {
+      if (name === null || this.isUntracked(name)) return;
+      this.put(env, name, name === 'varargin' && k === last ? variadicVal(k) : paramVal(k));
+    });
   }
 
   /** Joins `v` into what `node` was recorded to hold. */
@@ -301,24 +338,44 @@ class Interpreter implements Recorder {
   call(callee: SyntaxNode, name: string, args: readonly SyntaxNode[], vals: readonly Val[], env: EnvReader): void {
     if (this.host.isLocal(name)) {
       const own = this.isUntracked(name) ? undefined : env.get(name);
-      if (own && own.fns.length > 0) this.record(callee, own);
+      // `varargin{1}`: a cell's contents, read; no call.
+      if (own && own.syms.length > 0 && callee.parent && bracesIndex(callee.parent)) return;
+      if (own && (own.fns.length > 0 || own.syms.length > 0)) this.record(callee, own);
       // Through a handle, any code may run; an index into an array runs none.
-      if (!own || own.open || own.fns.length > 0) this.invalidate(env);
+      if (!own || own.open || own.fns.length > 0 || own.syms.length > 0) this.invalidate(env);
       return;
     }
     for (const { index } of sinkInputs(name, args, this.host.source)) this.record(args[index]!, vals[index]!);
+    // What a call of the project's passes. One the walk reached knowing nothing of it, on some path, is open.
+    if (!MATLAB_BUILTINS.has(name)) {
+      args.forEach((arg, i) => {
+        const v = vals[i]!;
+        if (v.strs.length > 0 || v.fns.length > 0 || v.syms.length > 0 || v.fields) this.record(arg, this.unknownArgs.has(arg.id) ? withOpen(v) : v);
+        else if (this.values.has(arg.id)) this.record(arg, v);
+        else this.unknownArgs.add(arg.id);
+        // `s.f` passed: what `s` is, which tells one struct from an array whose field is several arguments.
+        const head = arg.type === 'field_expression' ? arg.namedChild(0) : null;
+        if (head?.type === 'identifier') {
+          const owner = getNodeText(head, this.host.source);
+          this.record(head, (!this.isUntracked(owner) && env.get(owner)) || OPEN);
+        }
+      });
+    }
     if (name === 'eval' || name === 'evalc') this.pending.push({ codes: vals.slice(0, 2) });
     else if (!this.options.isFunction && (name === 'evalin' || name === 'assignin')) this.pending.push({ clear: true });
     if (mayRunCode(name)) this.invalidate(env);
   }
 
-  /** Forgets every variable that holds a struct the code did not build (see Recorder.invalidate). */
+  /** Forgets every variable that holds a struct the code did not build, and seals what the caller passed (see Recorder.invalidate). */
   invalidate(env: EnvReader): void {
-    if (this.foreign.size === 0) return;
     const e = env as Env;
     for (const name of this.foreign) {
       const v = e.get(name);
       if (v && hasForeign(v)) e.delete(name);
+    }
+    for (const name of this.symbolic) {
+      const v = e.get(name);
+      if (v && hasUnsealed(v)) e.set(name, sealed(v));
     }
   }
 
@@ -451,7 +508,7 @@ class Interpreter implements Recorder {
         continue;
       }
       for (const code of e.codes) {
-        if (besidesText(code) || code.strs.some((s) => s.includes(HOLE))) {
+        if (besidesText(code) || code.strs.some(hasHole)) {
           env.clear();
           break;
         }
@@ -596,6 +653,8 @@ class Interpreter implements Recorder {
     }
     if (path.length === 0) return;
     const was = env.get(root);
+    // What the caller passed may be a handle object another variable holds too: written through, every alias's fields change.
+    if (was && hasUnsealed(was)) this.invalidate(env);
     const fresh = this.isFresh(env, root);
     const update: FieldUpdate = (old, freshField) => {
       if (!into) return rhs;
@@ -613,12 +672,13 @@ class Interpreter implements Recorder {
     if (head) env.delete(getNodeText(head, this.host.source));
   }
 
-  /** Sets `name` to `v` (an unknown value: drops it), noting a struct the code did not build. */
+  /** Sets `name` to `v` (an unknown value: drops it), noting a struct the code did not build, and what the caller passed. */
   private put(env: Env, name: string, v: Val): void {
     if (isUnknown(v)) env.delete(name);
     else {
       env.set(name, v);
       if (hasForeign(v)) this.foreign.add(name);
+      if (hasUnsealed(v)) this.symbolic.add(name);
     }
   }
 

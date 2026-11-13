@@ -123,6 +123,11 @@ end
 });
 
 describe('MATLAB calls through a handle variable', () => {
+  it('calls every handle a cell holds, read in a loop, whatever the call passes', () => {
+    // Walked for the cell of handles alone: `x` is a value no walk knows.
+    expect(called('function f(x)\nfs = {@pa, @pq};\nfor k = 1:2\n  g = fs{k};\n  g(x, 2);\nend\nend\n')).toEqual(['pa', 'pq']);
+  });
+
   it('calls what the handle holds, and nothing through a parameter', async () => {
     const edges = await edgesOfProject({
       'handles.m': `function handles(x, fp)

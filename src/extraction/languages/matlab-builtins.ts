@@ -166,10 +166,11 @@ export const MATLAB_CALLBACK_OWNERS: ReadonlySet<string> = new Set([
  * handed to them: what they are given to call or evaluate (`feval`,
  * `cellfun`, `eval`), a callback (a GUI constructor's `CreateFcn`, `set`,
  * `delete`'s `DeleteFcn`), or events waiting to be handled (`drawnow`,
- * `pause`, `waitfor`).
+ * `pause`, `waitfor`). Not `struct`: a table of callbacks it builds runs
+ * nothing until something is given it.
  */
 export const MATLAB_CODE_RUNNERS: ReadonlySet<string> = new Set([
-  ...MATLAB_FUNCTION_TAKERS, ...MATLAB_CALLBACK_OWNERS,
+  ...MATLAB_FUNCTION_TAKERS, ...[...MATLAB_CALLBACK_OWNERS].filter((n) => n !== 'struct'),
   'feval', 'eval', 'evalc', 'evalin', 'assignin', 'run', 'builtin', 'str2func', 'drawnow', 'pause', 'waitfor',
   'uiwait', 'notify', 'delete', 'close', 'start', 'stop', 'refresh', 'input', 'keyboard', 'quad', 'quadl', 'quadv',
   'quadgk', 'ode45', 'hgfeval', 'listener', 'addlistener',

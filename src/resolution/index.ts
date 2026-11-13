@@ -66,6 +66,7 @@ import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
 import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
+import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
 import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
@@ -2178,6 +2179,7 @@ export class ReferenceResolver {
         { targetNodeId: ref.targetNodeId, metadata: ref.metadata },
         ...(ref.alsoTargets ?? []),
       ];
+      const matlab = ref.original.language === 'matlab' && ref.original.candidates ? splitMatlabArgs(ref.original.candidates) : null;
       return targets.map((t) => ({
         source: ref.original.fromNodeId,
         target: t.targetNodeId,
@@ -2201,8 +2203,10 @@ export class ReferenceResolver {
           refName: ref.original.referenceName,
           ...(ref.original.referenceKind !== kind ? { refKind: ref.original.referenceKind } : {}),
           // How a MATLAB reference is written (matlab-ref-facts), which its
-          // resolution reads: part of the ref text.
-          ...(ref.original.language === 'matlab' && ref.original.candidates ? { refCandidates: ref.original.candidates } : {}),
+          // resolution reads: part of the ref text. What the call passes
+          // (`args`) apart, as a JSON value the argument synthesis reads.
+          ...(matlab && matlab.rest.length > 0 ? { refCandidates: matlab.rest } : {}),
+          ...(matlab?.args ? { args: matlab.args } : {}),
           // Uniform marker for function-as-value edges (#756), regardless of
           // which strategy resolved them (import vs matchFunctionRef) — lets
           // tooling label "callback registration" and lets validation diff

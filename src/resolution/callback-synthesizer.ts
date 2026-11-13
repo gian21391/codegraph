@@ -31,6 +31,8 @@ import { cFnPointerDispatchEdges } from './c-fnptr-synthesizer';
 import { goframeRouteEdges } from './goframe-synthesizer';
 import { goFuncFieldEdges } from './go-func-field-synthesizer';
 import { isMatlabClassFolderFile, matlabClassFolderContainsEdges } from './matlab-class-folders';
+import { matlabArgumentEdges } from './matlab-argument-synthesizer';
+import { looksLikeMatlab } from '../extraction/grammars';
 import { expoRouterReturnEdges } from './expo-router-synthesizer';
 import { nextLinkEdges, nextProxyEdges } from './next-router-synthesizer';
 import { constAliasEdges, hasConstAliasShape } from './const-alias-synthesizer';
@@ -5322,6 +5324,9 @@ export function hasSynthesisPattern(filePath: string, content: string): boolean 
   // A MATLAB class folder's files: a method file added, or the classdef its
   // methods hang from, changes which methods the class contains.
   if (isMatlabClassFolderFile(filePath)) return true;
+  // Every MATLAB file: a call anywhere may pass a name to a function that
+  // calls what it is passed, and a function anywhere may start or stop doing so.
+  if (/\.m$/i.test(filePath) && looksLikeMatlab(content)) return true;
   if (hasCrossTierPattern(content) || hasTestRequestPattern(filePath, content) || hasTauriPattern(filePath, content)) return true;
   if (/\b(?:render|build|setState|defineStore|createStore|createApi|Store|href|sendEvent|sendEventWithName)\b|<\/|\/>/.test(content)) return true;
   // A wrapper renders the component it wraps (jsxEdges), in a file with no markup of its own too.
@@ -5444,6 +5449,8 @@ export const SYNTH_PASSES: SynthPassDef[] = [
   { name: 'nixOptionEdges', gate: (has) => has('nix'), run: (q, _c, y) => nixOptionPathEdges(q, y) },
   // `@Cls/m.m` — a class folder's method file is the folder's class's member (structural, no provenance).
   { name: 'matlabClassFolderEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabClassFolderContainsEdges(q, y) },
+  // `feval(regr, S)` onto each function a call of dacefit passes as `regr` (`'regpoly0'`, `@regpoly1`).
+  { name: 'matlabArgumentEdges', gate: (has) => has('matlab'), run: (q, c, y) => matlabArgumentEdges(q, c, y, MAX_CALLBACKS_PER_CHANNEL) },
 ];
 
 /**
