@@ -1,24 +1,21 @@
 /**
- * MATLAB extraction semantics: what a function's frame makes of a name (its
+ * MATLAB extraction: reading a `.m` file as MATLAB, Objective-C or Octave, and
+ * what the extractor makes of MATLAB code — its symbols, and the references it
+ * leaves for the resolver: what a function's frame makes of a name (its
  * variables, its own object, what a variable holds), superclass calls,
  * `catch`, lambdas, `Name=Value` arguments, imports, calls of built-ins' names,
- * class signatures and attributes, Octave files, and `.m` detection against
- * Objective-C.
+ * class signatures and attributes.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { CodeGraph } from '../src';
-import { extractFromSource } from '../src/extraction';
-import { detectLanguage, getParser, initGrammars, loadAllGrammars } from '../src/extraction/grammars';
+import { extractFromSource, preloadLanguagesForFiles } from '../src/extraction';
+import { detectLanguage, getParser, isLanguageSupported } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
 import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
+import { edgesFrom, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
 
-beforeAll(async () => {
-  await initGrammars();
-  await loadAllGrammars();
-});
+useAllGrammars();
 
 /** `kind:name <- from-qualified-name` of every ref a file emits, in source order. */
 function allRefs(file: string, code: string): string[] {
@@ -61,22 +58,292 @@ function expectAsFastAs(file: string, subject: string, control: string): void {
   expect(s / c).toBeLessThan(2.5);
 }
 
-function writeTree(root: string, files: Record<string, string>): void {
-  for (const [rel, content] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), content);
-  }
-}
+describe('MATLAB .m detection', () => {
+  it('reads MATLAB-shaped .m files as MATLAB', () => {
+    expect(detectLanguage('main.m', 'function r = main(n)\n  r = n;\nend\n')).toBe('matlab');
+    expect(detectLanguage('+geom/Circle.m', 'classdef Circle < handle\nend\n')).toBe('matlab');
+    expect(detectLanguage('run_all.m', '% Run everything\nx = 5;\ndisp(x)\n')).toBe('matlab');
+    expect(detectLanguage('setup.m', 'clc; clear all; close all\nx = 1;\n')).toBe('matlab');
+    expect(detectLanguage('bom.m', '\uFEFFfunction f()\r\nend\r\n')).toBe('matlab');
+    // A script of bare statements, its comments only trailing.
+    expect(detectLanguage('world3d.m', 'c_obs = zeros(100, 100, 100);\nc_obs(:,:,75:80) = 1;   % top floor\n')).toBe('matlab');
+    expect(detectLanguage('make.m', "fprintf('** building\\n');\nmex frne.c ne.c vmath.c\n")).toBe('matlab');
+    expect(isLanguageSupported('matlab')).toBe(true);
+  });
 
-/** `source-qn -kind-> target-qn @ target-file` of every non-`contains` edge out of a file. */
-function edgesFrom(cg: CodeGraph, file: string): string[] {
-  const ids = cg.getNodesInFile(file).map((n) => n.id);
-  return cg
-    .getOutgoingEdgesFrom(ids)
-    .filter((e) => e.kind !== 'contains')
-    .map((e) => `${cg.getNode(e.source)!.qualifiedName} -${e.kind}-> ${cg.getNode(e.target)!.qualifiedName} @ ${cg.getNode(e.target)!.filePath}`)
-    .sort();
-}
+  it('keeps Objective-C .m files Objective-C', () => {
+    expect(detectLanguage('AppDelegate.m')).toBe('objc');
+    expect(detectLanguage('AppDelegate.m', '#import "AppDelegate.h"\n@implementation AppDelegate\n@end\n')).toBe('objc');
+    // A `%` format string or a C `end` variable never flips a file with an Objective-C shape.
+    expect(detectLanguage('Log.m', '#include <stdio.h>\nvoid f(void) {\n  printf("%d", 1);\n}\n')).toBe('objc');
+    expect(detectLanguage('Cat.m', '@interface Foo (Bar)\n- (void)baz;\n@end\n% not matlab\n')).toBe('objc');
+    // Plain C with no directive at all, and an empty file: the extension's mapping stands.
+    expect(detectLanguage('plain.m', 'int x = 1;\n')).toBe('objc');
+    expect(detectLanguage('plain.m', 'NSInteger add(NSInteger a, NSInteger b) {\n  return a + b;\n}\n')).toBe('objc');
+    expect(detectLanguage('empty.m', '')).toBe('objc');
+    expect(detectLanguage('empty.m', '\n\n')).toBe('objc');
+  });
+
+  it('honours an explicit codegraph.json mapping for .m', () => {
+    expect(detectLanguage('main.m', 'function r = main(n)\nend\n', { '.m': 'objc' })).toBe('objc');
+  });
+
+  it('preloads the MATLAB grammar whenever a .m file is present', () => {
+    expect(preloadLanguagesForFiles(['src/Foo.m'])).toContain('matlab');
+    expect(preloadLanguagesForFiles(['src/Foo.m'], { '.m': 'objc' })).not.toContain('matlab');
+  });
+
+  it('keeps directive-only, comment-only and plain-C files Objective-C', () => {
+    for (const code of [
+      '#elif X\n',
+      '#warning fix me\n',
+      '#error nope\n',
+      '#else\n',
+      '#endif\n',
+      '#line 10 "x.m"\n',
+      '#  ifndef FOO_H\n#  define FOO_H 1\n#  endif\n',
+      '# define N 10\nint x = N;\n',
+      '// just a comment\n// with an ellipsis...\n',
+      '/* header\n * text\n */\n',
+      'int x;\n// wait...\n',
+      'static int y;\n%d\n',
+      'void f(void);\nend;\n',
+      'struct point {\n  int x;\n};\n',
+      '% x\nstruct point *p;\n',
+      '#endif\n// done...\n',
+    ]) {
+      expect(detectLanguage('a.m', code), JSON.stringify(code)).toBe('objc');
+    }
+  });
+
+  it('reads MATLAB with C-looking lines as MATLAB', () => {
+    for (const code of [
+      // An Octave-style comment that begins with a directive word.
+      'x = linspace(0, 1, 10);\n# define the grid\ny = x.^2;\n',
+      // A matrix row the old method-header rule read as `- (type)name`.
+      'function m = matrow(b, c)\nm = [1 2\n-(b) c];\nend\n',
+      'm = [1 2\n-(b) c];\n',
+      // A directive inside a block comment is comment text.
+      'function blk()\n%{\n# Heading\n#define not really\n%}\nx = 1;\nend\n',
+      // Octave comments that begin like a conditional's directives (unsupported, but never Objective-C).
+      'function r = f(a)\n#line up the data\nr = a;\nend\n',
+      'function r = f(a)\n#else use the default\n#error out early\n#warning: slow\nr = a;\nend\n',
+      'x = 1;\nif x\n#endif of the setup\n  y = 2;\nendif\n',
+      'x = 1;\n#error handling below\ny = f(x);\n',
+      '#warning: slow\nx = 1;\n',
+      // `struct s` alone on its line is command syntax.
+      '% doc\nstruct s\n',
+    ]) {
+      expect(detectLanguage('a.m', code), JSON.stringify(code)).toBe('matlab');
+    }
+  });
+});
+
+describe('Octave files (unsupported)', () => {
+  const octave = {
+    'hash comment': 'function r = f(a, b)\n  # compute the result first\n  r = compute(a);\nend\n',
+    'endfunction': 'function r = f(a)\n  r = a;\nendfunction\n',
+    'endif': 'x = 1;\nif x\n  y = g(x);\nendif\n',
+    'unwind_protect': 'function f()\n  unwind_protect\n    g();\n  unwind_protect_cleanup\n    h();\n  end_unwind_protect\nend\n',
+  };
+
+  it('detect as MATLAB and give their file node only', () => {
+    for (const code of Object.values(octave)) {
+      expect(detectLanguage('f.m', code)).toBe('matlab');
+      const r = extractFromSource('f.m', code, 'matlab');
+      expect(r.nodes.map((n) => n.kind)).toEqual(['file']);
+      expect(r.unresolvedReferences).toEqual([]);
+    }
+  });
+
+  it('give their file node only when the parse fails at the root', () => {
+    // The usual GPL header: `if not, write to …` reads as an unclosed `if`.
+    const code = [
+      '## Copyright (C) 2000 A. Author',
+      '##',
+      '## This program is free software; you can redistribute it and/or modify',
+      '## it under the terms of the GNU General Public License as published by',
+      '## the Free Software Foundation; either version 2 of the License, or',
+      '## (at your option) any later version.',
+      '##',
+      '## You should have received a copy of the GNU General Public License',
+      '## along with this program; if not, write to the Free Software',
+      '## Foundation, Inc.',
+      '',
+      '## -*- texinfo -*-',
+      '## @deftypefn {Function File} {} stamp',
+      '## Returns the time stamp.',
+      '## @end deftypefn',
+      '',
+      'function t = stamp',
+      '  ## seconds since the epoch',
+      '  t = (time - mktime(gmtime(0)))/86400;',
+      'endfunction',
+      '',
+    ].join('\n');
+    expect(getParser('matlab')!.parse(code)!.rootNode.type).toBe('ERROR');
+    expect(detectLanguage('stamp.m', code)).toBe('matlab');
+    const r = extractFromSource('stamp.m', code, 'matlab');
+    expect(r.nodes.map((n) => n.kind)).toEqual(['file']);
+    expect(r.unresolvedReferences).toEqual([]);
+  });
+
+  it('leave a MATLAB file whose parse fails at the root to its frames', () => {
+    // An unclosed `while`: the root is ERROR, but the file's variables still hold.
+    const code = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  while getpv(k)<0.1\n';
+    expect(getParser('matlab')!.parse(code)!.rootNode.type).toBe('ERROR');
+    expect(refs('f.m', code)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:getpv <- f.m']);
+  });
+
+  it('are known by every Octave block keyword, classdef ones included — never by a MATLAB classdef', () => {
+    for (const code of [
+      'function f(xs)\n  parfor i = 1:3\n    g(i);\n  endparfor\nend\n',
+      'classdef Foo\n  properties\n    x\n  endproperties\n  methods\n    function r = get(obj)\n      r = obj.x;\n    endfunction\n  endmethods\nendclassdef\n',
+      'classdef Col\n  enumeration\n    Red\n  endenumeration\n  events\n    Changed\n  endevents\nend\n',
+    ]) {
+      const r = extractFromSource('f.m', code, 'matlab');
+      expect(r.nodes.map((n) => n.kind), code).toEqual(['file']);
+    }
+    const matlab = 'classdef Foo < handle\n  properties\n    x\n  end % properties\n  events\n    Changed\n  end\n  methods\n    function r = get(obj)\n      r = helper(obj.x);\n    end % get\n  end % methods\nend % classdef\n';
+    expect(extractFromSource('Foo.m', matlab, 'matlab').nodes.map((n) => `${n.kind}:${n.name}`)).toEqual(['file:Foo.m', 'class:Foo', 'property:x', 'method:get']);
+  });
+
+  it('are not confused with MATLAB that only mentions their syntax', () => {
+    // `#` and `endfunction` inside a block comment, a `#` inside a string.
+    const code = "function f()\n%{\n# heading\nendfunction\n%}\nfprintf('#%d\\n', g());\nend\n";
+    expect(refs('f.m', code)).toEqual(['calls:g <- f']);
+    // Block comments nest, for the extractor as for detection.
+    const nested = 'function f()\n%{\n%{\n%}\n#define not really\nendif\n%}\ng();\nend\n';
+    expect(detectLanguage('f.m', nested)).toBe('matlab');
+    expect(refs('f.m', nested)).toEqual(['calls:g <- f']);
+  });
+});
+
+describe('MATLAB symbols and references', () => {
+  it('extracts a function file: primary, local and nested functions with signatures and help', () => {
+    const code = `function [out, n] = process(data, opts)
+%PROCESS Clean and count the data.
+%   [out, n] = process(data, opts)
+    out = cleanup(data);
+    n = numel(out);
+    function inner()
+        disp(n);
+    end
+end
+
+function d = cleanup(d)
+    d(isnan(d)) = [];
+end
+`;
+    const result = extractFromSource('process.m', code, 'matlab');
+    const fns = result.nodes.filter((n) => n.kind === 'function');
+    const byName = Object.fromEntries(fns.map((n) => [n.name, n]));
+    expect(Object.keys(byName).sort()).toEqual(['cleanup', 'inner', 'process']);
+    expect(byName.process!.isExported).toBe(true);
+    expect(byName.cleanup!.isExported).toBe(false);
+    expect(byName.inner!.qualifiedName).toBe('process::inner');
+    expect(byName.process!.signature).toBe('function [out, n] = process(data, opts)');
+    expect(byName.process!.docstring).toContain('PROCESS Clean and count the data.');
+  });
+
+  it('extracts classdef: superclasses, properties, constants, method attributes, accessors', () => {
+    const code = `classdef (Abstract) Account < bank.Base & handle
+    properties (Access = private)
+        Balance double = 0
+    end
+    properties (Constant)
+        Fee = 1.5
+    end
+    methods
+        function obj = Account(b)
+            obj.Balance = b;
+        end
+        function v = get.Balance(obj)
+            v = obj.Balance;
+        end
+        function deposit(obj, x)
+            obj.validate(x);
+            addlistener(obj, 'Changed', @obj.onChange);
+            s = char(obj);
+            t = char(s, 'line');
+        end
+    end
+    methods (Static, Access = protected)
+        function a = create()
+            a = Account(0);
+        end
+    end
+    methods (Abstract)
+        r = report(obj)
+    end
+end
+`;
+    const result = extractFromSource('+bank/Account.m', code, 'matlab');
+    const node = (name: string) => result.nodes.find((n) => n.name === name)!;
+    expect(node('Account').kind).toBe('class');
+    expect(node('Account').qualifiedName).toBe('bank::Account');
+    expect(node('Account').isAbstract).toBe(true);
+    expect(node('Balance').kind).toBe('property');
+    expect(node('Balance').visibility).toBe('private');
+    expect(node('Fee').kind).toBe('constant');
+    expect(node('deposit').kind).toBe('method');
+    expect(node('deposit').qualifiedName).toBe('bank::Account::deposit');
+    expect(node('get.Balance').kind).toBe('method');
+    expect(node('create').isStatic).toBe(true);
+    expect(node('create').visibility).toBe('protected');
+    expect(node('report').isAbstract).toBe(true);
+
+    const refs = result.unresolvedReferences.map((r) => `${r.referenceKind}:${r.referenceName}`);
+    expect(refs).toContain('extends:bank::Base');
+    expect(refs).not.toContain('extends:handle');
+    expect(refs).toContain('calls:bank::Account::validate'); // obj.validate() on the method's own object
+    expect(refs).toContain('calls:bank::Account::char'); // char(obj): the class's own overload
+    expect(refs).toContain('calls:char'); // char(s, 'line'): the built-in, whatever the class overloads
+    expect(refs).toContain('function_ref:bank::Account::onChange'); // @obj.onChange
+  });
+
+  it('extracts enumeration classes with their members', () => {
+    const result = extractFromSource('Color.m', 'classdef Color\n    enumeration\n        Red, Green\n    end\nend\n', 'matlab');
+    expect(result.nodes.find((n) => n.name === 'Color')?.kind).toBe('enum');
+    expect(result.nodes.filter((n) => n.kind === 'enum_member').map((n) => n.name)).toEqual(['Red', 'Green']);
+  });
+
+  it('tells calls from index reads, and records handles, commands and imports', () => {
+    const code = `function r = run(x)
+    import geom.*
+    data = loadData;
+    r = data(3) + helper(x);
+    [a, b] = split(x);
+    c = geom.Circle(2);
+    c.area();
+    s = struct();
+    s.items(1);
+    x.items(1);
+    cellfun(@transform, {a, b});
+    setup_paths
+end
+`;
+    const result = extractFromSource('run.m', code, 'matlab');
+    const refs = result.unresolvedReferences.map((r) => `${r.referenceKind}:${r.referenceName}`);
+    expect(refs).toEqual(expect.arrayContaining([
+      'calls:loadData', // a bare name read as a value is a zero-argument call
+      'calls:helper',
+      'calls:split',
+      'calls:geom::Circle',
+      'calls:geom::Circle::area', // the variable holds what geom.Circle(…) made
+      'function_ref:transform',
+      'calls:setup_paths',
+    ]));
+    // `import geom.*` names a package, which no node stands for.
+    expect(refs.filter((r) => r.startsWith('imports:'))).toEqual([]);
+    // Variables are indexed, not called.
+    expect(refs).not.toContain('calls:data');
+    expect(refs).not.toContain('calls:x');
+    expect(refs).toContain('calls:x.items'); // left to the resolver, which wants an unambiguous method
+    expect(refs).not.toContain('calls:s.items'); // s = struct(): a field's value
+    expect(result.nodes.find((n) => n.kind === 'import')?.name).toBe('geom.*');
+  });
+});
 
 describe('MATLAB frames: each scope reads its own variables', () => {
   it('keeps a function at byte 0 and the file\'s top level apart', () => {
@@ -173,7 +440,7 @@ end
     let root = '';
     let cg: CodeGraph;
     beforeAll(async () => {
-      root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-self-')));
+      root = tempDir('cg-matlab-self-');
       writeTree(root, {
         'Base.m': 'classdef Base < handle\n    methods\n        function render(obj)\n        end\n        function helper(obj)\n        end\n    end\nend\n',
         // A second `helper` keeps `L.helper()` (an untyped variable) ambiguous.
@@ -228,7 +495,7 @@ end
     let root = '';
     let cg: CodeGraph;
     beforeAll(async () => {
-      root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-super-')));
+      root = tempDir('cg-matlab-super-');
       writeTree(root, {
         'Base.m': 'classdef Base < handle\n    methods\n        function obj = Base(varargin)\n        end\n        function delete(obj)\n        end\n    end\nend\n',
         // No explicit constructor: MATLAB's default one is the class itself.
@@ -723,7 +990,7 @@ end
     let root = '';
     let cg: CodeGraph;
     beforeAll(async () => {
-      root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-bases-')));
+      root = tempDir('cg-matlab-bases-');
       writeTree(root, {
         'Bar.m': 'classdef Bar < handle\n    methods\n        function fromBar(obj)\n        end\n    end\nend\n',
         'Baz.m': 'classdef Baz < handle\n    methods\n        function fromBaz(obj)\n        end\n    end\nend\n',
@@ -796,132 +1063,5 @@ describe('MATLAB nested-function workspaces (pinned: MathWorks semantics)', () =
     expect(refs('wait1.m', bare)).toEqual(['calls:done <- wait1', 'calls:done <- wait1']);
     const initialized = `function wait2()\ndone = false;\nwhile done\n    pause(1);\nend\nwhile ~done\n    pause(1);\nend\n${callback}end\n`;
     expect(refs('wait2.m', initialized)).toEqual([]);
-  });
-});
-
-describe('Octave files (unsupported)', () => {
-  const octave = {
-    'hash comment': 'function r = f(a, b)\n  # compute the result first\n  r = compute(a);\nend\n',
-    'endfunction': 'function r = f(a)\n  r = a;\nendfunction\n',
-    'endif': 'x = 1;\nif x\n  y = g(x);\nendif\n',
-    'unwind_protect': 'function f()\n  unwind_protect\n    g();\n  unwind_protect_cleanup\n    h();\n  end_unwind_protect\nend\n',
-  };
-
-  it('detect as MATLAB and give their file node only', () => {
-    for (const code of Object.values(octave)) {
-      expect(detectLanguage('f.m', code)).toBe('matlab');
-      const r = extractFromSource('f.m', code, 'matlab');
-      expect(r.nodes.map((n) => n.kind)).toEqual(['file']);
-      expect(r.unresolvedReferences).toEqual([]);
-    }
-  });
-
-  it('give their file node only when the parse fails at the root', () => {
-    // The usual GPL header: `if not, write to …` reads as an unclosed `if`.
-    const code = [
-      '## Copyright (C) 2000 A. Author',
-      '##',
-      '## This program is free software; you can redistribute it and/or modify',
-      '## it under the terms of the GNU General Public License as published by',
-      '## the Free Software Foundation; either version 2 of the License, or',
-      '## (at your option) any later version.',
-      '##',
-      '## You should have received a copy of the GNU General Public License',
-      '## along with this program; if not, write to the Free Software',
-      '## Foundation, Inc.',
-      '',
-      '## -*- texinfo -*-',
-      '## @deftypefn {Function File} {} stamp',
-      '## Returns the time stamp.',
-      '## @end deftypefn',
-      '',
-      'function t = stamp',
-      '  ## seconds since the epoch',
-      '  t = (time - mktime(gmtime(0)))/86400;',
-      'endfunction',
-      '',
-    ].join('\n');
-    expect(getParser('matlab')!.parse(code)!.rootNode.type).toBe('ERROR');
-    expect(detectLanguage('stamp.m', code)).toBe('matlab');
-    const r = extractFromSource('stamp.m', code, 'matlab');
-    expect(r.nodes.map((n) => n.kind)).toEqual(['file']);
-    expect(r.unresolvedReferences).toEqual([]);
-  });
-
-  it('leave a MATLAB file whose parse fails at the root to its frames', () => {
-    // An unclosed `while`: the root is ERROR, but the file's variables still hold.
-    const code = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  while getpv(k)<0.1\n';
-    expect(getParser('matlab')!.parse(code)!.rootNode.type).toBe('ERROR');
-    expect(refs('f.m', code)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:getpv <- f.m']);
-  });
-
-  it('are known by every Octave block keyword, classdef ones included — never by a MATLAB classdef', () => {
-    for (const code of [
-      'function f(xs)\n  parfor i = 1:3\n    g(i);\n  endparfor\nend\n',
-      'classdef Foo\n  properties\n    x\n  endproperties\n  methods\n    function r = get(obj)\n      r = obj.x;\n    endfunction\n  endmethods\nendclassdef\n',
-      'classdef Col\n  enumeration\n    Red\n  endenumeration\n  events\n    Changed\n  endevents\nend\n',
-    ]) {
-      const r = extractFromSource('f.m', code, 'matlab');
-      expect(r.nodes.map((n) => n.kind), code).toEqual(['file']);
-    }
-    const matlab = 'classdef Foo < handle\n  properties\n    x\n  end % properties\n  events\n    Changed\n  end\n  methods\n    function r = get(obj)\n      r = helper(obj.x);\n    end % get\n  end % methods\nend % classdef\n';
-    expect(extractFromSource('Foo.m', matlab, 'matlab').nodes.map((n) => `${n.kind}:${n.name}`)).toEqual(['file:Foo.m', 'class:Foo', 'property:x', 'method:get']);
-  });
-
-  it('are not confused with MATLAB that only mentions their syntax', () => {
-    // `#` and `endfunction` inside a block comment, a `#` inside a string.
-    const code = "function f()\n%{\n# heading\nendfunction\n%}\nfprintf('#%d\\n', g());\nend\n";
-    expect(refs('f.m', code)).toEqual(['calls:g <- f']);
-    // Block comments nest, for the extractor as for detection.
-    const nested = 'function f()\n%{\n%{\n%}\n#define not really\nendif\n%}\ng();\nend\n';
-    expect(detectLanguage('f.m', nested)).toBe('matlab');
-    expect(refs('f.m', nested)).toEqual(['calls:g <- f']);
-  });
-});
-
-describe('.m detection hardening', () => {
-  it('keeps directive-only, comment-only and plain-C files Objective-C', () => {
-    for (const code of [
-      '#elif X\n',
-      '#warning fix me\n',
-      '#error nope\n',
-      '#else\n',
-      '#endif\n',
-      '#line 10 "x.m"\n',
-      '#  ifndef FOO_H\n#  define FOO_H 1\n#  endif\n',
-      '# define N 10\nint x = N;\n',
-      '// just a comment\n// with an ellipsis...\n',
-      '/* header\n * text\n */\n',
-      'int x;\n// wait...\n',
-      'static int y;\n%d\n',
-      'void f(void);\nend;\n',
-      'struct point {\n  int x;\n};\n',
-      '% x\nstruct point *p;\n',
-      '#endif\n// done...\n',
-    ]) {
-      expect(detectLanguage('a.m', code), JSON.stringify(code)).toBe('objc');
-    }
-  });
-
-  it('reads MATLAB with C-looking lines as MATLAB', () => {
-    for (const code of [
-      // An Octave-style comment that begins with a directive word.
-      'x = linspace(0, 1, 10);\n# define the grid\ny = x.^2;\n',
-      // A matrix row the old method-header rule read as `- (type)name`.
-      'function m = matrow(b, c)\nm = [1 2\n-(b) c];\nend\n',
-      'm = [1 2\n-(b) c];\n',
-      // A directive inside a block comment is comment text.
-      'function blk()\n%{\n# Heading\n#define not really\n%}\nx = 1;\nend\n',
-      // Octave comments that begin like a conditional's directives (unsupported, but never Objective-C).
-      'function r = f(a)\n#line up the data\nr = a;\nend\n',
-      'function r = f(a)\n#else use the default\n#error out early\n#warning: slow\nr = a;\nend\n',
-      'x = 1;\nif x\n#endif of the setup\n  y = 2;\nendif\n',
-      'x = 1;\n#error handling below\ny = f(x);\n',
-      '#warning: slow\nx = 1;\n',
-      // `struct s` alone on its line is command syntax.
-      '% doc\nstruct s\n',
-    ]) {
-      expect(detectLanguage('a.m', code), JSON.stringify(code)).toBe('matlab');
-    }
   });
 });
