@@ -124,6 +124,57 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'heaviside', 'newrbe', 'instrhwinfo', 'get_param', 'load_system', 'close_system',
 ]);
 
+/**
+ * MATLAB functions whose first argument may name a function as text
+ * (`cellfun('myfun', c)`, `fzero('froot', x0)`, `ode45('rhs', …)`): that
+ * text references the function. Not the deprecated `quad`, `quadl` and
+ * `quadv`, a name projects reuse for their own functions (an accelerator
+ * lattice's `quad('QF', 0.34, …)` makes a quadrupole, and names no function).
+ */
+export const MATLAB_FUNCTION_TAKERS: ReadonlySet<string> = new Set([
+  'cellfun', 'arrayfun', 'structfun', 'fzero', 'fminsearch', 'fminbnd', 'fminunc', 'fmincon', 'fsolve', 'lsqnonlin',
+  'lsqcurvefit', 'quadgk', 'integral', 'integral2', 'integral3', 'ode23', 'ode45', 'ode113', 'ode15s', 'ode15i',
+  'ode23s', 'ode23t', 'ode23tb',
+]);
+
+/**
+ * `cellfun`'s own names for its legacy fast paths (`cellfun('isempty', c)`):
+ * MATLAB's, never a function of the project's.
+ */
+export const MATLAB_CELLFUN_NAMES: ReadonlySet<string> = new Set([
+  'isempty', 'islogical', 'isreal', 'length', 'ndims', 'prodofsize', 'size', 'isclass',
+]);
+
+/**
+ * MATLAB's constructors and setters of graphics objects, GUI components and
+ * timers, whose name/value arguments may give a callback as code
+ * (`uicontrol('Callback', 'corgui(''ShowResp'')')`, `set(h, 'KeyPressFcn',
+ * 'onkey')`), and `struct`, which GUI code builds callback tables with. Only
+ * these: any other function given `'Callback', 'go'` (a project's own
+ * `myfun('Callback', 'go')`, `strrep(s, 'Callback', …)`) takes text, as far
+ * as anything here can tell.
+ */
+export const MATLAB_CALLBACK_OWNERS: ReadonlySet<string> = new Set([
+  'uicontrol', 'uimenu', 'uicontextmenu', 'uipushtool', 'uitoggletool', 'uitoolbar', 'uipanel', 'uibuttongroup',
+  'uitable', 'uitab', 'uitabgroup', 'figure', 'axes', 'set', 'line', 'patch', 'surface', 'image', 'text',
+  'rectangle', 'timer', 'struct', 'uifigure', 'uiaxes', 'uibutton', 'uidropdown', 'uieditfield', 'uislider',
+  'uicheckbox',
+]);
+
+/**
+ * MATLAB functions that may run project code other than through an object
+ * handed to them: what they are given to call or evaluate (`feval`,
+ * `cellfun`, `eval`), a callback (a GUI constructor's `CreateFcn`, `set`,
+ * `delete`'s `DeleteFcn`), or events waiting to be handled (`drawnow`,
+ * `pause`, `waitfor`).
+ */
+export const MATLAB_CODE_RUNNERS: ReadonlySet<string> = new Set([
+  ...MATLAB_FUNCTION_TAKERS, ...MATLAB_CALLBACK_OWNERS,
+  'feval', 'eval', 'evalc', 'evalin', 'assignin', 'run', 'builtin', 'str2func', 'drawnow', 'pause', 'waitfor',
+  'uiwait', 'notify', 'delete', 'close', 'start', 'stop', 'refresh', 'input', 'keyboard', 'quad', 'quadl', 'quadv',
+  'quadgk', 'ode45', 'hgfeval', 'listener', 'addlistener',
+]);
+
 /** Whether a reference kind names a bare name the way a call does: a call (`plot(x)`) or a handle (`@plot`). */
 export function callsByName(kind: string): boolean {
   return kind === 'calls' || kind === 'function_ref';

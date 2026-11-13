@@ -1,12 +1,40 @@
-import type { Node as SyntaxNode } from 'web-tree-sitter';
-import type { Node, NodeKind } from '../../types';
+import type { Node as SyntaxNode, Tree } from 'web-tree-sitter';
+import type { Node, NodeKind, UnresolvedReference } from '../../types';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
+import { getParser } from '../grammars';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
-import { MATLAB_BUILTINS } from './matlab-builtins';
+import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
-import { matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
+import { RUNTIME_TAG, matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
+import {
+  HOLE,
+  MAX_TEXT,
+  NAME_SHAPED,
+  callArgs,
+  commandItems,
+  errorVariable,
+  evaluate,
+  namedChildren,
+  stringLiteral,
+  type FnVal,
+  type Val,
+  type ValueHost,
+} from './matlab-values';
+import {
+  CALLBACK_PROPERTY,
+  NO_VALUES,
+  SINK_WORDS,
+  interpretScope,
+  isWasmMemoryError,
+  loadedNames,
+  sinkInputs,
+  type InterpHost,
+  type ParsedCode,
+  type ScopeOptions,
+  type ScopeValues,
+} from './matlab-interp';
 
 /**
  * MATLAB extractor (vendored acristoffers/tree-sitter-matlab, ABI 15).
@@ -57,6 +85,25 @@ import { matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
  *                 (see MATLAB_BUILTINS).
  *   - handles:    `@f` / `@pkg.f` / `@obj.m` are function references
  *                 (callbacks: `cellfun(@f, …)`, `'Callback', @onClick`).
+ *   - names given as text: what each function's code holds is followed
+ *                 statement by statement (see matlab-interp.ts), so that
+ *                 `feval(m, …)` calls each function `m` can name there,
+ *                 `fh(x)` calls what the handle `fh` can hold, and
+ *                 `str2func('f')` / `cellfun('f', c)` reference `f`. Code
+ *                 given as text is read as code: what `eval` / `evalc` run
+ *                 (where they are), what `evalin` runs, and a GUI callback
+ *                 written as text to one of MATLAB's GUI functions
+ *                 (`uicontrol('Callback', 'corgui(''ShowResp'')')`,
+ *                 `h.Callback = 'go'`), which, run later on an event,
+ *                 references what it calls. A name with a part nothing here
+ *                 knows (`eval([op '(''x'')'])`) is no reference. A name
+ *                 eval'd code assigns or `load(f, 'a', 'b')` makes is, in a
+ *                 function, still called as MATLAB would (it reads the
+ *                 function's names from its code), marked as made at
+ *                 runtime, as is every name of code run in another
+ *                 workspace: the resolver drops one nothing answers. In a
+ *                 script such a name is a variable. `S = load(f)` is a
+ *                 struct.
  *   - imports:    `import pkg.Cls` (command syntax); `import pkg.*` is an
  *                 import node only, since no node stands for a package.
  *
@@ -88,10 +135,6 @@ const CONDITION_PARENTS = new Set(['if_statement', 'elseif_clause', 'while_state
 // ---------------------------------------------------------------------------
 // Small AST helpers
 // ---------------------------------------------------------------------------
-
-function namedChildren(node: SyntaxNode): SyntaxNode[] {
-  return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
-}
 
 /** Identifiers directly under a node (e.g. `function_output`, `multioutput_variable`, `global_operator`). */
 function identifiersIn(node: SyntaxNode, source: string, into: Set<string>): void {
@@ -262,8 +305,12 @@ interface Self {
  * lambda, a class body, or a script's top level) and popped when it leaves.
  */
 interface Frame {
-  /** Whose view: a function's, a lambda's, a class body's, or the file's top level. */
-  kind: 'function' | 'lambda' | 'class' | 'file';
+  /**
+   * Whose view: a function's, a lambda's, a class body's, the file's top
+   * level, or code given as text that `eval` runs where it is (which sees
+   * that code's variables, and what it assigns besides).
+   */
+  kind: 'function' | 'lambda' | 'class' | 'file' | 'eval';
   /** Scope path the definitions inside are qualified with (`pkg`, `Cls`, `fn`). */
   qual: readonly string[];
   /** Variables assigned, passed in or declared HERE (a lambda's: its parameters) — see isLocal for the ones it shares. */
@@ -281,6 +328,22 @@ interface Frame {
    * Null for a top-level function, a class body and the file.
    */
   parent: Frame | null;
+  /**
+   * What the dynamic calls of a function's (or a script's) code read, by
+   * node (see matlab-interp.ts): set once the scope is interpreted, before
+   * its walk. A lambda reads its enclosing code's; code given as text has
+   * none of its own (another tree) and reads its literals only.
+   */
+  values?: ScopeValues;
+  /**
+   * In a function, the names code it runs as text (`eval('x = 3;')`) or a
+   * `load` name list makes at runtime. MATLAB reads the function's names
+   * from its own code before it runs, so such a name is still a function
+   * where it is called (`if …, eval('f = @g;'), end; f(1)` calls `f.m`);
+   * its references carry the `runtime` fact (see matlab-ref-facts.ts), which
+   * lets the resolver drop one nothing answers.
+   */
+  runtime?: ReadonlySet<string>;
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
@@ -362,7 +425,10 @@ function isLocal(f: Frame, name: string): boolean {
  */
 function classHintOf(f: Frame, v: string): ClassHint | undefined {
   let g = f;
-  while (g.kind === 'lambda') {
+  while (g.kind === 'lambda' || g.kind === 'eval') {
+    // What eval'd code assigns hides what the code around it said.
+    const own = g.classHints.get(v);
+    if (own) return own;
     if (g.locals.has(v)) return undefined;
     g = g.parent!;
   }
@@ -376,8 +442,21 @@ function readsStructField(f: Frame, v: string, member: string): boolean {
     if (g.kind === 'lambda') {
       if (g.locals.has(v)) return false;
     } else if (g.structFields.has(v) || g.structFields.has(field)) return true;
+    else if (g.kind === 'eval' && g.locals.has(v)) return false;
   }
   return false;
+}
+
+/** Whether `name` is one code run at runtime made where frame `f` reads it (see Frame.runtime), and no variable there. */
+function isRuntimeName(f: Frame, name: string): boolean {
+  if (isLocal(f, name)) return false;
+  for (let g: Frame | null = f; g; g = g.parent) if (g.runtime?.has(name)) return true;
+  return false;
+}
+
+/** The facts of a bare reference to `name` from frame `f`: `runtime` when code run at runtime made the name (see Frame.runtime). */
+function runtimeFact(f: Frame, name: string): MatlabRefFacts {
+  return isRuntimeName(f, name) ? { runtime: true } : {};
 }
 
 function inFrame(f: Frame, walk: () => void): void {
@@ -398,6 +477,10 @@ interface ScopeFacts {
    */
   constructions: Array<{ v: string; head: string; cls: string; bare: boolean }>;
   structFields: Set<string>;
+  /** The code arguments of the `eval` / `evalc` calls here (`eval(code, catchCode)`), with the name called. */
+  evalCodes: Array<{ callee: string; arg: SyntaxNode }>;
+  /** The names `load(f, 'a', 'b')` / `load f a b` statements here make (in a script, variables too). */
+  loaded: Set<string>;
 }
 
 /**
@@ -408,11 +491,17 @@ interface ScopeFacts {
  * that per function, so every use of it there, before or after, is one. A
  * script's workspace is the caller's, and what a name is there may change
  * between its lines: there the evidence holds at its own site only.
+ * `load(f, 'a', 'b')` / `load f a b` as a statement makes `a` and `b` —
+ * variables of a script, and in a function names made at runtime (see
+ * Frame.runtime) — and `S = load(f)` makes S a struct (`S.k(2)` reads a
+ * field).
  */
 function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): ScopeFacts {
   const locals = new Set<string>();
   const constructions: ScopeFacts['constructions'] = [];
   const structFields = new Set<string>();
+  const evalCodes: ScopeFacts['evalCodes'] = [];
+  const loaded = new Set<string>();
 
   /**
    * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
@@ -488,7 +577,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
             const right = getChildByField(c, 'right');
             const made = constructed(right);
             if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier' });
-            else if (right?.type === 'function_call' && getNodeText(getChildByField(right, 'name') ?? right, source) === 'struct') {
+            else if (right?.type === 'function_call' && /^(?:struct|load)$/.test(getNodeText(getChildByField(right, 'name') ?? right, source))) {
               structFields.add(v);
             }
           } else if (left?.type === 'multioutput_variable') {
@@ -515,13 +604,24 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           break;
         }
         case 'function_call': {
-          // `c{k}` / `a(end)` in a function: c and a are its variables. Not a
-          // chain's field (`s.c{k}`), which is no variable.
-          if (!isFunction) break;
           const callee = getChildByField(c, 'name');
           if (callee?.type !== 'identifier') break;
+          // Not a chain's field (`s.c{k}`, `obj.load(f)`).
           if (n.type === 'field_expression' && getChildByField(n, 'object')?.id !== c.id) break;
-          if (arrayEvidence(c) === 'variable') locals.add(getNodeText(callee, source));
+          const name = getNodeText(callee, source);
+          if (name === 'load' && isStatement(c)) {
+            for (const v of loadedNames(callArgs(c).map((a) => stringLiteral(a, source)))) loaded.add(v);
+          } else if (name === 'eval' || name === 'evalc') {
+            for (const arg of callArgs(c).slice(0, 2)) evalCodes.push({ callee: name, arg });
+          }
+          // `c{k}` / `a(end)` in a function: c and a are its variables.
+          if (isFunction && arrayEvidence(c) === 'variable') locals.add(name);
+          break;
+        }
+        case 'command': {
+          const cmd = namedChildren(c).find((a) => a.type === 'command_name');
+          if (!cmd || getNodeText(cmd, source) !== 'load') break;
+          for (const v of loadedNames(commandItems(c, source))) loaded.add(v);
           break;
         }
       }
@@ -529,17 +629,8 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
     }
   };
   walk(scope);
-  return { locals, constructions, structFields };
-}
-
-/** A `catch_clause`'s error variable: its identifier on the `catch` keyword's own row. */
-function errorVariable(clause: SyntaxNode): SyntaxNode | null {
-  for (let i = 0; i < clause.namedChildCount; i++) {
-    const c = clause.namedChild(i);
-    if (!c || c.type === 'comment') continue;
-    return c.type === 'identifier' && c.startPosition.row === clause.startPosition.row ? c : null;
-  }
-  return null;
+  if (!isFunction) for (const v of loaded) locals.add(v);
+  return { locals, constructions, structFields, evalCodes, loaded };
 }
 
 /**
@@ -703,29 +794,382 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
   if (isLocal(f, name)) return null;
   // `ArrayList()` where the file imports `java.util.ArrayList`: Java's constructor.
   if (javaImported.has(name)) return null;
-  const firstArg = children.find((c) => c.type === 'arguments')?.namedChild(0);
-  const first = firstArg?.type === 'identifier' ? getNodeText(firstArg, source) : null;
-  const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first)?.cls;
-  // On a Java object (`set(m, …)`), the function as written: no class of the project's.
-  if (cls && !isJavaClass(cls)) return { name: `${cls}::${name}`, dispatch: true };
+  const cls = dispatchClass(children.find((c) => c.type === 'arguments')?.namedChild(0), source);
+  if (cls) return { name: `${cls}::${name}`, dispatch: true };
   return { name, dispatch: false };
 }
 
 /**
- * `run setup_paths` / `run('setup_paths.m')`: the script (or function) run
- * by that name, as a call of it written where the name is. A path
- * (`run('lib/setup')`) or a name built at runtime names nothing the index can
- * tell from here. `holder` is the call's arguments or the command; `statement`
- * whether the `run` is a statement of its own, the only way a script runs.
+ * The class whose method a call passing `arg` first dispatches to, when the
+ * code says what `arg` holds: the method's own object, or a variable the
+ * function says holds a class (`c = Shape(…)`). Not a Java object's (`set(m,
+ * …)` on one is the function as written: no class of the project's).
+ */
+function dispatchClass(arg: SyntaxNode | null | undefined, source: string): string | undefined {
+  const f = frame();
+  const first = arg?.type === 'identifier' ? getNodeText(arg, source) : null;
+  const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first)?.cls;
+  return cls && !isJavaClass(cls) ? cls : undefined;
+}
+
+/**
+ * `run setup_paths` / `run('setup_paths.m')` / `run(name)` after `name =
+ * 'setup_paths'`: the script (or function) run by that name, as a call of it
+ * written where the name is. A path (`run('lib/setup')`) or a name with a
+ * part nothing here knows names nothing the index can tell from here.
+ * `holder` is the call's arguments or the command; `statement` whether the
+ * `run` is a statement of its own, the only way a script runs.
  */
 function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext, statement: boolean): void {
   const args = holder ? namedChildren(holder).filter((c) => c.type !== 'command_name' && c.type !== 'comment') : [];
   if (args.length !== 1) return;
   const arg = args[0]!;
   const at = arg.type === 'string' ? namedChildren(arg).find((c) => c.type === 'string_content') : arg.type === 'command_argument' ? arg : undefined;
-  if (!at) return;
+  if (!at) {
+    if (arg.type === 'string') return; // `run('')`
+    for (const text of valueAt(arg, ctx.source).strs) {
+      const m = /^([A-Za-z][A-Za-z0-9_]*)(?:\.[mM])?$/.exec(text);
+      if (m) addRef(ctx, m[1]!, 'calls', arg, { form: statement ? 'statement' : 'bare' });
+    }
+    return;
+  }
   const m = /^(['"]?)([A-Za-z][A-Za-z0-9_]*)(?:\.[mM])?\1$/.exec(getNodeText(at, ctx.source));
   if (m) addRef(ctx, m[2]!, 'calls', at, { form: statement ? 'statement' : 'bare' }, at.startPosition.column + m[1]!.length);
+}
+
+// ---------------------------------------------------------------------------
+// Names given as text: feval, str2func, code eval runs, callbacks, handles
+// ---------------------------------------------------------------------------
+
+/** The file's name as `mfilename` returns it in its own code (and code it evals); null in code run in another workspace. */
+let fileStem: string | null = null;
+
+/** How deep the walk is in code given as text: `eval('eval(''f'')')` reaches 2, and no deeper. */
+let codeDepth = 0;
+const MAX_CODE_DEPTH = 2;
+
+/** What stands for a HOLE in code given as text: a name holding it names nothing. */
+const PLACEHOLDER = 'CgHole__';
+
+/**
+ * The functions the file defines outside a class, and the ones nested in
+ * them: a statement naming one calls it, and runs no script. Set while
+ * extractFile walks the file.
+ */
+let fileFunctions: ReadonlySet<string> = EMPTY;
+
+/** The functions `root` defines outside a class (see fileFunctions). */
+function fileFunctionsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
+  const names = new Set<string>();
+  const add = (fn: SyntaxNode): void => {
+    const name = getChildByField(fn, 'name');
+    if (name) names.add(getNodeText(name, source));
+    const body = namedChildren(fn).find((c) => c.type === 'block');
+    for (const c of body ? namedChildren(body) : []) if (c.type === 'function_definition') add(c);
+  };
+  for (const c of namedChildren(root)) if (c.type === 'function_definition') add(c);
+  return names;
+}
+
+/** Code given as text, parsed: its tree's root, the text it was parsed from (HOLEs as PLACEHOLDER), and what its statements say of its variables. */
+interface ParsedText {
+  root: SyntaxNode;
+  text: string;
+  facts: ScopeFacts;
+}
+
+/**
+ * Code given as text, parsed once per file (the interpretation of a scope,
+ * the names its evals make and the walk of what they call share it): its
+ * text, HOLEs replaced → its tree, and the parse when it is clean. Every tree
+ * is deleted by extractFile.
+ */
+let codeTrees = new Map<string, { tree: Tree | null; parsed: ParsedText | null }>();
+
+/** Code given as text, parsed (see codeTrees); null when it is too long or does not parse cleanly as MATLAB. */
+function parseCode(code: string): ParsedText | null {
+  const text = code.split(HOLE).join(PLACEHOLDER);
+  if (text.length > MAX_TEXT) return null;
+  let entry = codeTrees.get(text);
+  if (entry === undefined) {
+    let tree: Tree | null = null;
+    try {
+      tree = getParser('matlab')?.parse(text) ?? null;
+    } catch (e) {
+      // A corrupted wasm heap must reach the worker, which restarts with a fresh one.
+      if (isWasmMemoryError(e)) throw e;
+    }
+    // A parse that recovered from an error says nothing for sure of what the code does.
+    const parsed = tree && !tree.rootNode.hasError ? { root: tree.rootNode, text, facts: scanScope(tree.rootNode, text, false) } : null;
+    codeTrees.set(text, (entry = { tree, parsed }));
+  }
+  return entry.parsed;
+}
+
+/** What evaluation asks of the walk: the frame on top answers. */
+function valueHost(source: string): ValueHost {
+  return {
+    source,
+    mfilename: () => fileStem,
+    isLocal: (name) => isLocal(frame(), name),
+    handle: (node) => handleRef(node, source),
+    named: namedRef,
+  };
+}
+
+/** What interpretation asks of the walk, for code `source` whose variables `isVariable` says. */
+function interpHost(source: string, isVariable: (name: string) => boolean): InterpHost {
+  return {
+    source,
+    mfilename: () => fileStem,
+    isLocal: isVariable,
+    handle: (node) => handleRef(node, source),
+    named: namedRef,
+    isFileFunction: (name) => fileFunctions.has(name),
+    code: (text): ParsedCode | null => {
+      const parsed = parseCode(text);
+      if (!parsed) return null;
+      const own = parsed.facts.locals;
+      return { root: parsed.root, host: interpHost(parsed.text, (n) => own.has(n) || isVariable(n)) };
+    },
+  };
+}
+
+/**
+ * The function a name given as text (`str2func('pkg.f')`, `feval('pkg.f',
+ * …)`) names: `f`, or `pkg::f` as `@pkg.f` would. Nothing when the head is a
+ * variable here (MATLAB would not read a variable from text) or Java's.
+ */
+function namedRef(path: readonly string[]): FnVal | null {
+  if (path.length === 1) return { name: path[0]! };
+  const head = path[0]!;
+  if (isLocal(frame(), head) || isJavaHead(head)) return null;
+  return { name: path.join('::') };
+}
+
+/** What the scope's interpretation recorded for `node`, looked up through lambdas to the code around them. */
+function recordedValue(node: SyntaxNode): Val | undefined {
+  for (let g: Frame | null = frame(); g; g = g.parent) if (g.values) return g.values.get(node.id);
+  return undefined;
+}
+
+/** What `node` holds where it is: as recorded, else as written (its literals). */
+function valueAt(node: SyntaxNode, source: string): Val {
+  return recordedValue(node) ?? evaluate(node, null, valueHost(source));
+}
+
+/** The values a scope's dynamic calls read (see matlab-interp.ts), when its code has any. */
+function scopeValues(scope: SyntaxNode, options: ScopeOptions, source: string): ScopeValues {
+  if (!SINK_WORDS.test(getNodeText(scope, source))) return NO_VALUES;
+  return interpretScope(scope, options, interpHost(source, (name) => isLocal(frame(), name)));
+}
+
+/**
+ * The names a scope's code makes at runtime — what the code its `eval`s run
+ * assigns or loads (`eval('x = 3;')`), what its `load` lists name: a
+ * script's variables (`x(2)` there reads x), a function's runtime names (see
+ * Frame.runtime). A name with a part nothing here knows is passed over.
+ */
+function addRuntimeNames(facts: ScopeFacts, f: Frame, source: string, isFunction: boolean): void {
+  const made = new Set<string>(isFunction ? facts.loaded : []);
+  for (const { callee, arg } of facts.evalCodes) {
+    if (isLocal(f, callee)) continue;
+    for (const code of valueAt(arg, source).strs) {
+      for (const n of parseCode(code)?.facts.locals ?? []) if (!n.includes(PLACEHOLDER)) made.add(n);
+    }
+  }
+  if (made.size === 0) return;
+  if (isFunction) f.runtime = made;
+  else for (const n of made) facts.locals.add(n);
+}
+
+/**
+ * The references of a call that names what it calls at runtime (see
+ * sinkInputs), from what its arguments hold: `feval(m, …)` calls each
+ * function `m` can name, `str2func('f')` and `cellfun('f', c)` reference f,
+ * the code `eval` / `evalc` / `evalin` run is read as code, and so is a
+ * callback property's value given as text (`'Callback', 'go'`). `named`
+ * whether the call is of the function as written (not a method a class
+ * dispatches it to): only callbacks are read otherwise.
+ */
+function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, named: boolean): void {
+  const source = ctx.source;
+  const args = callArgs(node);
+  for (const { index, kind } of sinkInputs(name, args, source)) {
+    if (kind === 'run' || (!named && kind !== 'callback')) continue;
+    const arg = args[index]!;
+    const v = valueAt(arg, source);
+    switch (kind) {
+      case 'feval':
+        handleCalls(v.fns, v.strs, arg, args[1], ctx);
+        break;
+      case 'function':
+        // A handle written with `@` is referenced there.
+        for (const text of v.strs) {
+          if (!NAME_SHAPED.test(text) || (name === 'cellfun' && MATLAB_CELLFUN_NAMES.has(text))) continue;
+          const f = namedRef(text.split('.'));
+          if (f) addRef(ctx, f.name, 'function_ref', arg);
+        }
+        break;
+      case 'eval':
+        // `x = eval('cfgscript')` evaluates an expression, which a script is not; `evalc` runs it as a statement.
+        codeRefs(v.strs, arg, ctx, 'here', name === 'eval' && !isStatement(node));
+        break;
+      case 'evalin':
+        // `p = evalin('base', 'SimParams')` reads what a name holds there, most
+        // often a variable of that workspace: no telling it from a call.
+        codeRefs(isStatement(node) ? v.strs : v.strs.filter((c) => !/^\s*[A-Za-z]\w*\s*;?\s*$/.test(c)), arg, ctx, 'elsewhere', !isStatement(node));
+        break;
+      case 'callback':
+        codeRefs(v.strs, arg, ctx, 'callback');
+        break;
+    }
+  }
+}
+
+/**
+ * Calls of the functions `fns` hold and the names `strs` give (`feval`'s
+ * first argument, or what `fh` holds in `fh(x)`), at `at`. A plain name
+ * dispatches on the object passed first (`dispatchOn`) as a call written so
+ * would: `feval('area', c)` after `c = Shape(…)` is `Shape::area`.
+ */
+function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext): void {
+  const cls = dispatchClass(dispatchOn, ctx.source);
+  const call = (f: FnVal): void => {
+    if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name });
+    else addRef(ctx, f.name, 'calls', at, f.variable ? { variable: f.variable } : {});
+  };
+  for (const text of strs) {
+    const f = NAME_SHAPED.test(text) ? namedRef(text.split('.')) : null;
+    if (f) call(f);
+  }
+  for (const f of fns) call(f);
+}
+
+/**
+ * Where code given as text runs: `here` (`eval`: the code around it sees
+ * what it assigns, and it sees the code's variables), `elsewhere` (`evalin`:
+ * another workspace, none of whose variables the code here says), or as a
+ * `callback`, in the base workspace, on an event — what it calls is
+ * referenced, as `@onClick` is, not called here. What code run elsewhere
+ * names is a name made at runtime (see Frame.runtime): that workspace's
+ * variables are none the index can see.
+ */
+type CodeMode = 'here' | 'elsewhere' | 'callback';
+
+/** The variables `locals` and the names made at runtime around frame `f`: in code `eval` runs there, those are variables when it runs. */
+function withRuntimeNames(locals: ReadonlySet<string>, f: Frame): ReadonlySet<string> {
+  let out: Set<string> | null = null;
+  for (let g: Frame | null = f; g; g = g.parent) {
+    for (const n of g.runtime ?? []) (out ??= new Set(locals)).add(n);
+  }
+  return out ?? locals;
+}
+
+/**
+ * The references of code given as text, each string of it parsed and walked
+ * as code (definitions in it aside), all at `at`, the argument that gives
+ * it. `asValue` says the code is evaluated for a value (`x = eval('cfg')`),
+ * where no statement runs a script. Code in code is read to MAX_CODE_DEPTH;
+ * code the walk fails on gives nothing.
+ */
+function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContext, mode: CodeMode, asValue = false): void {
+  if (codeDepth >= MAX_CODE_DEPTH) return;
+  for (const code of new Set(codes)) {
+    const parsed = parseCode(code);
+    if (!parsed) continue;
+    const { root, text, facts } = parsed;
+    const outer = frame();
+    const here = mode === 'here';
+    const f: Frame = {
+      kind: here ? 'eval' : 'file',
+      qual: outer.qual,
+      locals: here ? withRuntimeNames(facts.locals, outer) : facts.locals,
+      classHints: classHintsFrom(facts, (v) => facts.locals.has(v) || (here && isLocal(outer, v))),
+      structFields: facts.structFields,
+      self: here && outer.self && !facts.locals.has(outer.self.name) ? outer.self : null,
+      parent: here ? outer : null,
+      values: NO_VALUES,
+    };
+    const refs: UnresolvedReference[] = [];
+    const sub = codeContext(ctx, text, at, { callback: mode === 'callback', runtime: !here, asValue }, refs);
+    const memo = arrayEvidenceMemo;
+    const stem = fileStem;
+    // Node ids are per tree: this one's must not meet the file's in the memo.
+    arrayEvidenceMemo = new Map();
+    if (!here) fileStem = null;
+    codeDepth++;
+    try {
+      inFrame(f, () => {
+        for (const c of namedChildren(root)) sub.visitNode(c);
+      });
+    } catch (e) {
+      if (isWasmMemoryError(e)) throw e;
+      refs.length = 0; // code the walk cannot follow names nothing for sure
+    } finally {
+      codeDepth--;
+      arrayEvidenceMemo = memo;
+      fileStem = stem;
+    }
+    for (const r of refs) ctx.addUnresolvedReference(r);
+  }
+}
+
+/** What code given as text defines is nobody's: no symbol of the file. */
+const DEFINITIONS: ReadonlySet<string> = new Set(['function_definition', 'function_signature', 'class_definition']);
+
+/** How codeContext passes a reference of code given as text on. */
+interface CodeRefStyle {
+  /** A callback's: what it calls is referenced (`function_ref`). */
+  callback: boolean;
+  /** Code run in another workspace: every name a name made at runtime (the `runtime` fact). */
+  runtime: boolean;
+  /** Code evaluated for a value: a statement there is an expression, never a script run (`statement` read as `bare`). */
+  asValue: boolean;
+}
+
+/**
+ * The context code given as text is walked in: the visitor's own, over the
+ * code's tree. It defines nothing; its references are the enclosing scope's,
+ * at `at`'s place in the file, styled as `style` says, and gathered in
+ * `sink`; one whose name holds a part nothing here knows is dropped.
+ */
+function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, style: CodeRefStyle, sink: UnresolvedReference[]): ExtractorContext {
+  const line = at.startPosition.row + 1;
+  const column = at.startPosition.column;
+  const sub: ExtractorContext = {
+    createNode: () => null,
+    visitNode: (n) => {
+      if (DEFINITIONS.has(n.type)) return;
+      if (!matlabExtractor.visitNode!(n, sub)) for (const c of namedChildren(n)) sub.visitNode(c);
+    },
+    visitFunctionBody: () => {},
+    walkInitializer: () => {},
+    addUnresolvedReference: (ref) => {
+      if (ref.referenceName.includes(PLACEHOLDER) || ref.candidates?.some((c) => c.includes(PLACEHOLDER))) return;
+      let candidates = ref.candidates ?? [];
+      if (style.asValue) candidates = candidates.map((c) => (c === 'statement' ? 'bare' : c));
+      if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = [...candidates, RUNTIME_TAG];
+      const out: UnresolvedReference = { ...ref, line, column };
+      if (candidates.length > 0) out.candidates = candidates;
+      else delete out.candidates;
+      if (style.callback && ref.referenceKind === 'calls') out.referenceKind = 'function_ref';
+      sink.push(out);
+    },
+    pushScope: () => {},
+    popScope: () => {},
+    get filePath() {
+      return outer.filePath;
+    },
+    source,
+    get nodeStack() {
+      return outer.nodeStack;
+    },
+    get nodes() {
+      return outer.nodes;
+    },
+  };
+  return sub;
 }
 
 // ---------------------------------------------------------------------------
@@ -837,8 +1281,24 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     parent,
   };
 
+  // What holds something on entry: the parameters, and a method's output (a constructor's is the object).
+  const inputs = new Set<string>();
+  for (const c of children) {
+    if (c.type === 'function_arguments' || (c.type === 'function_output' && kind === 'method')) identifiersIn(c, source, inputs);
+  }
+  const own = new Set<string>(inputs);
+  for (const c of children) if (c.type === 'function_output') identifiersIn(c, source, own);
+  const options: ScopeOptions = {
+    isFunction: true,
+    inputs,
+    // A nested function shares its parent's variables (its own parameters and outputs aside).
+    shared: parent ? (v) => !own.has(v) && isLocal(parent, v) : () => false,
+  };
+
   ctx.pushScope(fn.id);
   inFrame(f, () => {
+    f.values = scopeValues(node, options, source);
+    addRuntimeNames(facts, f, source, true);
     for (const c of children) {
       if (c.type === 'block' || c.type === 'arguments_statement' || c.type === 'function_definition') ctx.visitNode(c);
     }
@@ -945,6 +1405,8 @@ function extractImport(node: SyntaxNode, ctx: ExtractorContext): void {
 function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
   const source = ctx.source;
   javaImported = javaImportsOf(node, source);
+  fileFunctions = fileFunctionsOf(node, source);
+  fileStem = matlabFileStem(ctx.filePath);
   try {
     const facts = scanScope(node, source, false);
     const f: Frame = {
@@ -957,11 +1419,20 @@ function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
       parent: null,
     };
     inFrame(f, () => {
+      // A function file's or a class file's top level runs nothing of its own.
+      const script = namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
+      f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source) : NO_VALUES;
+      addRuntimeNames(facts, f, source, false);
       for (const c of namedChildren(node)) ctx.visitNode(c);
     });
   } finally {
     javaImported = EMPTY;
     arrayEvidenceMemo = new Map();
+    fileStem = null;
+    codeDepth = 0;
+    fileFunctions = EMPTY;
+    for (const { tree } of codeTrees.values()) tree?.delete();
+    codeTrees = new Map();
   }
 }
 
@@ -1034,16 +1505,35 @@ export const matlabExtractor: LanguageExtractor = {
         // parse that recovered from an error put something else between
         // (`Tune = (0.2, 0.1)` in a notes file read as MATLAB).
         const form = callee.nextSibling?.type === '(' ? undefined : 'bare';
-        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}) });
+        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtimeFact(frame(), written) });
         if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx, isStatement(node));
+        if (ref) dynamicCallRefs(node, written, ctx, ref.name === written);
+        else if (isLocal(frame(), written)) {
+          // `fh(x)` after `fh = @solve`: a call of what the handle holds.
+          const held = recordedValue(callee);
+          if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx);
+        }
         return false; // arguments still walked
+      }
+
+      case 'assignment': {
+        // `h.Callback = 'go'`, `s(k).KeyPressFcn = …`: callback code given as text.
+        const left = getChildByField(node, 'left');
+        const right = getChildByField(node, 'right');
+        if (left?.type === 'field_expression' && right) {
+          const parts = namedChildren(left);
+          const last = parts[parts.length - 1];
+          if (last?.type === 'identifier' && CALLBACK_PROPERTY.test(getNodeText(last, source))) codeRefs(valueAt(right, source).strs, right, ctx, 'callback');
+        }
+        return false;
       }
 
       case 'field_expression': {
         // `s.f(k) = …` writes a field; `Q2.Setpoint.P` in `AO.Q2.Setpoint.P{1}(6, :)` is no chain of its own.
         if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
-        if (ref) addRef(ctx, ref.name, 'calls', ref.at, ref.variable ? { variable: ref.variable } : {});
+        const head = getChildByField(node, 'object');
+        if (ref) addRef(ctx, ref.name, 'calls', ref.at, { ...(ref.variable ? { variable: ref.variable } : {}), ...(head ? runtimeFact(frame(), getNodeText(head, source)) : {}) });
         return false;
       }
 
@@ -1065,7 +1555,7 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=');
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare' });
+        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
         return false;
       }
 
@@ -1078,7 +1568,7 @@ export const matlabExtractor: LanguageExtractor = {
           // `setup_paths`: a statement of its own; `hold on` takes arguments.
           // (`setup_paths ;` reads with an empty argument, which is none.)
           const statement = !namedChildren(node).some((c) => c.type === 'command_argument' && getNodeText(c, source).trim() !== '');
-          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare' });
+          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
           if (name === 'run') runRef(node, ctx, true);
         }
         return true;

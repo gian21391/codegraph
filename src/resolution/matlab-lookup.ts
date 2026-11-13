@@ -19,7 +19,9 @@
  *      function or a class on the path — outside every `+package` folder: a
  *      package member is reached by its full name even from its own package.
  *      A call written as a statement of its own (`setup_paths`, `run
- *      setup_paths`) reaches a script on the path too: its file node.
+ *      setup_paths`) reaches a script on the path too: its file node — and
+ *      so does a callback given as text that is one (`'Callback',
+ *      'refresh_plots'`), a reference to the script it runs.
  *
  * An import holds in the function that makes it and the functions nested in
  * it, not in the file's other functions. Of several equally near same-named
@@ -649,7 +651,8 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
   const callerHere = (): Caller => (caller ??= callerOf(ref, context));
   if (!name.includes('::')) {
     if (name.includes('.')) return foundBy(resolveVariableMethod(name, ref.filePath, context), name);
-    return foundBy(resolveBare(name, callerHere(), context, undefined, ref.referenceKind === 'calls' && facts.form === 'statement'), name);
+    // A statement runs a script: a call written as one, or a callback given as text that is one (`'Callback', 'refresh_plots'`).
+    return foundBy(resolveBare(name, callerHere(), context, undefined, facts.form === 'statement'), name);
   }
   const owner = name.slice(0, name.lastIndexOf('::'));
   if (facts.variable !== undefined) {

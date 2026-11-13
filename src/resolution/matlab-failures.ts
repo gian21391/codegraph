@@ -11,7 +11,11 @@
  *     `setup_paths`) is a variable of the workspace, a member (`v.field(k)`)
  *     a struct's field, a qualified name (`pkg.f`, `Cls.m`) an outside
  *     package's. A call written with arguments is a call leaving the index,
- *     which the viewer lists.
+ *     which the viewer lists — unless it is of a name code run at runtime
+ *     makes (the `runtime` fact: `eval('x = 3;'); x(2)`, a `load`ed name,
+ *     anything a callback given as text or `evalin` runs), most often a
+ *     variable there; such a handle reference (a callback's) goes the same
+ *     way.
  *
  * What is discarded is gone for good: a sync that later adds a symbol of the
  * name links the calls in the files it re-indexes, not those in a file it
@@ -74,12 +78,15 @@ function isDottedMatlabName(name: string): boolean {
  * `m(obj, …)` on an object of a known class (`Cls::m`, dispatched under the
  * name written) is a call written with arguments, kept like any `f(x)` —
  * unless the name written is a built-in's (`size(c, 2)`), which, the class's
- * method and the project's functions failing, is the built-in's call.
+ * method and the project's functions failing, is the built-in's call. A
+ * name made at runtime (the `runtime` fact) goes by its keys whatever its
+ * form or kind.
  */
 function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
-  if (ref.language !== 'matlab' || ref.referenceKind !== 'calls') return null;
-  const { dispatch } = matlabRefFacts(ref);
-  if (dispatch !== undefined && !MATLAB_BUILTINS.has(dispatch)) return null;
+  if (ref.language !== 'matlab') return null;
+  const { dispatch, runtime } = matlabRefFacts(ref);
+  if (ref.referenceKind !== 'calls' && !(runtime && ref.referenceKind === 'function_ref')) return null;
+  if (dispatch !== undefined && !MATLAB_BUILTINS.has(dispatch) && !runtime) return null;
   const name = ref.referenceName;
   const tail = ref.nameTail ?? referenceNameTail(name, ref.referenceKind);
   const names = tail === name ? [name] : [name, tail];
@@ -113,7 +120,8 @@ export function unanswerableMatlabFailures(
   const carried = known ?? carriedAmong(pending.flatMap((p) => p.keys));
   for (const { ref, keys } of pending) {
     if (keys.some((k) => carried.has(k))) continue;
-    if (isDottedMatlabName(ref.referenceName) || matlabRefFacts(ref).form !== undefined) discarded.add(ref);
+    const facts = matlabRefFacts(ref);
+    if (isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) discarded.add(ref);
   }
   return discarded;
 }
