@@ -67,7 +67,7 @@ import { matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
 
 /** Built-in base classes: never a project symbol, so no extends edge to guess at. */
 const BUILTIN_BASES =
-  /^(?:handle|dynamicprops|hgsetget|matlab\..*|matlab|double|single|logical|char|u?int(?:8|16|32|64))$/;
+  /^(?:handle|dynamicprops|hgsetget|matlab\..*|matlab|event\..*|sym|double|single|logical|char|u?int(?:8|16|32|64))$/;
 
 /** Parent node types under which a bare identifier is READ as a value (or called with no arguments). */
 const VALUE_PARENTS = new Set([

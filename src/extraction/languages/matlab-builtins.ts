@@ -102,21 +102,26 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'reducepatch', 'waterfall', 'sph2cart', 'cart2sph', 'cart2pol', 'pol2cart', 'logspace', 'atand', 'cosd', 'rad2deg',
   'gcd', 'lcm', 'magic', 'poly', 'toeplitz', 'schur', 'rsf2csf', 'sqrtm', 'svds', 'spalloc', 'speye', 'ipermute',
   'intmax', 'integral', 'ode45', 'pchip', 'unwrap', 'issorted', 'setxor', 'xor', 'and', 'eq', 'ne', 'bitget',
-  'bitset', 'finite', 'isglobal', 'fmins',
+  'bitset', 'finite', 'isglobal', 'fmins', 'hypot', 'vander', 'logm', 'rat', 'not', 'or', 'sind', 'tand',
+  'vecnorm', 'histcounts', 'digraph', 'trisurf', 'polar', 'daspect', 'xtickangle', 'frame2im', 'height',
   // tables, strings, files and the GUI
   'readtable', 'table2array', 'array2table', 'table2struct', 'struct2table', 'table2cell', 'setvartype',
   'extractAfter', 'extractBefore', 'strread', 'regexptranslate', 'fileread', 'xlswrite', 'xmlread', 'hdf5read',
   'hdf5write', 'h5read', 'h5readatt', 'memmapfile', 'unzip', 'urlwrite', 'websave', 'clipboard', 'uisave', 'movie',
-  'ind2rgb', 'rgb2ind', 'gtext', 'uitoggletool', 'uitreenode', 'xticks',
+  'ind2rgb', 'rgb2ind', 'gtext', 'uitoggletool', 'uitreenode', 'xticks', 'strlength', 'csvread', 'uifigure',
+  'uiaxes', 'methodsview', 'what', 'functions', 'desktop', 'system_dependent',
   // objects, errors, timers and the Java, COM, C and Python bridges
   'findprop', 'ismethod', 'properties', 'handle', 'throw', 'message', 'addOptional', 'addParameter', 'stop',
-  'awtinvoke', 'javachk', 'calllib', 'pyargs', 'invoke', 'hgfeval', 'feature', 'license', 'numnodes',
+  'awtinvoke', 'javachk', 'calllib', 'pyargs', 'invoke', 'hgfeval', 'feature', 'license', 'numnodes', 'start',
+  'timerfind',
   // toolboxes: signal, optimization, statistics, image, control, instrument, database, OPC, deep learning, fuzzy
   // logic, Simulink, symbolic
   'zp2tf', 'tf2sos', 'freqz', 'sinc', 'findpeaks', 'envelope', 'bartlett', 'fmincon', 'fminunc', 'optimoptions',
   'lhsdesign', 'tabulate', 'random', 'nanmedian', 'getrect', 'imfill', 'imcontrast', 'mean2', 'tf', 'pzplot',
   'binblockread', 'icdevice', 'visa', 'exec', 'fetch', 'setdbprefs', 'opcda', 'fullyConnectedLayer', 'reluLayer',
   'featureInputLayer', 'dlnetwork', 'adamupdate', 'mapminmax', 'radbas', 'addMF', 'sim', 'matlabFunction',
+  'pwelch', 'firpm', 'xcorr', 'psd', 'fit', 'gamrnd', 'unidrnd', 'pdf', 'strel', 'imdilate', 'std2', 'dicominfo',
+  'heaviside', 'newrbe', 'instrhwinfo', 'get_param', 'load_system', 'close_system',
 ]);
 
 /** Whether a reference kind names a bare name the way a call does: a call (`plot(x)`) or a handle (`@plot`). */

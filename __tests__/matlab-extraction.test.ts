@@ -770,6 +770,8 @@ end
     expect(kept('c.m', 'function c(x)\nimport java.util.*\nimport javax.swing.JFrame\nplot(x);\nmine(x);\nend\n')).toEqual(['calls:mine']);
     // An import keeps the handles too.
     expect(kept('d.m', 'function d(x)\nimport uix.*\nh = @set;\nend\n')).toEqual(['function_ref:set']);
+    // Core and toolbox names: a timer's start, strings, signal processing, Simulink.
+    expect(kept('e.m', 'function e(x)\nstart(x); strlength(x); pwelch(x); firpm(x); get_param(x); mine(x);\nend\n')).toEqual(['calls:mine']);
   });
 
   it('records how each bare name is written: with arguments, bare, or as a statement of its own', () => {
@@ -958,7 +960,7 @@ describe('MATLAB classdef', () => {
     const r = extractFromSource('Foo.m', code, 'matlab');
     expect(r.nodes.find((n) => n.name === 'Foo')?.signature).toBe('classdef (Sealed) Foo < Bar & pkg.Baz & handle');
     expect(refs('Foo.m', code)).toEqual(['extends:Bar <- Foo', 'extends:pkg::Baz <- Foo']);
-    for (const base of ['uint8', 'int32', 'double', 'single', 'logical', 'char']) {
+    for (const base of ['uint8', 'int32', 'double', 'single', 'logical', 'char', 'event.EventData', 'sym']) {
       expect(refs('C.m', `classdef C < ${base}\nend\n`)).toEqual([]);
     }
   });
