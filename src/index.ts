@@ -44,6 +44,7 @@ import {
 import type { ExtractionOrchestrator, IndexProgress, IndexResult, SyncResult } from './extraction';
 import { detectLanguage, hasGrammarLoadFailure, initGrammars, isFileLevelOnlyLanguage, yieldsSymbols } from './extraction/grammars';
 import type { ReferenceResolver, ResolutionResult } from './resolution';
+import type { MatlabFreshReferences } from './resolution/matlab-failures';
 import { engine } from './lazy-engine';
 import { GraphTraverser, GraphQueryManager } from './graph';
 import type { CallSiteRow } from './graph';
@@ -1213,9 +1214,11 @@ export class CodeGraph {
         const pythonFilesBefore = this.pythonFilePaths();
         // An interrupted index may have absorbed its changed files before
         // resolution/synthesis. Detect those orphans BEFORE this sync adds refs.
-        let refreshSynthesis = this.queries.getMetadata('synthesis_pending') === '1' ||
-          this.queries.getUnresolvedReferencesCount() > 0;
+        const pendingAtStart = this.queries.getUnresolvedReferencesCount() > 0;
+        let refreshSynthesis = this.queries.getMetadata('synthesis_pending') === '1' || pendingAtStart;
         if (refreshSynthesis) this.queries.setMetadata('synthesis_pending', '1');
+        // The MATLAB rows an interrupted run left pending (see MatlabFreshReferences.rowIds).
+        const pendingMatlabRows: ReadonlySet<number> = pendingAtStart ? this.queries.getPendingReferenceRowIds('matlab') : new Set();
         // The route nodes as they were before this sync replaced or removed a
         // file — read at the first change, so a sync that changes nothing
         // reads nothing, and only where a router binds navigation calls to
@@ -1223,9 +1226,11 @@ export class CodeGraph {
         const watchRoutes = this.resolver.hasNavigationRouters();
         let routesBefore = null as Node[] | null;
         const flowChange = this.resolver.trackParameterFlows();
+        const matlabSuperclasses = this.resolver.trackMatlabSuperclasses();
         const result = await this.orchestrator.sync(options.onProgress, options.paths, backpressure,
           (filePath, content) => {
             flowChange.before(filePath);
+            matlabSuperclasses.before(filePath);
             if (watchRoutes && routesBefore === null) routesBefore = this.queries.getNodesByKind('route');
             if (!refreshSynthesis && (this.queries.hasSynthesizedEdgesTouchingFile(filePath) ||
               this.queries.wasSynthesisInput(filePath) ||
@@ -1239,9 +1244,8 @@ export class CodeGraph {
         // passes below use the new set (#2516).
         if (result.detectedFrameworks) this.followDetectedFrameworks(result.detectedFrameworks);
 
-        // Only the changed files' references are fresh: a failure elsewhere
-        // is a reference this sync took the target of, kept for its return.
-        this.resolver.setFreshRefFiles(result.changedFilePaths ?? []);
+        // Which of this sync's MATLAB failures may be deleted (see MatlabFreshReferences).
+        const matlabFresh: MatlabFreshReferences = { files: new Set(result.changedFilePaths ?? []), rowIds: pendingMatlabRows };
 
         // A component a tag in an unchanged file may render: `<Team />` links
         // to the `Team` this sync adds. The gate above reads each changed file
@@ -1388,7 +1392,7 @@ export class CodeGraph {
                 current,
                 total,
               });
-            });
+            }, matlabFresh);
 
             // Retry previously-failed refs the changed files may now satisfy
             // (#1240). Scoped resolution above only re-resolves refs FROM the
@@ -1470,7 +1474,7 @@ export class CodeGraph {
                 current: 0,
                 total: retryable.length,
               });
-              await this.resolver.resolveAndPersistListYielding(retryable);
+              await this.resolver.resolveAndPersistListYielding(retryable, matlabFresh);
               options.onProgress?.({
                 phase: 'resolving',
                 current: retryable.length,
@@ -1606,7 +1610,9 @@ export class CodeGraph {
                 });
               },
               backpressure,
-              false
+              false,
+              false,
+              matlabFresh
             );
           }
         }
@@ -1625,10 +1631,17 @@ export class CodeGraph {
         // `definitionDelta` is empty for a body-only edit, so the overwhelmingly
         // common sync pays one branch. CODEGRAPH_NO_REBIND=1 disables it, and
         // the failed-ref re-open that follows the rebind with it.
-        if (result.definitionDelta && process.env.CODEGRAPH_NO_REBIND !== '1') {
+        // A MATLAB class whose superclass list changed moves which methods its
+        // objects reach, which no definition delta shows: its methods' names
+        // join it (see MatlabSuperclassChange).
+        const matlabInherited = this.resolver.matlabSuperclassChangeNames(matlabSuperclasses);
+        const definitionDelta = matlabInherited.length > 0
+          ? [...new Set([...(result.definitionDelta ?? []), ...matlabInherited])]
+          : result.definitionDelta;
+        if (definitionDelta && process.env.CODEGRAPH_NO_REBIND !== '1') {
           const tRebind = Date.now();
           const rebound = this.orchestrator.resurrectStaleResolutionEdges(
-            result.definitionDelta,
+            definitionDelta,
             result.changedFilePaths ?? [],
             edgesBeforeRetry
           );
@@ -1640,11 +1653,11 @@ export class CodeGraph {
           // only deletes files skips it. The sweep below resolves what this
           // re-opens.
           const reopenedFailed = this.queries.reopenFailedReferences(
-            this.queries.getRetryableFailedReferences(result.definitionDelta).flatMap((ref) => (ref.rowId === undefined ? [] : [ref.rowId]))
+            this.queries.getRetryableFailedReferences(definitionDelta).flatMap((ref) => (ref.rowId === undefined ? [] : [ref.rowId]))
           );
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
             console.error(
-              `[phase-timing] sync-rebind: ${Date.now() - tRebind}ms (${result.definitionDelta.length} changed names, ${rebound} edges and ${reopenedFailed} failed refs re-opened)`
+              `[phase-timing] sync-rebind: ${Date.now() - tRebind}ms (${definitionDelta.length} changed names, ${rebound} edges and ${reopenedFailed} failed refs re-opened)`
             );
           }
         }
@@ -1723,7 +1736,7 @@ export class CodeGraph {
             // references were resolved above, rather than leaving a handful of
             // refs to the orphan sweep and its whole-graph synthesis pass.
             if (reopened.size > 0) {
-              this.resolver.resolveAndPersist(this.queries.getUnresolvedReferencesByFiles([...reopened]));
+              this.resolver.resolveAndPersist(this.queries.getUnresolvedReferencesByFiles([...reopened]), undefined, matlabFresh);
               // Same rule as the changed files above: a moved edge in a file
               // synthesis read or wrote means synthesis must be rebuilt.
               if (!refreshSynthesis && [...reopened].some((f) =>
@@ -1776,7 +1789,9 @@ export class CodeGraph {
               });
             },
             backpressure,
-            false
+            false,
+            false,
+            matlabFresh
           );
           result.pendingRefsProcessed = recovery.stats.total;
           result.pendingRefsResolved = recovery.stats.resolved;
@@ -1800,7 +1815,7 @@ export class CodeGraph {
             const ceiling = Number(process.env.CODEGRAPH_PY_ATTR_RETRY_CEILING ?? '') || 2000;
             const failed = this.resolver.pythonAttrRetryCandidates(touchedPy, ceiling);
             const retry = [...this.queries.getUnresolvedReferencesByFiles(reopenedFiles), ...(failed ?? [])];
-            if (retry.length > 0) await this.resolver.resolveAndPersistListYielding(retry);
+            if (retry.length > 0) await this.resolver.resolveAndPersistListYielding(retry, matlabFresh);
             if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
               console.error(
                 `[phase-timing] sync-type-rebind: ${Date.now() - tTypes}ms (${retry.length} refs${failed ? '' : ', failed-ref fan-in over ceiling'})`
@@ -1887,7 +1902,6 @@ export class CodeGraph {
         // auto-checkpoint interval (runMaintenance above already folded the
         // WAL on the success path; on the error path SQLite replays it on
         // the next open).
-        this.builtResolver?.setFreshRefFiles(null);
         if (walValve) { walValve.stop(); await walValve.drain(); }
         if (deferWal) {
           try { this.db.setWalAutocheckpoint(priorAutocheckpoint); } catch { /* connection may be closing */ }
@@ -2265,7 +2279,9 @@ export class CodeGraph {
     synthesize: boolean = true,
     // The caller has just re-detected the frameworks on this index, so the
     // resolver pool's workers needn't each read the project again to do it.
-    frameworksCurrent: boolean = false
+    frameworksCurrent: boolean = false,
+    // See MatlabFreshReferences.
+    matlabFresh?: MatlabFreshReferences
   ): Promise<ResolutionResult> {
     return this.resolver.resolveAndPersistBatched(onProgress, undefined, onSynthesisProgress, {
       dbPath: this.db.getPath(),
@@ -2285,7 +2301,7 @@ export class CodeGraph {
         end: () => this.db.endBulkRefLoad(),
       },
       backpressure,
-    }, synthesize);
+    }, synthesize, matlabFresh);
   }
 
   /**

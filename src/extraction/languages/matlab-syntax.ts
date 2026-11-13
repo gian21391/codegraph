@@ -11,7 +11,7 @@
  * these would be a command-syntax call to a function of that name. Includes
  * Octave's classdef keywords (`endclassdef`, `endmethods`, …).
  */
-export const OCTAVE_KEYWORDS: readonly string[] = [
+const OCTAVE_KEYWORDS: readonly string[] = [
   'endfunction',
   'endif',
   'endwhile',

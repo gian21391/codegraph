@@ -1,27 +1,26 @@
-import { matlabFileNames, matlabFileStem, matlabPathScope } from './matlab-path';
-import { referenceNameTail } from '../../db/reference-tail';
+import type { ExtractionResult, Language } from '../../types';
+import { matlabFileStem, matlabPathScope } from './matlab-path';
+import { isJavaImport } from './matlab-java';
 
 /**
  * MATLAB built-in, GUI, graphics and common toolbox functions. A bare call of
  * one of these names is extracted like any other call, and the resolver links
  * it when the project has a function of that name in reach (a `normpdf.m`
  * stand-in, a `private/strsplit.m` shim, a local function named `grid`): MATLAB
- * takes those before its own. Only a call of one that resolves to nothing is
- * discarded rather than kept as an unresolved reference: each would stay one
- * in every function that uses it, and on a large MATLAB codebase those are
- * most of the database. Drawn from the names most often left unresolved
- * across PlatEMO, the Robotics Toolbox, fieldtrip, DeepLearnToolbox, PRMLT and
- * a 17k-file accelerator-physics codebase.
+ * takes those before its own. A call of one that resolves to nothing is
+ * deleted rather than kept as an unresolved reference (see
+ * ../../resolution/matlab-failures), and one nothing in the project could
+ * answer is never written at all (see MatlabInsertFilter). Drawn from the
+ * names most often left unresolved across PlatEMO, the Robotics Toolbox,
+ * fieldtrip, DeepLearnToolbox, PRMLT and a 17k-file accelerator-physics
+ * codebase.
  *
- * A bare call is discarded by its name alone: `numel(obj)` on a method's own
- * object is `Cls::numel` (a class's overload), and so is `set(c, …)` on a
- * variable the function says holds a class, discarded only when no symbol
- * carries the name either (see matlabUnmatchableKeys). A handle to one
- * (`@isempty`, `cellfun(@size, …)`) goes the same way as its call.
- *
- * What is discarded is gone for good: a sync that later adds `normpdf.m` links
- * the calls in the files it re-indexes, but not those in files it leaves alone,
- * which a full re-index does (pinned in __tests__/matlab-resolution.test.ts).
+ * A bare call goes by its name alone: `numel(obj)` on a method's own object
+ * is `Cls::numel` (a class's overload), and so is `set(c, …)` on a variable
+ * the function says holds a class, discarded only when no symbol carries the
+ * name either. A handle to one (`@isempty`, `cellfun(@size, …)`) goes the
+ * same way as its call. What a discard costs a later sync: see the top of
+ * ../../resolution/matlab-failures.
  */
 export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   // constants and argument counts
@@ -121,13 +120,8 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether a reference kind names a bare name the way a call does: a call (`plot(x)`) or a handle (`@plot`). */
-function callsByName(kind: string): boolean {
+export function callsByName(kind: string): boolean {
   return kind === 'calls' || kind === 'function_ref';
-}
-
-/** Whether `ref` is a bare MATLAB call of a built-in's name, or a handle to one (`plot(x)`, `@plot` — not `Cls::plot` or `obj.plot`). */
-export function isMatlabBuiltinCall(ref: { referenceName: string; referenceKind: string; language?: string }): boolean {
-  return ref.language === 'matlab' && callsByName(ref.referenceKind) && MATLAB_BUILTINS.has(ref.referenceName);
 }
 
 /**
@@ -150,15 +144,12 @@ export function addMatlabReachableNames(paths: Iterable<string>, into: Set<strin
 
 /**
  * `refs` of a MATLAB file without its bare built-in calls (and handles to
- * built-ins, `@isempty`) that nothing in the
- * project could answer — no function or class of the file itself (`defined`,
- * the file's nodes) and no `.m` file of that name (`reachable`) — so that they
- * are never written at all. A file that imports anything keeps them all: an
- * import reaches a package's functions and a class's methods by a bare name
- * (one of Java's, `import java.util.*`, reaches none).
- * The resolver discards the other ones that resolve to nothing
- * (`isMatlabBuiltinCall`); this spares the database their rows. `refs` itself
- * when nothing goes.
+ * built-ins, `@isempty`) that nothing in the project could answer: no
+ * function or class of the file itself (`defined`, the file's nodes) and no
+ * `.m` file of that name (`reachable`). A file that imports anything keeps
+ * them all, as an import reaches a package's functions and a class's methods
+ * by a bare name (one of Java's, `import java.util.*`, reaches none). `refs`
+ * itself when nothing goes.
  */
 export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: string; referenceKind: string }>(
   refs: R[],
@@ -185,69 +176,66 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
   return out ?? refs;
 }
 
-/** The roots of Java's packages (`java.lang.String`, `javax.swing.JFrame`), which MATLAB reaches through its JVM: never a project's. */
-export const JAVA_PACKAGE_ROOTS: ReadonlySet<string> = new Set(['java', 'javax']);
-
-/** `import java.util.ArrayList` / `import javax.swing.*`: Java's, which brings no project name into reach. */
-export function isJavaImport(target: string): boolean {
-  return JAVA_PACKAGE_ROOTS.has(target.split('.')[0]!);
-}
-
 /**
- * The names a project symbol would have to carry for a MATLAB call that
- * resolved to nothing to be worth keeping: its name and the tail it is parked
- * under (`v.f` → `f`, `pkg::sub::f` → `f`), the two the dead-code check and
- * the failed-ref retry match symbols on, each also as a file's (`f.m`, a
- * script's only node). Null for any other reference, which is always kept.
+ * The extraction-side half of the built-in discard: a run's MATLAB results
+ * without the built-in calls nothing in the project could answer
+ * (withoutUnanswerableMatlabBuiltins), so that their rows are never written.
+ * The resolver deletes them anyway when they fail, but written and deleted
+ * they slow a large MATLAB codebase's full index and leave its database file
+ * much larger: the pages they took are not given back.
  *
- * A failed call no symbol carries a name of is kept only as written with
- * arguments, `f(x)` or `m(obj, x)`: a call leaving the index, which the
- * viewer lists — but not `size(obj, 2)` on an object of a known class, the
- * built-in's. A bare read (`t = cfg;`, a command `setup_paths`), a member
- * (`v.field(k)`) or a qualified name (`pkg.f`, `Cls.m`) of a name nothing
- * defines is a variable of the workspace, a struct's field or an outside
- * package's — kept, one row
- * in every function that reads it, it would be most of a large MATLAB
- * codebase's rows, and neither resolves nor holds a symbol back from being
- * called dead. What is discarded is gone for good, as a built-in's call is:
- * a sync that later adds a symbol of the name links the files it re-indexes
- * only — a member call written with arguments too (`r = a.recalib(2)`, its
- * row gone while no symbol was named `recalib`) is not retried in a file the
- * sync leaves alone when it adds the method `recalib` to a class.
+ * What a bare call can reach outside its file is read once: the names of the
+ * `.m` files already stored, read at the first MATLAB file a run stores (or
+ * by `loadStored`), and of every file a run is about to store (`expect`),
+ * which a file it stores before them may call. It only ever grows: a name
+ * kept that no file defines any more costs a row, never an edge.
  */
-export function matlabUnmatchableKeys(ref: {
-  referenceName: string;
-  referenceKind: string;
-  language?: string;
-  nameTail?: string;
-  candidates?: string[];
-}): string[] | null {
-  if (ref.language !== 'matlab' || ref.referenceKind !== 'calls') return null;
-  // `m(obj, …)` on an object of a known class (`Cls::m`, its written name in its
-  // candidates): a call written with arguments, like any `f(x)` — unless what is
-  // written is a built-in's name (`size(c, 2)`), which, the class's method and
-  // the project's functions failing, is the built-in's call.
-  // (A dotted candidate is a variable's own name, `aa.getData` for
-  // `Archive::getData` — no written call.)
-  const written = ref.candidates?.filter((c) => !c.includes('.'));
-  if (written?.length && !written.every((c) => MATLAB_BUILTINS.has(c))) return null;
-  const name = ref.referenceName;
-  const tail = ref.nameTail ?? referenceNameTail(name, ref.referenceKind);
-  const names = tail === name ? [name] : [name, tail];
-  return [...names, ...names.flatMap(matlabFileNames)];
-}
+export class MatlabInsertFilter {
+  private reachable: Set<string> | null = null;
+  private expected: string[] = [];
 
-/** Whether a MATLAB reference name is a member or qualified one (`v.f`, `pkg::f`), not a bare name. */
-export function isDottedMatlabName(name: string): boolean {
-  return name.includes('.') || name.includes(':');
-}
+  /** `storedPaths` lists the paths of the MATLAB files the index holds. */
+  constructor(private readonly storedPaths: () => Iterable<string>) {}
 
-/**
- * Whether the bare call `name` at `column` of `line` is written with
- * arguments, `name(…)` — or, where the line does not read `name` there, may
- * be: true then too, so that what cannot be seen is kept.
- */
-export function writtenWithArguments(line: string | undefined, column: number, name: string): boolean {
-  if (line === undefined || line.slice(column, column + name.length) !== name) return true;
-  return /^\s*\(/.test(line.slice(column + name.length));
+  /**
+   * Files a run will store. A path here has no language yet (an Objective-C
+   * `.m` reads as MATLAB only from its content), so every `.m` path's name is
+   * taken: it keeps a built-in's call of that name a row until resolution
+   * discards it, never an edge.
+   */
+  expect(paths: readonly string[]): void {
+    for (const p of paths) {
+      if (!p.toLowerCase().endsWith('.m')) continue;
+      if (this.reachable) addMatlabReachableNames([p], this.reachable);
+      else this.expected.push(p);
+    }
+  }
+
+  /**
+   * Read the stored files' names now, when a run expects MATLAB files: a full
+   * index calls this before its parse loop, in which the main thread must not
+   * read the database.
+   */
+  loadStored(): void {
+    if (this.expected.length > 0) this.names();
+  }
+
+  /** `result` without the built-in calls nothing in the project could answer; `result` itself for any other language. */
+  filter(result: ExtractionResult, filePath: string, language: Language): ExtractionResult {
+    if (language !== 'matlab' || result.unresolvedReferences.length === 0) return result;
+    const reachable = this.names();
+    addMatlabReachableNames([filePath], reachable);
+    const refs = withoutUnanswerableMatlabBuiltins(result.unresolvedReferences, result.nodes, reachable);
+    return refs === result.unresolvedReferences ? result : { ...result, unresolvedReferences: refs };
+  }
+
+  private names(): Set<string> {
+    if (!this.reachable) {
+      this.reachable = new Set();
+      addMatlabReachableNames(this.storedPaths(), this.reachable);
+      addMatlabReachableNames(this.expected, this.reachable);
+      this.expected = [];
+    }
+    return this.reachable;
+  }
 }

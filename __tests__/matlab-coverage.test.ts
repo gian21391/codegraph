@@ -151,6 +151,9 @@ describe('MATLAB scripts in codegraph_explore', () => {
         expect(text).toContain('**`setup_paths.m`**');
         expect(text).toContain('3\thelper_fn(1);');
       }
+      // A script only passed through is rendered, but after the files the query names.
+      const passing = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'main helper_fn' })).content[0]!.text;
+      expect([...passing.matchAll(/^\*\*`([^`]+)`\*\*/gm)].map((m) => m[1])).toEqual(['helper_fn.m', 'main.m', 'setup_paths.m']);
       const res = await new ToolHandler(cg).execute('codegraph_explore', { query: 'BeamLine globals' });
       expect(res.content[0]!.text).toContain('**`globals.m`**');
       expect(res.content[0]!.text).toContain('2\tELEM = {};');
@@ -576,6 +579,132 @@ describe('MATLAB sync converges on a fresh index', () => {
     ];
     expect(steps).toEqual([via('b'), via('a'), via('b')]);
     expect(synced).toEqual(fresh);
+  });
+});
+
+describe('MATLAB sync converges on a fresh index when a superclass list changes', () => {
+  /** Index `initial`, apply each step with a sync, and return each step's synced edges with a fresh index's of the same files. */
+  async function eachStep(initial: Record<string, string>, ...steps: Array<Record<string, string | null>>): Promise<Array<{ synced: string[]; fresh: string[] }>> {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-supers-')));
+    const files: Record<string, string | null> = { ...initial };
+    writeFiles(root, initial);
+    const cg = await CodeGraph.init(root, { index: true });
+    const out: Array<{ synced: string[]; fresh: string[] }> = [];
+    try {
+      for (const step of steps) {
+        writeFiles(root, step);
+        Object.assign(files, step);
+        await cg.sync();
+        const freshRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-supers-fresh-')));
+        writeFiles(freshRoot, Object.fromEntries(Object.entries(files).filter(([, c]) => c !== null)));
+        const fresh = await CodeGraph.init(freshRoot, { index: true });
+        try {
+          out.push({ synced: edgesOf(cg).edges, fresh: edgesOf(fresh).edges });
+        } finally {
+          fresh.close();
+          fs.rmSync(freshRoot, { recursive: true, force: true });
+        }
+      }
+      return out;
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('drops the call through a superclass the middle class no longer extends, and links it again when it does', async () => {
+    const base = 'classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n';
+    const steps = await eachStep(
+      {
+        'main.m': 'function main()\ns = Sub();\ns.greet();\nend\n',
+        'a/Sub.m': 'classdef Sub < Mid\nend\n',
+        'n/Mid.m': 'classdef Mid < pkg.Base\nend\n',
+        '+pkg/Base.m': base,
+      },
+      { 'n/Mid.m': 'classdef Mid < handle\nend\n' },
+      { 'n/Mid.m': 'classdef Mid < pkg.Base\nend\n' },
+    );
+    const sub = ['a/Sub.m Sub -extends-> Mid @ n/Mid.m', 'main.m main -instantiates-> Sub @ a/Sub.m'];
+    expect(steps.map((s) => s.synced)).toEqual([
+      sub,
+      [sub[0]!, 'main.m main -calls-> pkg::Base::greet @ +pkg/Base.m', sub[1]!, 'n/Mid.m Mid -extends-> pkg::Base @ +pkg/Base.m'],
+    ]);
+    for (const { synced, fresh } of steps) expect(synced).toEqual(fresh);
+  });
+
+  it('for a dispatched call, a member call and a call on a variable, when a class is added, its superclass dropped and taken back, and it is removed', async () => {
+    const mid = (base: string) => `classdef Mid < ${base}\n    methods\n        function wave(obj)\n        end\n    end\nend\n`;
+    const steps = await eachStep(
+      {
+        // `v.wave()`: Base's, as long as Mid (which overrides it) inherits from Base.
+        'main.m': 'function main(v)\ns = Sub2();\ns.greet();\ngreet(s);\nv.wave();\nend\n',
+        'Base.m': 'classdef Base < handle\n    methods\n        function greet(obj)\n        end\n        function wave(obj)\n        end\n    end\nend\n',
+        'Mid.m': mid('Base'),
+      },
+      { 'Sub2.m': 'classdef Sub2 < Mid\nend\n' },
+      { 'Mid.m': mid('handle') },
+      { 'Mid.m': mid('Base') },
+      { 'Sub2.m': null },
+      { 'Sub2.m': 'classdef Sub2 < Mid\nend\n', 'Mid.m': null },
+      { 'Mid.m': mid('Base') },
+    );
+    const greet = ['main.m main -calls-> Base::greet @ Base.m', 'main.m main -calls-> Base::greet @ Base.m'];
+    const all = ['Mid.m Mid -extends-> Base @ Base.m', 'Sub2.m Sub2 -extends-> Mid @ Mid.m', ...greet,
+      'main.m main -calls-> Base::wave @ Base.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'];
+    expect(steps.map((s) => s.synced)).toEqual([
+      all,
+      ['Sub2.m Sub2 -extends-> Mid @ Mid.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'],
+      all,
+      ['Mid.m Mid -extends-> Base @ Base.m', 'main.m main -calls-> Base::wave @ Base.m'],
+      ['main.m main -calls-> Base::wave @ Base.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'],
+      all,
+    ]);
+    for (const { synced, fresh } of steps) expect(synced).toEqual(fresh);
+  });
+});
+
+describe('MATLAB recovery from an interrupted index', () => {
+  it('leaves the unresolved rows a fresh index leaves', async () => {
+    const files = {
+      'main.m': 'function main(a)\nt = cfg;\nplot(t);\nmissing_fn(1);\na.field(2);\nhelper(t);\nend\n',
+      'helper.m': 'function helper(x)\nnope_read;\nend\n',
+    };
+    const rows = (dir: string): string[] => {
+      const db = DatabaseConnection.open(getDatabasePath(dir));
+      try {
+        return (db.getDb().prepare('SELECT file_path AS f, line, reference_name AS n, status AS s FROM unresolved_refs').all() as Array<{ f: string; line: number; n: string; s: string }>)
+          .map((r) => `${r.f}:${r.line} ${r.n} ${r.s}`).sort();
+      } finally {
+        db.close();
+      }
+    };
+    const freshRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-recover-fresh-')));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-recover-')));
+    try {
+      writeFiles(freshRoot, files);
+      (await CodeGraph.init(freshRoot, { index: true })).close();
+      const fresh = rows(freshRoot);
+      // A call written with arguments that resolves to nothing stays; the bare reads nothing defines go.
+      expect(fresh).toEqual(['main.m:4 missing_fn failed']);
+
+      writeFiles(root, files);
+      const cg = await CodeGraph.init(root, { index: true });
+      try {
+        // Interrupted after extraction: the files' references are back, pending, and never attempted.
+        for (const f of Object.keys(files)) fs.appendFileSync(path.join(root, f), '% interrupted-run edit\n');
+        await cg.indexFiles(Object.keys(files));
+        expect(cg.getPendingReferenceCount()).toBeGreaterThan(0);
+        const recovered = await cg.sync();
+        expect(recovered.filesAdded + recovered.filesModified + recovered.filesRemoved).toBe(0);
+        expect(cg.getPendingReferenceCount()).toBe(0);
+      } finally {
+        cg.close();
+      }
+      expect(rows(root)).toEqual(fresh);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(freshRoot, { recursive: true, force: true });
+    }
   });
 });
 

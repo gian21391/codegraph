@@ -10,6 +10,8 @@ import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
 import { QueryBuilder } from '../src/db/queries';
 import { createResolver } from '../src/resolution';
+import { matchMatlabReference } from '../src/resolution/matlab-lookup';
+import { extractFromSource } from '../src/extraction';
 import { buildDeadCodeReport } from '../src/graph/dead-code';
 import { ToolHandler } from '../src/mcp/tools';
 import { isMatlabClassFolderFile } from '../src/resolution/matlab-class-folders';
@@ -88,6 +90,65 @@ describe('MATLAB symbols are out of reach of other languages', () => {
     expect(allEdges(cg).filter((e) => e.startsWith('app/') || e.startsWith('api/'))).toEqual([
       'api/main.py api/main.py::GET:/ -references-> root @ api/main.py',
     ]);
+  });
+});
+
+describe('MATLAB functions are no overloads of a C++ function', () => {
+  it('leaves a C++ project\'s edges as they are without its MATLAB files, whether the MATLAB function is a file\'s or a local one', async () => {
+    // Called with two arguments, which only the MATLAB functions take: by its arguments alone,
+    // the overload would be a MATLAB one.
+    const cpp = {
+      'src/main.cpp': 'int run() {\n  return helper(1, 2) + shared(2, 3);\n}\n',
+      'src/a/lib.cpp': 'int helper(int x) { return x; }\nint helper(double x) { return 0; }\nint shared(int x) { return x; }\nint shared(double x) { return 0; }\n',
+    };
+    const edgesOf = async (files: Record<string, string>): Promise<string[]> => {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-cpp-')));
+      writeTree(root, files);
+      const cg = await CodeGraph.init(root, { index: true });
+      try {
+        return allEdges(cg);
+      } finally {
+        cg.close();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+    const without = await edgesOf(cpp);
+    expect(without).toEqual(['src/main.cpp run -calls-> helper @ src/a/lib.cpp', 'src/main.cpp run -calls-> shared @ src/a/lib.cpp']);
+    expect(await edgesOf({
+      ...cpp,
+      'src/helper.m': 'function y = helper(a, b)\ny = a + b;\nend\n',
+      'src/tools.m': 'function tools()\nend\nfunction r = shared(a, b)\nr = a;\nend\n',
+    })).toEqual(without);
+  });
+});
+
+describe('MATLAB lookups keyed on the resolver\'s per-file node arrays', () => {
+  it('get the same array for a file until the caches drop, and the same answers from a context that builds a new one per call', async () => {
+    const files: Record<string, string> = {
+      'main.m': 'function main(v)\n  helper(1);\n  inner();\n  s = Shape(2);\n  area(s);\n  v.go();\n  function inner()\n    helper(2);\n  end\nend\nfunction helper(x)\n  disp(x);\nend\n',
+      'Shape.m': 'classdef Shape\n  methods\n    function obj = Shape(n)\n    end\n    function a = area(obj)\n      a = 1;\n    end\n    function go(obj)\n    end\n  end\nend\n',
+    };
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-matlab-memo-')));
+    writeTree(root, files);
+    const cg = await CodeGraph.init(root, { index: true });
+    cg.close();
+    const db = DatabaseConnection.open(getDatabasePath(root));
+    try {
+      const resolver = createResolver(root, new QueryBuilder(db.getDb()));
+      const context = resolver.getResolutionContext();
+      // The memo hits only while the array is the same one: the resolver's per-file cache entry.
+      expect(context.getNodesInFile('main.m')).toBe(context.getNodesInFile('main.m'));
+      const fresh = { ...context, getNodesInFile: (filePath: string) => [...context.getNodesInFile(filePath)] };
+      const refs = Object.keys(files).flatMap((filePath) =>
+        extractFromSource(filePath, files[filePath]!, 'matlab').unresolvedReferences.map((r) => ({ ...r, filePath, language: 'matlab' as const })));
+      const answers = (ctx: typeof context) => refs.map((r) => `${r.referenceName} -> ${matchMatlabReference(r, ctx)?.targetNodeId ?? null}`);
+      const cached = answers(context);
+      expect(cached.filter((a) => !a.endsWith('null')).length).toBeGreaterThanOrEqual(5);
+      expect(answers(fresh)).toEqual(cached);
+    } finally {
+      db.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1000,11 +1061,12 @@ describe('MATLAB unresolved rows', () => {
       });
       q.insertNode(fn('fn:k', 'k', 1));
       q.insertNode(fn('fn:j', 'j', 5));
-      const ref = (from: string, name: string, line: number, column: number) => ({
+      const ref = (from: string, name: string, line: number, column: number, candidates?: string[]) => ({
         fromNodeId: from, referenceName: name, referenceKind: 'calls' as const, line, column, filePath: 'k.m', language: 'matlab' as const,
+        ...(candidates ? { candidates } : {}),
       });
       // `t = nowhere;` is a bare read nothing defines (discarded); `nowhere(1)`, of the same key, is kept.
-      const refs = [ref('fn:k', 'nowhere', 2, 4), ref('fn:k', 'nowhere', 3, 0), ref('fn:j', 'gone', 6, 4)];
+      const refs = [ref('fn:k', 'nowhere', 2, 4, ['bare']), ref('fn:k', 'nowhere', 3, 0), ref('fn:j', 'gone', 6, 4, ['bare'])];
       q.insertUnresolvedRefsBatch(refs);
       createResolver(root, q).resolveAndPersist(refs.map((r) => ({ ...r })));
       const rows = db.getDb().prepare('SELECT reference_name AS name, line, status FROM unresolved_refs ORDER BY line').all() as Array<{ name: string; line: number; status: string }>;

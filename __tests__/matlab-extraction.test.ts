@@ -13,7 +13,7 @@ import { CodeGraph } from '../src';
 import { extractFromSource } from '../src/extraction';
 import { detectLanguage, getParser, initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
-import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames, writtenWithArguments } from '../src/extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
 
 beforeAll(async () => {
   await initGrammars();
@@ -42,6 +42,9 @@ function refs(file: string, code: string): string[] {
  * makes it ~6× at these sizes; linear, ~1×). The two run interleaved and the
  * fastest of each counts, so a loaded machine slows both alike.
  */
+// The bound is a ratio to a control timed in the same run, so load slows both
+// sides alike; only the eight extractions' total meets the test timeout, which
+// the two callers raise for a loaded machine (as the other linear-time tests do).
 function expectAsFastAs(file: string, subject: string, control: string): void {
   extractFromSource(file, subject, 'matlab'); // warm up
   extractFromSource(file, control, 'matlab');
@@ -104,7 +107,7 @@ describe('MATLAB frames: each scope reads its own variables', () => {
     // Quadratic in the block (a parent walk per name), these 8k lines took ~20 s.
     expectAsFastAs('Big.m', code, functions.join('\n') + '\n');
     expect(extractFromSource('Big.m', code, 'matlab').nodes.filter((n) => n.kind === 'method')).toHaveLength(1000);
-  });
+  }, 120_000);
 
   it('extracts a function with many variables and many lambdas in linear time', () => {
     // Each lambda's frame looks its enclosing variables up, never copies them.
@@ -114,7 +117,7 @@ describe('MATLAB frames: each scope reads its own variables', () => {
       return [...out, 'end', ''].join('\n');
     };
     expectAsFastAs('big.m', lines(true), lines(false));
-  });
+  }, 120_000);
 });
 
 describe('MATLAB own object (self)', () => {
@@ -457,9 +460,9 @@ end
     // The written name rides along: MATLAB looks it up as a function when the class has no such method.
     expect(r.unresolvedReferences.map((u) => `${u.referenceName} ${JSON.stringify(u.candidates ?? null)}`)).toEqual([
       'Shape null',
-      'Shape::disp ["disp"]',
-      'Shape::numel ["numel"]',
-      'Shape::area ["area"]',
+      'Shape::disp ["dispatch:disp"]',
+      'Shape::numel ["dispatch:numel"]',
+      'Shape::area ["dispatch:area"]',
       'disp null',
       'numel null',
     ]);
@@ -502,15 +505,24 @@ end
     expect(kept('d.m', 'function d(x)\nimport uix.*\nh = @set;\nend\n')).toEqual(['function_ref:set']);
   });
 
-  it('tells a call written with arguments from a bare read by the source, keeping what it cannot see', () => {
-    expect(writtenWithArguments('t = f(x);', 4, 'f')).toBe(true);
-    expect(writtenWithArguments('t = f (x);', 4, 'f')).toBe(true);
-    expect(writtenWithArguments('t = f;', 4, 'f')).toBe(false);
-    expect(writtenWithArguments('setup_paths', 0, 'setup_paths')).toBe(false);
-    expect(writtenWithArguments('hold on', 0, 'hold')).toBe(false);
-    // The line does not read the name there (the file changed, a column it cannot place): kept.
-    expect(writtenWithArguments('t = g;', 4, 'f')).toBe(true);
-    expect(writtenWithArguments(undefined, 4, 'f')).toBe(true);
+  it('records how each bare name is written: with arguments, bare, or as a statement of its own', () => {
+    const code = [
+      't = f(x);', 't = g (x);', 't = h();', 't = cfg;', 'setup_paths', 'hold on', 'if ok, init_a, end',
+      'try', '  a = 1;', 'catch', '  cleanupAll', 'end', 'run setup_b', "run('setup_c.m');", "z = run('setup_d');",
+      'y = [p (q)];', 'k = Shape(2); area(k);', 'w = Archive; w.getData();', 'init_e ;',
+    ].join('\n');
+    const r = extractFromSource('s.m', `${code}\n`, 'matlab');
+    expect(r.unresolvedReferences.map((u) => `${u.line} ${u.referenceName} ${JSON.stringify(u.candidates ?? null)}`)).toEqual([
+      '1 f null', '1 x ["bare"]', '2 g null', '2 x ["bare"]', '3 h null', '4 cfg ["bare"]', '5 setup_paths ["statement"]', '6 hold ["bare"]',
+      '7 ok ["bare"]', '7 init_a ["statement"]', '11 cleanupAll ["statement"]',
+      '13 run ["bare"]', '13 setup_b ["statement"]', '14 run null', '14 setup_c ["statement"]', '15 run null', '15 setup_d ["bare"]',
+      '16 p ["bare"]', '16 q ["bare"]',
+      '17 Shape null', '17 Shape::area ["dispatch:area"]',
+      '18 Archive ["bare"]', '18 Archive::getData ["variable:w.getData"]', '19 init_e ["statement"]',
+    ]);
+    // A notes file read as MATLAB: the parse recovers with something between the name and the list.
+    const notes = extractFromSource('readme.m', 'b. test bpms/correctors data rates (monrates);\n', 'matlab');
+    expect(notes.unresolvedReferences.filter((u) => u.referenceName === 'correctors').map((u) => JSON.stringify(u.candidates ?? null))).toEqual(['["bare"]']);
   });
 });
 

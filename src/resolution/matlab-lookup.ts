@@ -50,7 +50,9 @@
 import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
+import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { isMatlabScriptFile } from '../graph/matlab-scripts';
+
 const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
 const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
 const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KINDS]);
@@ -130,7 +132,11 @@ interface FileFacts {
  * Per file, keyed by the node array the context returns for it: that array is
  * the resolver's per-file cache entry, which it replaces whenever it drops its
  * caches (a sync, an LRU eviction), so an entry here never outlives the nodes
- * it was read from and needs no clearing of its own.
+ * it was read from, needs no clearing of its own, and is held no longer than
+ * the resolver's LRU holds the nodes. A context that built a new array per
+ * call would still be answered right, only by reading the file's nodes again
+ * for every reference: the resolver's does not (pinned in
+ * __tests__/matlab-resolution.test.ts).
  */
 const FILE_FACTS = new WeakMap<Node[], FileFacts>();
 
@@ -273,16 +279,47 @@ function resolveType(written: string, caller: Pick<Caller, 'file' | 'imports'>, 
 }
 
 /**
- * Per context, by class id: superclassesOf's answers. They are read from
- * node rows alone (the class's signature, the classes its names resolve to),
- * so they hold as long as the context's node caches do, and go with them
- * (clearMatlabLookupMemos, from ReferenceResolver.clearCaches).
+ * Per context: superclassesOf's answers by class id, and resolveVariableMethod's
+ * by member and calling folder. They are read from node rows alone (a class's
+ * signature, the nodes a name finds), so they hold as long as the context's
+ * node caches do, and go with them (clearMatlabLookupMemos, from
+ * ReferenceResolver.clearCaches).
  */
 const SUPERCLASSES = new WeakMap<ResolutionContext, Map<string, Node[]>>();
+const VARIABLE_METHODS = new WeakMap<ResolutionContext, Map<string, Node | null>>();
 
-/** Drop the superclass memo (see ReferenceResolver.clearCaches). */
+/** Drop the memos above (see ReferenceResolver.clearCaches). */
 export function clearMatlabLookupMemos(context: ResolutionContext): void {
   SUPERCLASSES.delete(context);
+  VARIABLE_METHODS.delete(context);
+}
+
+/**
+ * A class's superclass list as written in its `classdef X < A & B` signature,
+ * which the extractor writes from the AST on one line: `['A', 'pkg::B']`.
+ */
+export function matlabSuperclassNames(cls: Pick<Node, 'signature'>): string[] {
+  const m = /<\s*(.+)$/.exec(cls.signature ?? '');
+  if (!m) return [];
+  return m[1]!.split('&').map((raw) => raw.trim().replace(/\./g, '::')).filter((name) => name.length > 0);
+}
+
+/**
+ * The classes the superclass names `bases`, written in `filePath`, resolve to,
+ * and every class those inherit from.
+ */
+export function matlabAncestorClasses(bases: readonly string[], filePath: string, context: ResolutionContext): Node[] {
+  const seen = new Map<string, Node>();
+  const walk = (cls: Node): void => {
+    if (seen.has(cls.id)) return;
+    seen.set(cls.id, cls);
+    for (const sup of superclassesOf(cls, context)) walk(sup);
+  };
+  for (const name of bases) {
+    const cls = resolveType(name, { file: filePath, imports: NO_IMPORTS }, context);
+    if (cls) walk(cls);
+  }
+  return [...seen.values()];
 }
 
 /**
@@ -298,10 +335,7 @@ function superclassesOf(cls: Node, context: ResolutionContext): Node[] {
   const hit = memo.get(cls.id);
   if (hit) return hit;
   const out: Node[] = [];
-  const m = /<\s*(.+)$/.exec(cls.signature ?? '');
-  for (const raw of m ? m[1]!.split('&') : []) {
-    const name = raw.trim().replace(/\./g, '::');
-    if (!name) continue;
+  for (const name of matlabSuperclassNames(cls)) {
     // A superclass list sees no import: it is outside every function.
     const sup = resolveType(name, { file: cls.filePath, imports: NO_IMPORTS }, context);
     if (sup && sup.id !== cls.id) out.push(sup);
@@ -381,7 +415,7 @@ function resolveQualified(name: string, caller: Caller, context: ResolutionConte
  * method `f` comes after the caller's own, imported and private functions
  * and before the path.
  */
-function resolveBare(name: string, caller: Caller, context: ResolutionContext, dispatch?: string, statement?: () => boolean): Node | undefined {
+function resolveBare(name: string, caller: Caller, context: ResolutionContext, dispatch?: string, statement = false): Node | undefined {
   const from = caller.file;
   const { imports, scopes } = caller;
   // 1. An explicit import.
@@ -441,7 +475,7 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
   if (folderClasses.length > 0) target = nearest(folderClasses, from);
   else {
     const scripts = statement ? scriptsNamed(name, context) : [];
-    target = nearest(scripts.length > 0 && statement!() ? [...onPath, ...scripts] : onPath, from);
+    target = nearest(scripts.length > 0 ? [...onPath, ...scripts] : onPath, from);
   }
   return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
 }
@@ -496,44 +530,6 @@ export function isMatlabPathScript(filePath: string, context: ResolutionContext)
 }
 
 /**
- * Whether the bare name `name` at `column` of line `row` is a statement of its
- * own — `setup_paths`, `setup_paths;`, `if ok, setup_paths, end` — or the
- * script a `run` statement names (`run setup_paths`, `run('setup_paths.m')`):
- * the only way a script runs. Not when it is a value (`x = name`, `f(name)`,
- * `[name, 1]`) or continues an earlier line; what the line does not show
- * plainly is no statement.
- */
-function writtenAsStatement(lines: readonly string[] | null | undefined, row: number, column: number, name: string): boolean {
-  const text = lines?.[row - 1];
-  if (text === undefined || text.slice(column, column + name.length) !== name) return false;
-  const before = text.slice(0, column);
-  const after = text.slice(column + name.length);
-  const prev = row >= 2 ? lines![row - 2]! : '';
-  if (/\.\.\./.test(prev.replace(/%.*$/, ''))) return false;
-  if (/^\s*run\s*\(\s*['"]$/.test(before)) return /^(?:\.[mM])?['"]\s*\)\s*(?:[;,%]|$)/.test(after);
-  if (/^\s*run\s+['"]?$/.test(before)) return /^(?:\.[mM])?['"]?\s*(?:[;,%]|$)/.test(after);
-  if (!/^\s*(?:[;,%]|$)/.test(after)) return false;
-  return /(?:^|[;,])\s*(?:(?:else|try|otherwise)\s+)?$/.test(before) && atTopLevel(before);
-}
-
-/** Whether `code` (a line's start) leaves no bracket or string open, so a `,` / `;` in it ends a statement. */
-function atTopLevel(code: string): boolean {
-  let depth = 0;
-  let quote: string | null = null;
-  let prev = '';
-  for (const ch of code) {
-    if (quote) {
-      if (ch === quote) quote = null;
-    } else if (ch === '"' || (ch === "'" && !/[\w)\]}.']/.test(prev))) quote = ch;
-    else if (ch === '%') return false;
-    else if ('([{'.includes(ch)) depth++;
-    else if (')]}'.includes(ch)) depth--;
-    if (ch !== ' ' && ch !== '\t') prev = ch;
-  }
-  return depth === 0 && quote === null;
-}
-
-/**
  * `v.m()` on a variable whose class the function never states (a parameter,
  * mostly): the method, when exactly one class defines a method of that name
  * and nothing in the project has a property of that name — `opts.tol(1)` on a
@@ -545,6 +541,16 @@ function atTopLevel(code: string): boolean {
  */
 function resolveVariableMethod(name: string, callerFile: string, context: ResolutionContext): Node | undefined {
   const member = name.slice(name.lastIndexOf('.') + 1);
+  // The answer depends on the caller only through its folder (see nearest).
+  const key = `${member}\0${dirOf(callerFile)}`;
+  let memo = VARIABLE_METHODS.get(context);
+  if (!memo) VARIABLE_METHODS.set(context, (memo = new Map()));
+  let hit = memo.get(key);
+  if (hit === undefined) memo.set(key, (hit = variableMethod(member, callerFile, context) ?? null));
+  return hit ?? undefined;
+}
+
+function variableMethod(member: string, callerFile: string, context: ResolutionContext): Node | undefined {
   const named = matlab(context.getNodesByName(member));
   if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return undefined;
   const all = named.filter((n) => n.kind === 'method');
@@ -590,55 +596,77 @@ function commonRoot(chosen: ReadonlyMap<string, Node>, context: ResolutionContex
 }
 
 export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-  const name = ref.referenceName;
-  let target: Node | undefined;
-  /** The name the target was looked up by, when not `name`. */
-  let via = name;
-  switch (ref.referenceKind) {
-    case 'extends':
-      target = resolveType(name, { file: ref.filePath, imports: NO_IMPORTS }, context);
-      break;
-    case 'imports':
-      target = byQualifiedName(name, ref.filePath, context, NAMED_KINDS);
-      break;
-    case 'calls':
-    case 'function_ref': {
-      // `aa.getData()` after `aa = Archive;`: `Archive::getData`, the
-      // variable's own `aa.getData` in `candidates` — taken when the bare
-      // name is a function of the project's and no class (`G = GetCfg;`
-      // calls the function: what it returns has no class the code states).
-      // A name the project defines nothing of stays a class: `r = SE2;` makes
-      // an object of a toolbox's class, whose methods are none of the project's.
-      const variable = name.includes('::') ? ref.candidates?.find((c) => c.includes('.')) : undefined;
-      // `m(obj, …)`: `Cls::m`, the name as written in `candidates`.
-      const written = ref.referenceKind === 'calls' && name.includes('::') && !variable ? ref.candidates?.[0] : undefined;
-      const hinted = variable === undefined ? undefined : name.slice(0, name.lastIndexOf('::'));
-      const unhinted = hinted !== undefined && !resolveType(hinted, callerOf(ref, context), context) &&
-        resolveBare(hinted, callerOf(ref, context), context)?.kind === 'function';
-      if (unhinted) via = variable!;
-      target = written ? resolveBare(written, callerOf(ref, context), context, name.slice(0, name.lastIndexOf('::')))
-        : unhinted ? resolveVariableMethod(variable!, ref.filePath, context)
-        : name.includes('::') ? resolveQualified(name, callerOf(ref, context), context)
-        : name.includes('.') ? resolveVariableMethod(name, ref.filePath, context)
-        : resolveBare(name, callerOf(ref, context), context, undefined, ref.referenceKind === 'calls'
-          ? () => writtenAsStatement(context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/), ref.line, ref.column, name)
-          : undefined);
-      // A handle names a function: `@Cls` is its constructor, or the class
-      // itself when it declares none (MATLAB gives it a default one).
-      if (target && ref.referenceKind === 'function_ref' && TYPE_KINDS.has(target.kind)) {
-        const cls: Node = target;
-        target = matlab(context.getNodesByQualifiedName(`${cls.qualifiedName}::${cls.name}`)).find((n) => n.kind === 'method') ?? cls;
-      }
-      break;
-    }
-    default:
-      return null;
-  }
-  if (!target) return null;
+  const found = matlabTarget(ref, context);
+  if (!found) return null;
+  const { target, via } = found;
   return {
     original: ref,
     targetNodeId: target.id,
     confidence: via.includes('.') && !via.includes('::') ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
     resolvedBy: ref.referenceKind === 'function_ref' ? 'function-ref' : via.includes('::') ? 'qualified-name' : 'exact-match',
   };
+}
+
+/** What a reference resolves to, and the name it was looked up by (the reference's own, or a variable's in its facts). */
+interface Found {
+  target: Node;
+  via: string;
+}
+
+function foundBy(target: Node | undefined, via: string): Found | null {
+  return target ? { target, via } : null;
+}
+
+function matlabTarget(ref: UnresolvedRef, context: ResolutionContext): Found | null {
+  const name = ref.referenceName;
+  switch (ref.referenceKind) {
+    case 'extends':
+      return foundBy(resolveType(name, { file: ref.filePath, imports: NO_IMPORTS }, context), name);
+    case 'imports':
+      return foundBy(byQualifiedName(name, ref.filePath, context, NAMED_KINDS), name);
+    case 'calls':
+      return callTarget(ref, context);
+    case 'function_ref': {
+      const found = callTarget(ref, context);
+      return found && { target: handleTarget(found.target, context), via: found.via };
+    }
+    default:
+      return null;
+  }
+}
+
+/** A handle names a function: `@Cls` is its constructor, or the class itself when it declares none (MATLAB gives it a default one). */
+function handleTarget(target: Node, context: ResolutionContext): Node {
+  if (!TYPE_KINDS.has(target.kind)) return target;
+  return matlab(context.getNodesByQualifiedName(`${target.qualifiedName}::${target.name}`)).find((n) => n.kind === 'method') ?? target;
+}
+
+/** A call's or a handle's target (see the top of this file for the order MATLAB looks a name up in). */
+function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | null {
+  const name = ref.referenceName;
+  const facts = matlabRefFacts(ref);
+  let caller: Caller | undefined;
+  const callerHere = (): Caller => (caller ??= callerOf(ref, context));
+  if (!name.includes('::')) {
+    if (name.includes('.')) return foundBy(resolveVariableMethod(name, ref.filePath, context), name);
+    return foundBy(resolveBare(name, callerHere(), context, undefined, ref.referenceKind === 'calls' && facts.form === 'statement'), name);
+  }
+  const owner = name.slice(0, name.lastIndexOf('::'));
+  if (facts.variable !== undefined) {
+    // `aa.getData()` after `aa = Archive;`: `Archive::getData`, unless the bare
+    // name is a function of the project's and no class (`G = GetCfg;` calls
+    // the function, and what it returns has no class the code states): then
+    // the variable's own `aa.getData`. A name the project defines nothing of
+    // stays a class: `r = SE2;` makes an object of a toolbox's class, whose
+    // methods are none of the project's.
+    if (!resolveType(owner, callerHere(), context) && resolveBare(owner, callerHere(), context)?.kind === 'function') {
+      return foundBy(resolveVariableMethod(facts.variable, ref.filePath, context), facts.variable);
+    }
+    return foundBy(resolveQualified(name, callerHere(), context), name);
+  }
+  // `m(obj, …)`: `Cls::m`, looked up by the name as written, the class's method in its place.
+  if (ref.referenceKind === 'calls' && facts.dispatch !== undefined) {
+    return foundBy(resolveBare(facts.dispatch, callerHere(), context, owner), name);
+  }
+  return foundBy(resolveQualified(name, callerHere(), context), name);
 }

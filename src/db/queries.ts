@@ -548,6 +548,8 @@ export class QueryBuilder {
   // and the member-lookup passes issue them per node, and preparing cost
   // about a third of the read.
   private edgeKindStmts: Map<string, SqliteStatement> = new Map();
+  // getNodesByFileOfKinds, one statement per number of kinds.
+  private fileKindStmts: Map<number, NodeStatement> = new Map();
   private static readonly BATCH_SIZES: readonly number[] = [128, 32, 8, 1];
 
   /**
@@ -608,6 +610,7 @@ export class QueryBuilder {
     this.stmts = {};
     this.batchStmts.clear();
     this.edgeKindStmts.clear();
+    this.fileKindStmts.clear();
     this.flowQueries = undefined;
     // The change stamp is per connection, and fresh connections to two
     // different databases report the same one — the memo goes with the old
@@ -1326,6 +1329,24 @@ export class QueryBuilder {
       );
     }
     return this.stmts.getNodesByFileAndName.all(filePath, name);
+  }
+
+  /**
+   * The nodes of a file of these kinds in one language, in {@link
+   * getNodesByFile} order. idx_nodes_kind seeks each kind's rows of the file,
+   * so the file's other nodes are neither read nor decoded.
+   */
+  getNodesByFileOfKinds(filePath: string, kinds: readonly NodeKind[], language: Language): Node[] {
+    if (kinds.length === 0) return [];
+    let stmt = this.fileKindStmts.get(kinds.length);
+    if (!stmt) {
+      stmt = prepareNodeStatement(
+        this.db,
+        `SELECT * FROM nodes WHERE kind IN (${kinds.map(() => '?').join(', ')}) AND file_path = ? AND language = ? ORDER BY start_line, id`
+      );
+      this.fileKindStmts.set(kinds.length, stmt);
+    }
+    return stmt.all(...kinds, filePath, language);
   }
 
   /**
@@ -4531,6 +4552,18 @@ export class QueryBuilder {
       language: row.language as Language,
       rowId: row.id,
     }));
+  }
+
+  /**
+   * The ids of the rows of `language` still pending: what an interrupted run
+   * left unattempted. Streamed into the Set, so a large backlog (an
+   * interrupted full index) never holds a row object per id as well.
+   */
+  getPendingReferenceRowIds(language: Language): Set<number> {
+    const ids = new Set<number>();
+    const stmt = this.db.prepare("SELECT id FROM unresolved_refs WHERE status = 'pending' AND language = ?");
+    for (const row of stmt.iterate(language) as IterableIterator<{ id: number }>) ids.add(row.id);
+    return ids;
   }
 
   /**

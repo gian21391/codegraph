@@ -4,7 +4,9 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
-import { JAVA_PACKAGE_ROOTS, MATLAB_BUILTINS, isJavaImport } from './matlab-builtins';
+import { MATLAB_BUILTINS } from './matlab-builtins';
+import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
+import { matlabRefCandidates, type MatlabRefFacts } from './matlab-ref-facts';
 
 /**
  * MATLAB extractor (vendored acristoffers/tree-sitter-matlab, ABI 15).
@@ -36,24 +38,23 @@ import { JAVA_PACKAGE_ROOTS, MATLAB_BUILTINS, isJavaImport } from './matlab-buil
  *                 `obj.m(x)`, `m@Super(obj)`, and command syntax
  *                 (`setup_paths`, `hold on`). A name the enclosing function
  *                 assigns, takes as an argument or declares global is a
- *                 VARIABLE there — MATLAB decides that per function,
- *                 statically — so `x(3)` on one is an index read and emits
- *                 nothing; so does `x(:, k)`, `a(end)` or `c{k}` on any
- *                 name, what an assignment writes (`s.f{1}(k, :) = …`) and
- *                 Java's classes (`java.lang.String(…)`). `obj.m()` and
- *                 `m(obj, …)` on a method's own object (its first
- *                 parameter; a constructor's output) are `Cls::m`;
- *                 on a variable the function assigns from a constructor
- *                 (`c = pkg.Cls(…)`, `c = Cls;`) it is `pkg::Cls::m` (the function-syntax
- *                 form carries the written `m` too: MATLAB may take a function
- *                 of that name first, or after the class lacks the method);
- *                 `v.m()` on any other variable is `v.m`, which the resolver
- *                 links only to an unambiguous method (a struct field indexed
- *                 reads the same, and one the function itself fills in emits
- *                 nothing). A call of a built-in's name is recorded like
- *                 any other: whether a project function of that name is
- *                 what it reaches is the resolver's to say (see
- *                 MATLAB_BUILTINS, matlab-builtins.ts).
+ *                 VARIABLE there (MATLAB decides that per function,
+ *                 statically): `x(3)` on one is an index read and emits
+ *                 nothing. So does `x(:, k)`, `a(end)` or `c{k}` on any name,
+ *                 what an assignment writes (`s.f{1}(k, :) = …`), and a Java
+ *                 class (`java.lang.String(…)`).
+ *                 `obj.m()` and `m(obj, …)` on a method's own object (its
+ *                 first parameter, or a constructor's output) are `Cls::m`.
+ *                 On a variable assigned from a constructor (`c = pkg.Cls(…)`,
+ *                 `c = Cls;`) they are `pkg::Cls::m`. On any other variable
+ *                 `v.m()` is `v.m`, which the resolver links only to an
+ *                 unambiguous method; a field the function fills in itself
+ *                 emits nothing. How each was written (with arguments, bare,
+ *                 as a statement, the name a dispatched call was written
+ *                 with) rides along: see matlab-ref-facts.ts. A built-in's
+ *                 name is recorded like any other: whether a project function
+ *                 of that name is what it reaches is the resolver's to say
+ *                 (see MATLAB_BUILTINS).
  *   - handles:    `@f` / `@pkg.f` / `@obj.m` are function references
  *                 (callbacks: `cellfun(@f, …)`, `'Callback', @onClick`).
  *   - imports:    `import pkg.Cls` (command syntax); `import pkg.*` is an
@@ -110,7 +111,10 @@ function leadingAttributes(node: SyntaxNode): SyntaxNode | null {
   return null;
 }
 
-/** Attribute names (lowercased) of a node's leading `attributes`, with their values: `Access = private` → access→private, `Static` → static→true. */
+/**
+ * Attribute names (lowercased) of a node's leading `attributes`, with their
+ * values: `Access = private` → access→private, `Static` → static→true.
+ */
 function attributesOf(node: SyntaxNode, source: string): Map<string, string> {
   const out = new Map<string, string>();
   const attrs = leadingAttributes(node);
@@ -159,6 +163,19 @@ function helpText(children: readonly SyntaxNode[], source: string): string | und
  * arguments (`g(x(end))`).
  */
 function arrayEvidence(call: SyntaxNode): 'variable' | 'index' | null {
+  let evidence = arrayEvidenceMemo.get(call.id);
+  if (evidence === undefined) arrayEvidenceMemo.set(call.id, (evidence = readArrayEvidence(call)));
+  return evidence;
+}
+
+/**
+ * arrayEvidence's answers for the file being walked, by node id: scanScope
+ * asks for a function's calls, then the walk for each call again. Reset by
+ * extractFile, like javaImported.
+ */
+let arrayEvidenceMemo = new Map<number, 'variable' | 'index' | null>();
+
+function readArrayEvidence(call: SyntaxNode): 'variable' | 'index' | null {
   for (let i = 0; i < call.childCount; i++) if (call.child(i)?.type === '{') return 'variable';
   const args = namedChildren(call).find((c) => c.type === 'arguments');
   if (!args) return null;
@@ -185,6 +202,12 @@ function isInCallArguments(node: SyntaxNode): boolean {
     if (p.type === 'block' || p.type === 'source_file' || p.type === 'function_definition') return false;
   }
   return false;
+}
+
+/** Whether an expression is a statement of its own (`run('setup');`, `if ok, run('a'), end`), not a value. */
+function isStatement(node: SyntaxNode): boolean {
+  const p = node.parent?.type;
+  return p === 'block' || p === 'source_file';
 }
 
 /**
@@ -368,7 +391,11 @@ function inFrame(f: Frame, walk: () => void): void {
 
 interface ScopeFacts {
   locals: Set<string>;
-  /** `v = Cls(…)` / `v = pkg.Cls(…)` / `v = Cls`: the variable, the callee's head (which must be no variable), the class it names, and whether it is a bare name. */
+  /**
+   * `v = Cls(…)` / `v = pkg.Cls(…)` / `v = Cls`: the variable, the callee's
+   * head (which must be no variable), the class it names, and whether it is
+   * a bare name.
+   */
   constructions: Array<{ v: string; head: string; cls: string; bare: boolean }>;
   structFields: Set<string>;
 }
@@ -554,33 +581,26 @@ function firstParameter(children: readonly SyntaxNode[], source: string): string
 // References
 // ---------------------------------------------------------------------------
 
-/**
- * `written` is set on a function-syntax call that dispatches on its first
- * argument (`m(obj, …)` → `Cls::m`): the name as written, which MATLAB looks up
- * as a function before the class's methods and after them on the path. It
- * rides in the ref's `candidates`; a dotted `obj.m()` carries none and reaches
- * the class's method or nothing — unless only a bare name gave its class
- * (`aa = Archive;`): then it carries the variable's own name, dotted
- * (`aa.getData`), for when that name is no class (see MemberRef).
- */
+/** A reference from the innermost scope, with how it is written (see matlab-ref-facts.ts) in its `candidates`. */
 function addRef(
   ctx: ExtractorContext,
   name: string,
   kind: 'calls' | 'function_ref' | 'extends' | 'imports',
   at: SyntaxNode,
-  written?: string,
+  facts: MatlabRefFacts = {},
   /** Where on `at`'s line the name starts, when not where `at` does. */
   column = at.startPosition.column,
 ): void {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
   if (!fromNodeId || !name) return;
+  const candidates = matlabRefCandidates(facts);
   ctx.addUnresolvedReference({
     fromNodeId,
     referenceName: name,
     referenceKind: kind,
     line: at.startPosition.row + 1,
     column,
-    ...(written ? { candidates: [written] } : {}),
+    ...(candidates ? { candidates } : {}),
   });
 }
 
@@ -695,16 +715,17 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
  * `run setup_paths` / `run('setup_paths.m')`: the script (or function) run
  * by that name, as a call of it written where the name is. A path
  * (`run('lib/setup')`) or a name built at runtime names nothing the index can
- * tell from here. `holder` is the call's arguments or the command.
+ * tell from here. `holder` is the call's arguments or the command; `statement`
+ * whether the `run` is a statement of its own, the only way a script runs.
  */
-function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext): void {
+function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext, statement: boolean): void {
   const args = holder ? namedChildren(holder).filter((c) => c.type !== 'command_name' && c.type !== 'comment') : [];
   if (args.length !== 1) return;
   const arg = args[0]!;
   const at = arg.type === 'string' ? namedChildren(arg).find((c) => c.type === 'string_content') : arg.type === 'command_argument' ? arg : undefined;
   if (!at) return;
   const m = /^(['"]?)([A-Za-z][A-Za-z0-9_]*)(?:\.[mM])?\1$/.exec(getNodeText(at, ctx.source));
-  if (m) addRef(ctx, m[2]!, 'calls', at, undefined, at.startPosition.column + m[1]!.length);
+  if (m) addRef(ctx, m[2]!, 'calls', at, { form: statement ? 'statement' : 'bare' }, at.startPosition.column + m[1]!.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -852,16 +873,15 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
     ...(bases.length > 0 ? ['<', bases.join(' & ')] : []),
   ].join(' ');
 
-  const outer = frame();
+  const qual = [...frame().qual, name];
   const cls = ctx.createNode(isEnum ? 'enum' : 'class', name, node, {
-    qualifiedName: [...outer.qual, name].join('::'),
+    qualifiedName: qual.join('::'),
     docstring: helpText(children, source),
     signature,
     ...(attrs.get('abstract') === 'true' ? { isAbstract: true } : {}),
   });
   if (!cls) return;
 
-  const qual = [...outer.qual, name];
   const classFrame: Frame = { kind: 'class', qual, locals: EMPTY, classHints: NO_HINTS, structFields: EMPTY, self: null, parent: null };
   ctx.pushScope(cls.id);
   inFrame(classFrame, () => {
@@ -941,6 +961,7 @@ function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
     });
   } finally {
     javaImported = EMPTY;
+    arrayEvidenceMemo = new Map();
   }
 }
 
@@ -960,12 +981,8 @@ export const matlabExtractor: LanguageExtractor = {
   callTypes: [], // `f(x)` is a call or an index read — decided in visitNode
   variableTypes: [],
   nameField: 'name',
-  // Not fields in this grammar (its fields are argument, arguments, condition,
-  // expression, field, left, name, object, operand, right; `block` and
-  // `function_arguments` are node types). Unread: every definition goes
-  // through visitNode, never the generic extraction these configure.
-  bodyField: 'block',
-  paramsField: 'function_arguments',
+  bodyField: '',
+  paramsField: '',
 
   visitNode: (node, ctx) => {
     const source = ctx.source;
@@ -1013,8 +1030,12 @@ export const matlabExtractor: LanguageExtractor = {
         if (callee?.type !== 'identifier' || indexesLikeArray(node)) return false;
         const written = getNodeText(callee, source);
         const ref = callRef(node, written, source);
-        if (ref) addRef(ctx, ref.name, 'calls', node, ref.dispatch ? written : undefined);
-        if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx);
+        // Written with arguments: the list right after the name. Not where a
+        // parse that recovered from an error put something else between
+        // (`Tune = (0.2, 0.1)` in a notes file read as MATLAB).
+        const form = callee.nextSibling?.type === '(' ? undefined : 'bare';
+        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}) });
+        if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx, isStatement(node));
         return false; // arguments still walked
       }
 
@@ -1022,7 +1043,7 @@ export const matlabExtractor: LanguageExtractor = {
         // `s.f(k) = …` writes a field; `Q2.Setpoint.P` in `AO.Q2.Setpoint.P{1}(6, :)` is no chain of its own.
         if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
-        if (ref) addRef(ctx, ref.name, 'calls', ref.at, ref.variable);
+        if (ref) addRef(ctx, ref.name, 'calls', ref.at, ref.variable ? { variable: ref.variable } : {});
         return false;
       }
 
@@ -1030,7 +1051,10 @@ export const matlabExtractor: LanguageExtractor = {
         // A bare name read as a value is a zero-argument call when it is no variable: `t = loadConfig;`.
         const parent = node.parent;
         if (!parent) return false;
+        // `catch⏎ cleanupAll`: a statement of its own, not the error variable.
+        const statement = parent.type === 'catch_clause' && errorVariable(parent)?.id !== node.id;
         const asValue =
+          statement ||
           VALUE_PARENTS.has(parent.type) ||
           (parent.type === 'assignment' && getChildByField(parent, 'right')?.id === node.id) ||
           // `if isReady`, `while keepGoing`, `switch mode`, `case modeA`: the condition.
@@ -1038,12 +1062,10 @@ export const matlabExtractor: LanguageExtractor = {
           // `for k = getRange`: the range, not the loop variable.
           (parent.type === 'iterator' && parent.namedChild(0)?.id !== node.id) ||
           // `go(x, Solver=1)`: `Solver` names the argument.
-          (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=') ||
-          // `catch⏎ cleanupAll`: a statement of its own, not the error variable.
-          (parent.type === 'catch_clause' && errorVariable(parent)?.id !== node.id);
+          (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=');
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node);
+        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare' });
         return false;
       }
 
@@ -1053,15 +1075,18 @@ export const matlabExtractor: LanguageExtractor = {
         const name = getNodeText(cmd, source);
         if (name === 'import') extractImport(node, ctx);
         else if (!isLocal(frame(), name)) {
-          addRef(ctx, name, 'calls', node);
-          if (name === 'run') runRef(node, ctx);
+          // `setup_paths`: a statement of its own; `hold on` takes arguments.
+          // (`setup_paths ;` reads with an empty argument, which is none.)
+          const statement = !namedChildren(node).some((c) => c.type === 'command_argument' && getNodeText(c, source).trim() !== '');
+          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare' });
+          if (name === 'run') runRef(node, ctx, true);
         }
         return true;
       }
 
       case 'handle_operator': {
         const target = handleRef(node, source);
-        if (target) addRef(ctx, target.name, 'function_ref', node, target.variable);
+        if (target) addRef(ctx, target.name, 'function_ref', node, target.variable ? { variable: target.variable } : {});
         return true;
       }
     }

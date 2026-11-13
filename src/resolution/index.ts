@@ -65,9 +65,10 @@ import { lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
-import { clearMatlabLookupMemos, isMatlabPathScript, matchMatlabReference } from './matlab-lookup';
-import { matlabFileNames, matlabFileStem } from '../extraction/languages/matlab-path';
-import { isDottedMatlabName, isMatlabBuiltinCall, matlabUnmatchableKeys, writtenWithArguments } from '../extraction/languages/matlab-builtins';
+import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
+import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
+import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
+import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
 import { builtinModules } from 'module';
@@ -2199,8 +2200,8 @@ export class ReferenceResolver {
           // deliberately NOT resurrected for the same reason.
           refName: ref.original.referenceName,
           ...(ref.original.referenceKind !== kind ? { refKind: ref.original.referenceKind } : {}),
-          // A MATLAB function-syntax call's written name (`Cls::m` ← `m`, in
-          // its candidates), which its resolution reads: part of the ref text.
+          // How a MATLAB reference is written (matlab-ref-facts), which its
+          // resolution reads: part of the ref text.
           ...(ref.original.language === 'matlab' && ref.original.candidates ? { refCandidates: ref.original.candidates } : {}),
           // Uniform marker for function-as-value edges (#756), regardless of
           // which strategy resolved them (import vs matchFunctionRef) — lets
@@ -2282,88 +2283,21 @@ export class ReferenceResolver {
   }
 
   /**
-   * `failures` less the MATLAB calls nothing in the project could ever
-   * answer, whose rows are deleted instead of parked as failed: the bare
-   * calls of a built-in's name (`plot(x)`, `set(h, …)`) — no project function
-   * answered one, so it is MATLAB's own — and the calls no symbol carries a
-   * name of, unless written with arguments (see matlabUnmatchableKeys). Kept,
-   * either would be one row in every function that makes it. A sync that
-   * later adds a symbol of the name reaches only the calls in the files it
-   * re-indexes (see matlab-builtins) — and so does one that adds a method of
-   * the name to a class: a member call written with arguments (`a.recalib(2)`)
-   * whose row went is not retried in a file the sync leaves alone. `removed`
-   * counts the rows deleted.
-   *
-   * A ref with no row id (a caller's hand-built one) is deleted by its
-   * (from, name, kind) key, which reaches every row of that key: only when no
-   * failure of the batch with that key is kept. Else it is kept with them,
-   * parked as failed.
+   * `failures` split into the ones parked as failed and the MATLAB ones to
+   * delete instead, which nothing in the project could ever answer (see
+   * ./matlab-failures), of the ones `matlabFresh` admits (see
+   * MatlabFreshReferences). The deleted ones come back as cleanup
+   * rows for the caller to delete, as it deletes the resolved ones.
    */
-  private discardUnanswerableFailures(failures: UnresolvedRef[]): { kept: UnresolvedRef[]; removed: number } {
-    if (this.freshRefFiles !== null && this.freshRefFiles.size === 0) return { kept: failures, removed: 0 };
-    const discarded = this.unanswerableMatlabFailures(failures);
-    if (discarded.size === 0) return { kept: failures, removed: 0 };
-    const keyOf = (ref: UnresolvedRef): string => `${ref.fromNodeId}\0${ref.referenceName}\0${ref.referenceKind}`;
-    const keptKeys = new Set<string>();
-    for (const ref of failures) if (!discarded.has(ref)) keptKeys.add(keyOf(ref));
-    const kept: UnresolvedRef[] = [];
-    const rowIds: number[] = [];
-    const legacyKeys = new Map<string, { fromNodeId: string; referenceName: string; referenceKind: string }>();
-    for (const ref of failures) {
-      if (!discarded.has(ref) || (ref.rowId == null && keptKeys.has(keyOf(ref)))) kept.push(ref);
-      else if (ref.rowId != null) rowIds.push(ref.rowId);
-      else legacyKeys.set(keyOf(ref), { fromNodeId: ref.fromNodeId, referenceName: ref.referenceName, referenceKind: ref.referenceKind });
-    }
-    const removed = this.queries.deleteReferencesByRowIds(rowIds) + this.queries.deleteSpecificResolvedReferences([...legacyKeys.values()]);
-    return { kept, removed };
-  }
-
-  /**
-   * While a sync resolves, the files whose references it extracted afresh:
-   * only their failures may be discarded. Any other failure is a reference of
-   * a file the sync left alone — one whose target this sync removed (the
-   * edge goes back to a reference), or one re-opened for a retry — and is
-   * kept, parked as failed, so that the sync that brings its target back
-   * links it again, as it would a TypeScript call. Null: every reference is
-   * fresh (a full index).
-   */
-  private freshRefFiles: ReadonlySet<string> | null = null;
-
-  /** See {@link freshRefFiles}: set by a sync for its resolution, null after it. */
-  setFreshRefFiles(files: readonly string[] | null): void {
-    this.freshRefFiles = files === null ? null : new Set(files);
-  }
-
-  /**
-   * The failures {@link discardUnanswerableFailures} deletes. Whether a
-   * symbol carries a name is asked of the index as it stands once the pass's
-   * definitions are stored: a full index's every symbol, or a sync's.
-   */
-  private unanswerableMatlabFailures(failures: UnresolvedRef[]): Set<UnresolvedRef> {
-    const discarded = new Set<UnresolvedRef>();
-    const pending: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
-    for (const ref of failures) {
-      if (this.freshRefFiles !== null && !this.freshRefFiles.has(ref.filePath)) continue;
-      if (isMatlabBuiltinCall(ref)) discarded.add(ref);
-      else {
-        const keys = matlabUnmatchableKeys(ref);
-        if (keys) pending.push({ ref, keys });
-      }
-    }
-    if (pending.length === 0) return discarded;
-    // The names every node carries, read when the pass began, after its
-    // definitions were stored (nothing adds a node while it resolves). A pass
-    // whose caches were dropped since (a batched pass's deferred refs, between
-    // batches the workers resolve) asks the index.
-    const known = this.knownNames;
-    const carried = known ? null : this.queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
-    for (const { ref, keys } of pending) {
-      if (keys.some((k) => (known ?? carried!).has(k))) continue;
-      const name = ref.referenceName;
-      if (isDottedMatlabName(name)) discarded.add(ref);
-      else if (!writtenWithArguments(this.context.getFileLines?.(ref.filePath)?.[ref.line - 1], ref.column, name)) discarded.add(ref);
-    }
-    return discarded;
+  private discardUnanswerableMatlabFailures(failures: UnresolvedRef[], matlabFresh: MatlabFreshReferences | undefined): {
+    kept: UnresolvedRef[];
+    deleted: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> };
+  } {
+    const discarded = unanswerableMatlabFailures(failures, matlabFresh, this.knownNames, (names) => this.queries.getNodeNamesAmong(names));
+    if (discarded.size === 0) return { kept: failures, deleted: { rowIds: [], legacyKeys: [] } };
+    const { kept, deleted } = splitDiscarded(failures, discarded);
+    const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(deleted);
+    return { kept, deleted: { rowIds: byRowId.map((r) => r.rowId), legacyKeys } };
   }
 
   private deferReference(ref: UnresolvedRef, queue: UnresolvedRef[]): void {
@@ -2372,18 +2306,21 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve and persist edges to database
+   * Resolve and persist edges to database. `matlabFresh`: see
+   * MatlabFreshReferences.
    */
   resolveAndPersist(
     unresolvedRefs: UnresolvedReference[],
-    onProgress?: (current: number, total: number) => void
+    onProgress?: (current: number, total: number) => void,
+    matlabFresh?: MatlabFreshReferences
   ): ResolutionResult {
     const prerequisites = unresolvedRefs.filter(ReferenceResolver.isPrerequisite);
     if (prerequisites.length > 0 && prerequisites.length < unresolvedRefs.length) {
-      const first = this.resolveAndPersist(prerequisites, (current) => onProgress?.(current, unresolvedRefs.length));
+      const first = this.resolveAndPersist(prerequisites, (current) => onProgress?.(current, unresolvedRefs.length), matlabFresh);
       const rest = this.resolveAndPersist(
         unresolvedRefs.filter((ref) => !ReferenceResolver.isPrerequisite(ref)),
-        (current) => onProgress?.(prerequisites.length + current, unresolvedRefs.length)
+        (current) => onProgress?.(prerequisites.length + current, unresolvedRefs.length),
+        matlabFresh
       );
       return ReferenceResolver.mergeResults(first, rest);
     }
@@ -2414,7 +2351,9 @@ export class ReferenceResolver {
     // is still 'pending', so any pending row at rest belongs to an
     // interrupted run and the sweep can key off the pending count.
     if (result.unresolved.length > 0) {
-      const { kept } = this.discardUnanswerableFailures(this.nonDeferredFailures(result.unresolved));
+      const { kept, deleted } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+      this.queries.deleteReferencesByRowIds(deleted.rowIds);
+      this.queries.deleteSpecificResolvedReferences(deleted.legacyKeys);
       const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(kept);
       this.queries.markReferencesFailedByRowIds(byRowId);
       this.queries.markReferencesFailed(legacyKeys);
@@ -2432,20 +2371,20 @@ export class ReferenceResolver {
    * liveness-watchdog thread (#850/#1091) and a retry set is unbounded when
    * a large edit lands many popular symbol names at once.
    */
-  async resolveAndPersistListYielding(refs: UnresolvedReference[]): Promise<ResolutionResult> {
+  async resolveAndPersistListYielding(refs: UnresolvedReference[], matlabFresh?: MatlabFreshReferences): Promise<ResolutionResult> {
     const prerequisites = refs.filter(ReferenceResolver.isPrerequisite);
     if (prerequisites.length > 0 && prerequisites.length < refs.length) {
-      const first = await this.resolveAndPersistListYielding(prerequisites);
-      const rest = await this.resolveAndPersistListYielding(refs.filter((ref) => !ReferenceResolver.isPrerequisite(ref)));
+      const first = await this.resolveAndPersistListYielding(prerequisites, matlabFresh);
+      const rest = await this.resolveAndPersistListYielding(refs.filter((ref) => !ReferenceResolver.isPrerequisite(ref)), matlabFresh);
       return ReferenceResolver.mergeResults(first, rest);
     }
     const maybeYield = createYielder();
     const result = await this.resolveBatchYielding(refs, maybeYield);
-    await this.persistResolutionResult(result, maybeYield);
+    await this.persistResolutionResult(result, maybeYield, matlabFresh);
     return result;
   }
 
-  private async persistResolutionResult(result: ResolutionResult, maybeYield: MaybeYield): Promise<number> {
+  private async persistResolutionResult(result: ResolutionResult, maybeYield: MaybeYield, matlabFresh?: MatlabFreshReferences): Promise<number> {
     const PERSIST_CHUNK = 1000;
     const edges = this.createEdges(result.resolved);
     for (let i = 0; i < edges.length; i += PERSIST_CHUNK) {
@@ -2453,17 +2392,11 @@ export class ReferenceResolver {
       await maybeYield();
     }
 
-    const resolvedCleanup = ReferenceResolver.partitionResolvedCleanup(result.resolved);
-    for (let i = 0; i < resolvedCleanup.rowIds.length; i += PERSIST_CHUNK) {
-      this.queries.deleteReferencesByRowIds(resolvedCleanup.rowIds.slice(i, i + PERSIST_CHUNK));
-      await maybeYield();
-    }
-    for (let i = 0; i < resolvedCleanup.legacyKeys.length; i += PERSIST_CHUNK) {
-      this.queries.deleteSpecificResolvedReferences(resolvedCleanup.legacyKeys.slice(i, i + PERSIST_CHUNK));
-      await maybeYield();
-    }
+    await this.deleteInChunks(ReferenceResolver.partitionResolvedCleanup(result.resolved), maybeYield);
 
-    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.discardUnanswerableFailures(this.nonDeferredFailures(result.unresolved)).kept);
+    const { kept, deleted } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+    await this.deleteInChunks(deleted, maybeYield);
+    const failedCleanup = ReferenceResolver.partitionFailedCleanup(kept);
     for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
       this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));
       await maybeYield();
@@ -2474,6 +2407,27 @@ export class ReferenceResolver {
     }
 
     return edges.length;
+  }
+
+  /**
+   * Delete the rows of resolved or discarded references, PERSIST_CHUNK at a
+   * time with a yield between (#850/#1212). Returns the number deleted.
+   */
+  private async deleteInChunks(
+    cleanup: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> },
+    maybeYield: MaybeYield
+  ): Promise<number> {
+    const PERSIST_CHUNK = 1000;
+    let removed = 0;
+    for (let i = 0; i < cleanup.rowIds.length; i += PERSIST_CHUNK) {
+      removed += this.queries.deleteReferencesByRowIds(cleanup.rowIds.slice(i, i + PERSIST_CHUNK));
+      await maybeYield();
+    }
+    for (let i = 0; i < cleanup.legacyKeys.length; i += PERSIST_CHUNK) {
+      removed += this.queries.deleteSpecificResolvedReferences(cleanup.legacyKeys.slice(i, i + PERSIST_CHUNK));
+      await maybeYield();
+    }
+    return removed;
   }
 
   /** Finalize the durable queue only AFTER its edges have been inserted. */
@@ -2791,7 +2745,9 @@ export class ReferenceResolver {
       refIndexLoad?: { begin: () => void; end: () => void | Promise<void> };
       backpressure?: () => Promise<void> | null;
     },
-    synthesize: boolean = true
+    synthesize: boolean = true,
+    // See MatlabFreshReferences.
+    matlabFresh?: MatlabFreshReferences
   ): Promise<ResolutionResult> {
     // Resolution runs on the indexer's MAIN thread, and the #850 liveness
     // watchdog SIGKILLs a process whose event loop stalls past its window (60s
@@ -3140,16 +3096,7 @@ export class ReferenceResolver {
       // calling the same callee at another line) is left pending for its own
       // attempt instead of being swept out with this batch's rows (#1269).
       tLp = Date.now();
-      let removedThisBatch = 0;
-      const resolvedCleanup = ReferenceResolver.partitionResolvedCleanup(result.resolved);
-      for (let i = 0; i < resolvedCleanup.rowIds.length; i += PERSIST_CHUNK) {
-        removedThisBatch += this.queries.deleteReferencesByRowIds(resolvedCleanup.rowIds.slice(i, i + PERSIST_CHUNK));
-        await maybeYield();
-      }
-      for (let i = 0; i < resolvedCleanup.legacyKeys.length; i += PERSIST_CHUNK) {
-        removedThisBatch += this.queries.deleteSpecificResolvedReferences(resolvedCleanup.legacyKeys.slice(i, i + PERSIST_CHUNK));
-        await maybeYield();
-      }
+      let removedThisBatch = await this.deleteInChunks(ReferenceResolver.partitionResolvedCleanup(result.resolved), maybeYield);
       lp('deletes', tLp);
 
       // Park unresolvable refs from this batch as status='failed' so they
@@ -3159,8 +3106,8 @@ export class ReferenceResolver {
       tLp = Date.now();
       const nonDeferred = this.nonDeferredFailures(result.unresolved);
       const deferredCount = result.unresolved.length - nonDeferred.length;
-      const { kept: failures, removed: discarded } = this.discardUnanswerableFailures(nonDeferred);
-      removedThisBatch += discarded;
+      const { kept: failures, deleted } = this.discardUnanswerableMatlabFailures(nonDeferred, matlabFresh);
+      removedThisBatch += await this.deleteInChunks(deleted, maybeYield);
       const failedCleanup = ReferenceResolver.partitionFailedCleanup(failures);
       for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
         removedThisBatch += this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));
@@ -3592,61 +3539,24 @@ export class ReferenceResolver {
     return this.queries.reopenFailedReferences(rowIds) + refs.length;
   }
 
-  /**
-   * The files among a sync's `changedFilePaths` whose script verdict
-   * {@link reopenMatlabScriptRuns} has to settle: the MATLAB files, and an
-   * Objective-C `.m` that MATLAB code still calls into (one that was a MATLAB
-   * script before this sync re-read it) — one indexed read per `.m` path, so
-   * an Objective-C project's sync does no more.
-   */
+  /** See ./matlab-sync's matlabScriptCandidates. */
   matlabScriptCandidates(changedFilePaths: readonly string[]): string[] {
-    return changedFilePaths.filter((p) => {
-      if (matlabFileStem(p) === null) return false;
-      const language = this.queries.getFileByPath(p)?.language;
-      if (language === 'matlab') return true;
-      return language !== undefined && this.queries.hasCrossFileIncomingEdgeFromLanguage(`file:${p}`, p, 'matlab');
-    });
+    return matlabScriptCandidates(this.queries, changedFilePaths);
   }
 
-  /**
-   * Put back in the pending set the MATLAB calls a sync's `.m` files may now
-   * answer differently because one became a script MATLAB runs by its name,
-   * or stopped being one (a function went in, its code went out leaving only
-   * help text, it turned to Octave), for the sync's resolution sweep. A
-   * script's calls end at its file node, which a re-index keeps, and no name
-   * the file defines changes with its verdict, so the definition delta never
-   * sees it. The calls into a file that is no script now go back as the
-   * references they were; the calls parked as failed under the name of one
-   * that is a script (`setup_paths` for `setup_paths.m`) are retried. Calls
-   * in `changedFilePaths` are left alone: the sync resolved them already.
-   * `matlabFilePaths` are the ones {@link matlabScriptCandidates} picks out
-   * of them. Returns the number of references put back.
-   */
+  /** See ./matlab-sync's reopenMatlabScriptRuns. */
   reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): number {
-    const fresh = new Set(changedFilePaths);
-    const edgeIds: number[] = [];
-    const refs: UnresolvedReference[] = [];
-    const stems = new Set<string>();
-    for (const filePath of matlabFilePaths) {
-      const stem = matlabFileStem(filePath);
-      if (!stem) continue;
-      if (isMatlabPathScript(filePath, this.context)) {
-        stems.add(stem);
-        continue;
-      }
-      // Only the edges into the file node: a script's calls end there.
-      for (const edge of this.queries.getCrossFileIncomingEdgesFromLanguage(`file:${filePath}`, filePath, 'matlab')) {
-        if (fresh.has(edge.sourceFilePath)) continue;
-        const ref = resurrectRefFromDroppedEdge(edge);
-        if (!ref) continue;
-        edgeIds.push(edge.edgeId);
-        refs.push(ref);
-      }
-    }
-    if (edgeIds.length > 0) this.queries.replaceResolutionEdgesWithUnresolvedRefs(edgeIds, refs);
-    const rowIds = stems.size === 0 ? [] : this.queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
-      ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
-    return refs.length + this.queries.reopenFailedReferences(rowIds);
+    return reopenMatlabScriptRuns(this.queries, this.context, matlabFilePaths, changedFilePaths);
+  }
+
+  /** What a sync has to tell the resolver of the MATLAB classes it changes (see ./matlab-sync). */
+  trackMatlabSuperclasses(): MatlabSuperclassChange {
+    return new MatlabSuperclassChange(this.queries);
+  }
+
+  /** The method names a sync's MATLAB superclass changes reach (see ./matlab-sync), once it has stored what it re-extracted. */
+  matlabSuperclassChangeNames(change: MatlabSuperclassChange): string[] {
+    return change.changedNames(this.context);
   }
 
   /**
@@ -4925,8 +4835,9 @@ export class ReferenceResolver {
     if (!result) return result;
     const tgt = this.getLanguageFromNodeId(result.targetNodeId);
     // No framework bridges into MATLAB: a Python view's `Robot()` is never a
-    // MATLAB classdef, whatever a framework's name lookup found.
-    if ((tgt as string) === 'matlab' && (ref.language as string) !== 'matlab') return null;
+    // MATLAB classdef, whatever a framework's name lookup found. Ahead of the
+    // `calls` return below, which is where that one comes in.
+    if (tgt === 'matlab' && ref.language !== 'matlab') return null;
     if (ref.referenceKind === 'calls') return result;
     // Package imports cannot target prose found by a framework's name lookup.
     if (ref.referenceKind === 'imports' && (tgt as string) === 'markdown' && (ref.language as string) !== 'markdown') return null;

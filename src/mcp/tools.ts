@@ -60,9 +60,7 @@ import { describeSynthesizedHop } from '../graph/synthesized-hop';
 import { callSiteLines, formatCallSiteLines } from '../graph/call-sites';
 import { DEFAULT_IMPACT_MAX_EDGES, DEFAULT_IMPACT_MAX_NODES, type CallSiteRow } from '../graph/traversal';
 import { isCopybookInclude, MAX_COPYBOOK_INCLUDES, type NamedCopybook } from '../graph/cobol-copybooks';
-import { MATLAB_CLASS_FOLDER_CONTAINS, isMatlabClassFolderFile } from '../resolution/matlab-class-folders';
-import { indexedMatlabScriptLookup, isMatlabScriptFile, type MatlabScriptLookup } from '../graph/matlab-scripts';
-import { matlabFileNames } from '../extraction/languages/matlab-path';
+import { matlabExploreFor } from '../graph/matlab-explore';
 import { groupFilesByPackage, packageGroupTitle, packageListingTitle } from '../graph/owning-package';
 import {
   findAllSymbols,
@@ -258,21 +256,6 @@ function filesDefiningSymbol(cg: CodeGraph, symbol: string): string[] {
       ? cg.getNodesByName(lastQualifierPart(symbol)).filter((n) => matchesSymbol(n, symbol, goPackageOf))
       : cg.getNodesByName(symbol);
     return nodes.filter((n) => !NOT_A_DEFINITION.has(n.kind)).map((n) => n.filePath);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The file nodes of the MATLAB scripts named `name` (`setup_paths.m` for
- * `setup_paths`): files MATLAB runs by their name, by the resolver's own rule
- * (../graph/matlab-scripts). A script's only node is its file, so the file is
- * the symbol explore shows.
- */
-function matlabScriptFilesNamed(cg: CodeGraph, name: string, lookup: MatlabScriptLookup): Node[] {
-  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return [];
-  try {
-    return matlabFileNames(name).flatMap((fileName) => cg.getNodesByName(fileName).filter((n) => isMatlabScriptFile(n, lookup)));
   } catch {
     return [];
   }
@@ -4436,13 +4419,8 @@ export class ToolHandler {
 
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const projectRoot = cg.getProjectRoot();
-    // The MATLAB-only probes below run where there is MATLAB to probe.
-    let hasMatlab = false;
-    try {
-      hasMatlab = cg.hasFilesOfLanguage('matlab');
-    } catch { /* no probe, no MATLAB answers */ }
-    // One per call: it keeps the nodes it read, so each file's script verdict is worked out once.
-    const matlabScripts = indexedMatlabScriptLookup(cg, projectRoot);
+    // The MATLAB-only probes below, where there is MATLAB to probe (see ../graph/matlab-explore).
+    const matlab = matlabExploreFor(cg, projectRoot);
 
     // Resolve adaptive output budget from project size. Falls back to the
     // largest-tier defaults if stats aren't available, which preserves
@@ -4789,52 +4767,6 @@ export class ToolHandler {
         (o) => /^[A-Z][A-Za-z0-9]{3,}/.test(o) && !projectNameTokens.has(normalizeNameToken(o)),
       );
       const lcTypeTokens = new Set(typeTokens.map((ct) => ct.toLowerCase()));
-      /**
-       * The ids of `nodes` that are methods of a MATLAB class folder whose class
-       * the query names — the class `contains` them through the class-folder
-       * pass's edge. One batched edge read and one node read.
-       */
-      const classFolderMethodsOfNamedTypes = (nodes: readonly Node[]): Set<string> => {
-        const out = new Set<string>();
-        if (!hasMatlab || lcTypeTokens.size === 0) return out;
-        const methods = nodes.filter((n) => n.language === 'matlab' && n.kind === 'method' && isMatlabClassFolderFile(n.filePath));
-        if (methods.length === 0) return out;
-        try {
-          const edges = cg
-            .getIncomingEdgesTo(methods.map((n) => n.id), ['contains'])
-            .filter((e) => e.metadata?.synthesizedBy === MATLAB_CLASS_FOLDER_CONTAINS);
-          if (edges.length === 0) return out;
-          const owners = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
-          for (const e of edges) {
-            const owner = owners.get(e.source);
-            if (owner && lcTypeTokens.has(owner.name.toLowerCase())) out.add(e.target);
-          }
-        } catch { /* a probe failure corroborates nothing */ }
-        return out;
-      };
-      /**
-       * The ids of `nodes` that are MATLAB scripts a function the query also
-       * names runs (`BeamLine globals`, BeamLine running `globals.m`): a
-       * script is a file of its own, where no other query token is named
-       * beside it. One batched edge read and one node read.
-       */
-      const matlabScriptsRunByNamed = (nodes: readonly Node[], self: string): Set<string> => {
-        const out = new Set<string>();
-        if (!hasMatlab) return out;
-        const scripts = nodes.filter((n) => n.kind === 'file' && n.language === 'matlab');
-        if (scripts.length === 0) return out;
-        try {
-          const edges = cg.getIncomingEdgesTo(scripts.map((n) => n.id), ['calls']);
-          if (edges.length === 0) return out;
-          const callers = cg.getNodesByIds([...new Set(edges.map((e) => e.source))]);
-          const others = new Set([...lcTokens].filter((o) => o !== self.toLowerCase()));
-          for (const e of edges) {
-            const caller = callers.get(e.source);
-            if (caller && others.has(caller.name.toLowerCase())) out.add(e.target);
-          }
-        } catch { /* a probe failure corroborates nothing */ }
-        return out;
-      };
       const inNamedContext = (n: Node) =>
         typeTokens.some((ct) => {
           const lc = ct.toLowerCase();
@@ -4935,7 +4867,7 @@ export class ToolHandler {
         }
         // A MATLAB script has no symbol but its file (`setup_paths.m`): the
         // file is what a name of one asks for, and its code is the body.
-        if (cands.length === 0 && !isQual && hasMatlab) cands = matlabScriptFilesNamed(cg, t, matlabScripts).filter((n) => !isTestPath(n.filePath));
+        if (cands.length === 0 && !isQual && matlab) cands = matlab.scriptsNamed(t).filter((n) => !isTestPath(n.filePath));
         if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
         // (see the NL-stopword guard above). Filtering CANDS (not picks) applies
@@ -4951,9 +4883,8 @@ export class ToolHandler {
         if (!isPreciseToken(t)) {
           const unnamed = cands.filter((n) => !coNamedInFile(t, n.filePath));
           const unnamedIds = new Set(unnamed.map((n) => n.id));
-          const ofNamedClass = classFolderMethodsOfNamedTypes(unnamed);
-          const runByNamed = matlabScriptsRunByNamed(unnamed, t);
-          cands = cands.filter((n) => !unnamedIds.has(n.id) || ofNamedClass.has(n.id) || runByNamed.has(n.id));
+          const corroborated = matlab?.corroborated(unnamed, t, lcTypeTokens, lcTokens);
+          cands = cands.filter((n) => !unnamedIds.has(n.id) || corroborated?.has(n.id));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
@@ -5020,15 +4951,15 @@ export class ToolHandler {
     const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
     // A MATLAB script on the flow, or named: its file node is the hop, and the
     // file's code its body, which the gather (symbols, not files) never
-    // reaches. Seeded as the agent's own, so its file renders like a function's.
-    const unseeded = hasMatlab ? [...new Set([...flow.pathNodeIds, ...flow.namedNodeIds])].filter((id) => !subgraph.nodes.has(id)) : [];
-    if (unseeded.length > 0) {
-      const found = cg.getNodesByIds(unseeded);
-      for (const id of unseeded) {
-        const n = found.get(id);
-        if (!n || !isMatlabScriptFile(n, matlabScripts)) continue;
-        subgraph.nodes.set(id, n);
-        namedSeedIds.add(id);
+    // reaches. One the agent named is seeded as its own. One it only passes
+    // through is admitted to the render whatever it scores, and scored like
+    // any hop, so it never outranks the files the agent named.
+    const flowOnlyFiles = new Set<string>();
+    if (matlab) {
+      for (const n of matlab.scriptHops([...new Set([...flow.pathNodeIds, ...flow.namedNodeIds])].filter((id) => !subgraph.nodes.has(id)))) {
+        subgraph.nodes.set(n.id, n);
+        if (flow.namedNodeIds.has(n.id)) namedSeedIds.add(n.id);
+        else flowOnlyFiles.add(n.filePath);
       }
     }
 
@@ -5276,7 +5207,7 @@ export class ToolHandler {
       Math.min(SCORE_FLOOR_MAX, topScore * SCORE_FLOOR_FRACTION_OF_TOP),
     );
     let relevantFiles = candidateFiles.filter(
-      ([fp, group]) => group.score >= scoreFloor || pinnedSet.has(fp),
+      ([fp, group]) => group.score >= scoreFloor || pinnedSet.has(fp) || flowOnlyFiles.has(fp),
     );
     if (relevantFiles.length < SCORE_FLOOR_KEEP_MIN) {
       // Backfill from what the RELATIVE floor cut, best first, at two strengths:
@@ -5430,6 +5361,7 @@ export class ToolHandler {
         || centralFiles.has(fp)
         || entryFiles.has(fp)
         || changeSurfaceFiles.has(fp)
+        || flowOnlyFiles.has(fp)
         || (fileTermHits.get(fp) ?? 0) >= 2,
       );
       if (gated.length >= 2) relevantFiles = gated;

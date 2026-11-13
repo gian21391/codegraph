@@ -4199,9 +4199,6 @@ export function isVisibleAcrossFiles(candidate: Node, ref: UnresolvedRef, contex
       (isGoExternalQualified(ref, context) || !isInGoQualifierPackage(candidate, ref, context))) return false;
   if ((ref.language === 'csharp' || ref.language === 'razor') && !csharpTypeArityFits(candidate, ref, context)) return false;
   if (candidate.filePath === ref.filePath) return true;
-  // A MATLAB local or nested function — any but a file's first — is callable
-  // only from its own file.
-  if (candidate.language === 'matlab' && candidate.kind === 'function' && !candidate.isExported) return false;
   // A vendored minified bundle's names are mangled: healthchecks' 369 `$(…)`
   // (jQuery, a global) went to a one-letter helper inside bootstrap-native.min.js.
   if (isMinifiedScript(candidate.filePath, context)) return false;
@@ -19114,8 +19111,10 @@ function cppConstAdded(n: Node, name: string, types: Array<CppArgumentType | nul
  */
 function cppFunctionOverload(chosen: Node, candidates: Node[], ref: UnresolvedRef, context: ResolutionContext): Node {
   if ((ref.language !== 'cpp' && ref.language !== 'c') || ref.referenceKind !== 'calls') return chosen;
+  // Only C and its family's functions: a MATLAB or a Python function of the
+  // name is no overload of a C one, however its qualified name reads.
   const overloads = candidates.filter((n) => n.kind === 'function' && n.qualifiedName === chosen.qualifiedName &&
-    isVisibleAcrossFiles(n, ref, context));
+    !crossesCodeBoundary(n.language, ref.language) && isVisibleAcrossFiles(n, ref, context));
   if (overloads.length === 0) return chosen;
   if (ref.language === 'c') {
     const own = overloads.filter((n) => n.filePath === ref.filePath || cppIncluders(n.filePath, context).has(ref.filePath));
