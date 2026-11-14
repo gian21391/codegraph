@@ -22,6 +22,7 @@
  * them too, quotes preserved.)
  */
 import { blankStringContents, stripCommentsForRegex, type CommentLang } from '../resolution/strip-comments';
+import { blankMatlabCommentsAndStrings } from '../extraction/languages/matlab-syntax';
 export { blankStringContents } from '../resolution/strip-comments';
 
 export interface BoundaryMatch {
@@ -51,6 +52,8 @@ interface FormSpec {
   label: string;
   /** Languages this form applies to; undefined = all. Node.language values. */
   langs?: Set<string>;
+  /** Languages this form never applies to, when `langs` is unset. */
+  skipLangs?: Set<string>;
   re: RegExp;
   /**
    * Derive the dispatch key from the ORIGINAL-source snippet around the match
@@ -122,6 +125,8 @@ const FORMS: FormSpec[] = [
     // array literals and markdown-ish text in prose can't fire.
     form: 'computed-call',
     label: 'computed member call',
+    // MATLAB's `[…]` builds an array and never indexes, so `f [1 2] (3)` is no call.
+    skipLangs: new Set(['matlab']),
     re: /[\w$)\]]\s*\[([^[\]\n]{1,80})\]\s*\(/g,
     keyFrom: (orig) => {
       const inner = orig.match(/\[([^[\]\n]{1,80})\]\s*\($/);
@@ -272,7 +277,10 @@ const MAX_BODY_CHARS = 60_000; // a god-function tail is still scannable; beyond
 export function scanDynamicDispatch(body: string, language: string, fileStartLine: number): BoundaryMatch[] {
   const original = body.length > MAX_BODY_CHARS ? body.slice(0, MAX_BODY_CHARS) : body;
   const lang = commentLang(language);
-  const stripped = blankStringContents(lang ? stripCommentsForRegex(original, lang) : original);
+  // MATLAB has its own blanker: `%` comments, and a `'` that is a transpose as often as a quote.
+  const stripped = language === 'matlab'
+    ? blankMatlabCommentsAndStrings(original)
+    : blankStringContents(lang ? stripCommentsForRegex(original, lang) : original);
 
   const out: BoundaryMatch[] = [];
   const seen = new Map<string, BoundaryMatch>(); // form+key → first match (counts extras)
@@ -282,6 +290,7 @@ export function scanDynamicDispatch(body: string, language: string, fileStartLin
   for (const spec of FORMS) {
     if (out.length >= MAX_MATCHES_PER_BODY) break;
     if (spec.langs && !spec.langs.has(language)) continue;
+    if (spec.skipLangs?.has(language)) continue;
     spec.re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = spec.re.exec(stripped)) !== null) {

@@ -44,7 +44,7 @@ import type { Node as SyntaxNode, Tree } from 'web-tree-sitter';
 import { getNodeText } from '../extraction/tree-sitter-helpers';
 import { bracesIndex, callArgs, childField, commandItems, errorVariable, namedChildren, stringLiteral } from '../extraction/languages/matlab-values';
 import { MATLAB_BUILTINS } from '../extraction/languages/matlab-builtins';
-import { maskMatlabBlockComments } from '../extraction/languages/matlab-syntax';
+import { blankMatlabCommentsAndStrings } from '../extraction/languages/matlab-syntax';
 import { matlabFileStem } from '../extraction/languages/matlab-path';
 import { MATLAB_COMPUTERS, dirOf } from '../graph/matlab-search-path';
 import type { MatlabProjectAccess } from './matlab-path-access';
@@ -302,42 +302,6 @@ function firstErrorRow(node: SyntaxNode): number | null {
     if (row !== null) return row;
   }
   return node.startPosition.row;
-}
-
-/**
- * A MATLAB file's code with its comments dropped and its strings' contents
- * blanked, roughly (a quote after a name, `)`, `]`, `}`, `.` or a quote is a
- * transpose): good enough for a word scan, never parsed.
- */
-function codeText(source: string): string {
-  return maskMatlabBlockComments(source)
-    .split(/\r?\n/)
-    .map((line) => {
-      let quote: string | null = null;
-      let out = '';
-      for (let i = 0; i < line.length; i++) {
-        const c = line[i]!;
-        if (quote !== null) {
-          if (c === quote) {
-            if (line[i + 1] === quote) {
-              i++;
-              out += '  ';
-              continue;
-            }
-            quote = null;
-            out += c;
-          } else out += ' ';
-          continue;
-        }
-        if (c === '"' || (c === "'" && (i === 0 || !/[\w)\]}.'"]/.test(line[i - 1]!)))) {
-          quote = c;
-          out += c;
-        } else if (c === '%') return out;
-        else out += c;
-      }
-      return out;
-    })
-    .join('\n');
 }
 
 /**
@@ -743,7 +707,7 @@ class PathEvaluation {
       let result = false;
       const text = this.readText(file);
       if (text !== null) {
-        const code = codeText(text);
+        const code = blankMatlabCommentsAndStrings(text);
         // A file's own path words, unless they only put the current folder
         // back; else what it calls (every word is looked up, so a file that
         // comes to define one is a question the record asks again).

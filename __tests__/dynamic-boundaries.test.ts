@@ -15,6 +15,7 @@ import * as os from 'os';
 import CodeGraph from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 import { scanDynamicDispatch } from '../src/mcp/dynamic-boundaries';
+import { blankMatlabCommentsAndStrings } from '../src/extraction/languages/matlab-syntax';
 
 // ---------------------------------------------------------------------------
 // Unit: the scanner
@@ -120,6 +121,68 @@ describe('scanDynamicDispatch', () => {
     expect(m.length).toBeGreaterThanOrEqual(1);
     expect(m[0]!.form).toBe('reflection');
     expect(m[0]!.key).toBe('handlePing');
+  });
+});
+
+describe('scanDynamicDispatch — MATLAB', () => {
+  it('reads no dispatch in comments, strings or continuation tails', () => {
+    const body = [
+      'function veh = Bicycle(varargin)',
+      "% 'steermax',M    Maximu steer angle [rad] (default 0.5)",
+      '%{',
+      '  tbl[k](x)',
+      '%}',
+      "  opt.color = 'tile[r g b](0.5)';  % default [0.5 1 0.5] (light green)",
+      '  y = f(a, ...  speed [m/s] (default 1)',
+      '         b);',
+      '!echo x[1](2)',
+      'end',
+    ].join('\n');
+    expect(scanDynamicDispatch(body, 'matlab', 1)).toEqual([]);
+  });
+
+  it('never reads `[…]` as indexing: MATLAB builds an array with it', () => {
+    expect(scanDynamicDispatch('function y = f(g)\n  y = [g [1 2] (3)];\nend', 'matlab', 1)).toEqual([]);
+  });
+
+  it('still finds a dispatch in code, after a transpose, at its own line', () => {
+    const body = "function go(bus, evt)\n  x = evt.data'; bus.dispatch(evt); % sent\nend";
+    const m = scanDynamicDispatch(body, 'matlab', 40);
+    expect(m.map((x) => [x.form, x.line])).toEqual([['var-key-dispatch', 41]]);
+  });
+});
+
+describe('blankMatlabCommentsAndStrings', () => {
+  it('blanks comments and string contents, keeping every offset and line', () => {
+    const src = [
+      "a = 'it''s % here'; % note",
+      'b = x\' * y.\'; c = "q % r";',
+      '%{',
+      'hidden %{',
+      '%}',
+      'd = 1; ... tail',
+      '  !ls',
+      "e = [x' 'str'];\r",
+      '',
+    ].join('\n');
+    const out = blankMatlabCommentsAndStrings(src);
+    expect(out.length).toBe(src.length);
+    expect(out.split('\n').map((l) => l.trimEnd())).toEqual([
+      "a = '            ';",
+      'b = x\' * y.\'; c = "     ";',
+      '',
+      '',
+      '',
+      'd = 1;',
+      '',
+      "e = [x' '   '];",
+      '',
+    ]);
+  });
+
+  it('nests block comments as MATLAB does', () => {
+    const src = '%{\n%{\nx\n%}\ny\n%}\nz';
+    expect(blankMatlabCommentsAndStrings(src).split('\n').map((l) => l.trim())).toEqual(['', '', '', '', '', '', 'z']);
   });
 });
 
