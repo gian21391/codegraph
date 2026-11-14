@@ -27,6 +27,17 @@
  * it, not in the file's other functions. Of several equally near same-named
  * files the first in `genpath` order is picked (see `nearest`).
  *
+ * When the project's startup code sets a search path (../graph/
+ * matlab-search-path), it decides between same-named definitions instead
+ * (see `choose`): a caller the path runs sees only what is visible from it,
+ * the current folder first, then path order, and a name defined only off the
+ * path gets no edge; any other caller takes its own folder's copy, then the
+ * path's, then the nearest. Steps 1, 4 and 6 (an import, a wildcard import,
+ * the class of the first argument) find their target by its qualified name
+ * through the same choice, so they respect the path too: a package or a
+ * class only off the path is not imported or dispatched to from a caller on
+ * it, as in MATLAB. Steps 2, 3 and 5 are the same either way.
+ *
  * A package member is otherwise reached only by its full name (`pkg.sub.f`),
  * which the extractor writes as the qualified ref `pkg::sub::f`; a method
  * through its class (`Cls::m`, from `Cls.m()` or `obj.m()` on a method's own
@@ -54,16 +65,12 @@ import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { isMatlabScriptFile } from '../graph/matlab-scripts';
+import { dirOf, matlabLookupFolder, type MatlabSearchPath } from '../graph/matlab-search-path';
 
 const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
 const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
 const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KINDS]);
 const METHOD_KINDS: ReadonlySet<string> = new Set(['method']);
-
-function dirOf(p: string): string {
-  const i = p.lastIndexOf('/');
-  return i < 0 ? '' : p.slice(0, i);
-}
 
 /** `pkg::sub` for `pkg::sub::f`, `pkg::Cls` for its method `pkg::Cls::m`; '' for a top-level name. */
 function ownerOf(n: Node): string {
@@ -255,12 +262,55 @@ function nearness(filePath: string, callerFile: string): number {
   return score;
 }
 
+function searchPathOf(context: ResolutionContext): MatlabSearchPath | null {
+  return context.getMatlabSearchPath?.() ?? null;
+}
+
+/** The folder a caller runs from when it is off the path: its own (a class folder's or a package's parent, a `private/` folder's parent). */
+function callerFolder(callerFile: string): string {
+  const folder = matlabLookupFolder(callerFile);
+  return folder ?? dirOf(dirOf(callerFile));
+}
+
+/** Of same-named visible candidates, the first in path order (equally placed ones settled by `nearest`); undefined for none. */
+function firstOnPath(searchPath: MatlabSearchPath, candidates: Node[], callerFile: string): Node | undefined {
+  const ordered = searchPath.visibleInOrder(candidates);
+  if (ordered.length === 0) return undefined;
+  const best = searchPath.rankOf(ordered[0]!.filePath);
+  const top = ordered.filter((n) => searchPath.rankOf(n.filePath) === best);
+  return top.length === 1 ? top[0] : nearest(top, callerFile);
+}
+
+/**
+ * Of several same-named definitions, the one MATLAB runs from `callerFile`.
+ * With no search path in force, the nearest (see `nearest`). With one: for a
+ * caller the path runs, the first visible one in path order, or none; for
+ * any other, a copy in the folder it runs from, then the first visible one,
+ * then the nearest.
+ */
+function choose(candidates: Node[], callerFile: string, context: ResolutionContext): Node | undefined {
+  const searchPath = searchPathOf(context);
+  if (!searchPath || candidates.length === 0) return nearest(candidates, callerFile);
+  if (searchPath.isCallerOnPath(callerFile)) return firstOnPath(searchPath, candidates, callerFile);
+  const home = callerFolder(callerFile);
+  const own = candidates.filter((n) => matlabLookupFolder(n.filePath) === home);
+  if (own.length > 0) return nearest(own, callerFile);
+  return firstOnPath(searchPath, candidates, callerFile) ?? nearest(candidates, callerFile);
+}
+
+/** `candidates` a caller the path runs can see; all of them for any other caller, or with no path. */
+function seenFrom(candidates: Node[], callerFile: string, context: ResolutionContext): Node[] {
+  const searchPath = searchPathOf(context);
+  if (!searchPath || !searchPath.isCallerOnPath(callerFile)) return candidates;
+  return candidates.filter((n) => searchPath.isVisible(n.filePath));
+}
+
 /** A path-visible definition by exact qualified name: a package function, a class, a class's method. */
 function byQualifiedName(qn: string, callerFile: string, context: ResolutionContext, kinds: ReadonlySet<string>): Node | undefined {
   const hits = matlab(context.getNodesByQualifiedName(qn)).filter(
     (n) => kinds.has(n.kind) && (n.kind !== 'function' || n.isExported || n.filePath === callerFile) && privateInReach(n, callerFile),
   );
-  return nearest(preferBodies(hits), callerFile);
+  return choose(preferBodies(hits), callerFile, context);
 }
 
 /** A class written as `Name` or `pkg.Name` where `caller` is: its exact qualified name, else through the caller's imports. */
@@ -358,7 +408,7 @@ function methodOnHierarchy(cls: Node, name: string, callerFile: string, context:
   const own = preferBodies(matlab(context.getNodesByQualifiedName(`${cls.qualifiedName}::${name}`)).filter((n) => n.kind === 'method'));
   if (own.length > 0) {
     const held = own.filter((n) => n.filePath === cls.filePath || (inClassFolder(cls) && dirOf(n.filePath) === dirOf(cls.filePath)));
-    return nearest(held.length > 0 ? held : own, callerFile);
+    return held.length > 0 ? nearest(held, callerFile) : choose(own, callerFile, context);
   }
   for (const sup of superclassesOf(cls, context)) {
     const hit = methodOnHierarchy(sup, name, callerFile, context, seen);
@@ -474,9 +524,19 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
   // `run setup_paths`): it takes no argument and returns nothing.
   const folderClasses = onPath.filter((n) => TYPE_KINDS.has(n.kind) && inClassFolder(n));
   let target: Node | undefined;
-  if (folderClasses.length > 0) target = nearest(folderClasses, from);
+  const scriptsHere = (): Node[] => (statement ? scriptsNamed(name, context) : []);
+  if (searchPathOf(context)) {
+    // A class folder's class on the path comes before any function; one the
+    // caller cannot see leaves the functions and scripts it can.
+    target = folderClasses.length > 0 ? choose(folderClasses, from, context) : undefined;
+    if (!target) {
+      const rest = onPath.filter((n) => !folderClasses.includes(n));
+      const scripts = scriptsHere();
+      target = choose(scripts.length > 0 ? [...rest, ...scripts] : rest, from, context);
+    }
+  } else if (folderClasses.length > 0) target = nearest(folderClasses, from);
   else {
-    const scripts = statement ? scriptsNamed(name, context) : [];
+    const scripts = scriptsHere();
     target = nearest(scripts.length > 0 ? [...onPath, ...scripts] : onPath, from);
   }
   return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
@@ -495,12 +555,22 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
  * match in the caller's own folder is never beaten.
  */
 function nearerInexactMatch(name: string, target: Node, callerFile: string, context: ResolutionContext): boolean {
-  const bar = nearness(target.filePath, callerFile);
-  if (bar === Number.MAX_SAFE_INTEGER) return false;
+  const searchPath = searchPathOf(context);
+  // A target the path chose (for any caller) is beaten only by a match
+  // earlier on the path: one off it runs nowhere MATLAB looks. Else nearer
+  // is nearer by folder, as with no path.
+  const onPath = searchPath !== null && (searchPath.isCallerOnPath(callerFile) || searchPath.isVisible(target.filePath));
+  const bar = onPath ? searchPath!.rankOf(target.filePath) : nearness(target.filePath, callerFile);
+  if (bar === undefined || (!onPath && bar === Number.MAX_SAFE_INTEGER)) return false;
+  const beats = (n: Node): boolean => {
+    if (!onPath) return nearness(n.filePath, callerFile) > bar;
+    const rank = searchPath!.rankOf(n.filePath);
+    return rank !== undefined && rank < bar;
+  };
   const lower = name.toLowerCase();
   const variants = [lower, `${lower}.m`].flatMap((k) => context.getNodesByLowerName(k));
   return matlab(variants).some((n) => {
-    if (nearness(n.filePath, callerFile) <= bar || !privateInReach(n, callerFile)) return false;
+    if (!beats(n) || !privateInReach(n, callerFile)) return false;
     const owner = ownerOf(n);
     // `@tps/TPS.m`: a constructor's file, its folder's name in another case or its own.
     if (n.kind === 'method') return isMethodFile(n) && !owner.includes('::') && owner.toLowerCase() === lower && (owner !== name || n.name !== name);
@@ -558,13 +628,14 @@ function variableMethod(member: string, callerFile: string, context: ResolutionC
   const all = named.filter((n) => n.kind === 'method');
   // A class-folder method's `Static` is on its classdef's declaration.
   const statics = new Set(all.filter((n) => n.isStatic).map((n) => n.qualifiedName));
-  const methods = preferBodies(all.filter((n) => !statics.has(n.qualifiedName)));
+  // With a search path, a caller it runs sees only the classes on it.
+  const methods = seenFrom(preferBodies(all.filter((n) => !statics.has(n.qualifiedName))), callerFile, context);
   const classes = new Set(methods.map(ownerOf));
   if (classes.size === 0) return undefined;
-  // Of each class's copies, the one nearest the caller.
+  // Of each class's copies, the one MATLAB would see from the caller.
   const chosen = new Map<string, Node>();
   for (const owner of classes) {
-    const copy = nearest(methods.filter((n) => ownerOf(n) === owner), callerFile);
+    const copy = choose(methods.filter((n) => ownerOf(n) === owner), callerFile, context);
     if (!copy) return undefined;
     chosen.set(owner, copy);
   }

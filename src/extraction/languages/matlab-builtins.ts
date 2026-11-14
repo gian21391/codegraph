@@ -244,8 +244,9 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
  * What a bare call can reach outside its file is read once: the names of the
  * `.m` files already stored, read at the first MATLAB file a run stores (or
  * by `loadStored`), and of every file a run is about to store (`expect`),
- * which a file it stores before them may call. It only ever grows: a name
- * kept that no file defines any more costs a row, never an edge.
+ * which a file it stores before them may call. It grows, and is read again
+ * after a sync removes a `.m` file (`forget`), so a name no file is named for
+ * any more keeps no call a fresh index would drop.
  */
 export class MatlabInsertFilter {
   private reachable: Set<string> | null = null;
@@ -266,6 +267,11 @@ export class MatlabInsertFilter {
       if (this.reachable) addMatlabReachableNames([p], this.reachable);
       else this.expected.push(p);
     }
+  }
+
+  /** Drops the names read so far: the next filter reads the stored files' again (a sync that removed a `.m` file). */
+  forget(): void {
+    this.reachable = null;
   }
 
   /**

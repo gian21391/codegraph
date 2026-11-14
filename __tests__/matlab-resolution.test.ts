@@ -755,11 +755,13 @@ describe('MATLAB function precedence', () => {
       'useUtil.m useUtil -calls-> util::plot @ +util/plot.m',
       'useUtil.m useUtil -calls-> util::size @ +util/size.m',
     ]);
-    // The built-ins those are: no row.
-    expect(unresolved).toEqual([]);
+    // The built-ins those are. A project symbol carries each name (the
+    // package's own size and plot), so the failed rows are kept: a sync that
+    // changes the search path re-resolves them as a fresh index would.
+    expect(unresolved).toEqual(['+util/plot.m:2 calls:plot', '+util/size.m:2 calls:size']);
   });
 
-  it('on a sync, links a call of a built-in\'s name to a function added beside it only in the files it re-indexes (a full index links them all)', async () => {
+  it('on a sync, links a call of a built-in\'s name to a function added beside it in every file, as a full index does', async () => {
     const root = tempDir('cg-matlab-builtin-sync-');
     const caller = (name: string) => `function ${name}(x)\np = normpdf(x);\nend\n`;
     writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
@@ -770,10 +772,12 @@ describe('MATLAB function precedence', () => {
       // The project gains its own normpdf, and one caller is edited in the same sync.
       writeTree(root, { 'normpdf.m': 'function p = normpdf(x)\np = x;\nend\n', 'edited.m': caller('edited') + '% edited\n', 'added.m': caller('added') });
       await cg.sync();
-      // untouched.m's call was discarded as the built-in's when it was indexed, and no row is left to retry.
+      // untouched.m's call was discarded as the built-in's when it was indexed:
+      // the name's first carrier has the sync extract it again.
       expect(allEdges(cg)).toEqual([
         'added.m added -calls-> normpdf @ normpdf.m',
         'edited.m edited -calls-> normpdf @ normpdf.m',
+        'untouched.m untouched -calls-> normpdf @ normpdf.m',
       ]);
     } finally {
       cg.close();

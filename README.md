@@ -725,6 +725,68 @@ ranking. It is *not* a filter: unlike the built-in `example/`, `sample/`,
 from some result sets outright — `deprioritize` only ever changes rank. Reach
 for `exclude` when you want something gone.
 
+### MATLAB search path
+
+A MATLAB call `f(x)` runs the first `f` on MATLAB's search path. A project that
+keeps several copies of a function — an old and a new release of a toolbox, one
+folder per machine — picks one by the folders its startup code puts on the
+path. CodeGraph learns that path by running the project's own startup code,
+and then links each call to the copy MATLAB would run. Give the code under
+`matlab` in `codegraph.json`:
+
+```json
+{
+  "matlab": {
+    "startup": "setpathals('StorageRing')",
+    "cwd": "mmlt/mml",
+    "env": { "EPICS_HOST_ARCH": "" },
+    "computer": "GLNXA64",
+    "release": "R2024b"
+  }
+}
+```
+
+- `startup` — MATLAB code, a string or an array of lines. It can call the
+  project's own setpath functions, or list folders itself:
+  `"addpath('lib'); addpath(genpath('toolbox'))"`.
+- `cwd` — the current folder the code starts in, relative to the project root.
+  By default, the folder of the function the code calls first, when one file
+  defines it; otherwise the root.
+- `env` — what `getenv` returns; a variable not listed is empty.
+- `computer` — what `computer` returns (default `GLNXA64`), which also decides
+  `ispc`, `isunix` and `ismac`.
+- `release` — the MATLAB release `version`, `ver` and `verLessThan` report
+  (default `R2024b`).
+
+Without a `matlab.startup`, a `startup.m` at the project root is the startup
+code. With neither there is no path, and calls go to the nearest copy, as
+before. A call from code on the path links only to what the path makes
+visible: a function defined only off the path gets no edge.
+
+Where a condition cannot be known (a file outside the project, a value read at
+run time), every branch is run and every branch's folders are kept. When the
+branches, or code that returns, breaks or fails early, leave different current
+folders, the current folder is one of those, and a call, `which`, `exist` or a
+relative `addpath` that would find something different from each of them is
+not followed (a relative `cd` leaves the current folder one of several again).
+If the startup code ends that way, the current folder is not modelled: calls
+rank by path order alone.
+
+`codegraph status` shows the path in force (`--json` lists every folder and
+what the evaluation could not know). `codegraph_explore` and `codegraph_node`
+show the copy the path selects and count the others on one line, with the
+functions whose names differ only in case counted on the same line; when no
+copy is on the path, `codegraph_explore` shows the first one `codegraph_node`
+lists, marked as off the path. A bad value is warned about and skipped; the
+index is never stopped by it, and startup code that does not parse cleanly sets
+no path (`codegraph status` says where). `codegraph sync` picks up edits to the
+startup code, the files it reads, the folders it lists or looks for and the
+names it looks up (a file added, changed or removed that would answer any of
+them differently), and a project moved to another folder. It also picks up a
+function named like a MATLAB built-in, such as a project's own `disp.m`,
+arriving or going: calls of that name in files the sync did not change are
+linked, or dropped, as a fresh index would.
+
 ### Custom file extensions
 
 If your project uses a non-standard extension for a [supported

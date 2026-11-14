@@ -1276,6 +1276,23 @@ program
           // True while another process runs `codegraph index` on this
           // project: the statistics are a snapshot of the rebuild (#2913).
           rebuildInProgress,
+          // The MATLAB search path the project's startup code sets (null:
+          // none was ever worked out). `inForce` false: the startup code
+          // set none, and its notes say why.
+          matlabPath: (() => {
+            const record = cg.getMatlabPathRecord();
+            if (!record) return null;
+            return {
+              inForce: record.source !== null,
+              source: record.source,
+              startup: record.startup ?? null,
+              folders: record.folders ?? [],
+              cwd: record.cwd ?? null,
+              notes: record.notes ?? [],
+              // The notes number this many; `notes` holds the first of them.
+              noteCount: record.noteCount ?? record.notes?.length ?? 0,
+            };
+          })(),
           index: {
             builtWithVersion: buildInfo.version,
             builtWithExtractionVersion: buildInfo.extractionVersion,
@@ -1381,6 +1398,22 @@ program
         console.log(`  ${lang.padEnd(15)} ${formatNumber(count)}${chalk.dim(withSymbols)}`);
       }
       console.log();
+
+      // The MATLAB search path the project's startup code sets, which decides
+      // between same-named MATLAB definitions.
+      {
+        const record = cg.getMatlabPathRecord();
+        if (record?.source) {
+          const folders = record.folders?.length ?? 0;
+          const notes = record.noteCount ?? record.notes?.length ?? 0;
+          const from = record.source === 'codegraph.json' ? `codegraph.json startup "${record.startup ?? ''}"` : 'startup.m';
+          console.log(`${chalk.bold('MATLAB path:')} ${formatNumber(folders)} folder${folders === 1 ? '' : 's'} from ${from}${notes ? ` (${formatNumber(notes)} note${notes === 1 ? '' : 's'})` : ''}`);
+          console.log();
+        } else if (record && record.notes?.length) {
+          warn(`MATLAB path: none ${getGlyphs().dash} ${record.notes[0]}`);
+          console.log();
+        }
+      }
 
       // What follows is advice for an index at rest: sync its pending changes,
       // re-index an older build. A running rebuild is replacing this one.

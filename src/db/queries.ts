@@ -3062,6 +3062,40 @@ export class QueryBuilder {
     return found;
   }
 
+  /** The files whose nodes carry each of `names` (`name` → files), for the names some node carries. Chunked probe over `idx_nodes_name`. */
+  getFilesCarryingNames(names: Iterable<string>): Map<string, Set<string>> {
+    const unique = [...new Set(names)];
+    const found = new Map<string, Set<string>>();
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const rows = this.db
+        .prepare(`SELECT DISTINCT name, file_path FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})`)
+        .all(...chunk) as Array<{ name: string; file_path: string }>;
+      for (const row of rows) {
+        const files = found.get(row.name);
+        if (files) files.add(row.file_path);
+        else found.set(row.name, new Set([row.file_path]));
+      }
+    }
+    return found;
+  }
+
+  /** The MATLAB rows, of any status, of a bare call or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe over `idx_unresolved_name`. */
+  getMatlabCallRowsNamed(names: Iterable<string>): Array<{ id: number; filePath: string; name: string }> {
+    const unique = [...new Set(names)];
+    const out: Array<{ id: number; filePath: string; name: string }> = [];
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const rows = this.db
+        .prepare(`SELECT id, file_path, reference_name FROM unresolved_refs
+                   WHERE reference_name IN (${chunk.map(() => '?').join(',')})
+                     AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`)
+        .all(...chunk) as Array<{ id: number; file_path: string; reference_name: string }>;
+      for (const row of rows) out.push({ id: row.id, filePath: row.file_path, name: row.reference_name });
+    }
+    return out;
+  }
+
   /**
    * Which of `nodeIds` extend or implement a type the resolver could not follow.
    * An ancestor outside the index (`React.Component`, `stream.Transform`, a

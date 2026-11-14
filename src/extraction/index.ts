@@ -37,6 +37,7 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
+import { dropUncarriedMatlabRows, matlabCarrierChanges, matlabFilesNaming } from '../resolution/matlab-builtin-carriers';
 import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
 export { oversizeStamp };
 
@@ -3181,9 +3182,11 @@ export class ExtractionOrchestrator {
   }
 
   /**
-   * Index a single file
+   * Index a single file. `again`: store it even when its content is the one
+   * stored (a sync extracting an unchanged file anew, see
+   * resolution/matlab-builtin-carriers).
    */
-  async indexFile(relativePath: string): Promise<ExtractionResult> {
+  async indexFile(relativePath: string, again = false): Promise<ExtractionResult> {
     // Indexing read: follow in-root symlinks (the `../` guard still applies), #935.
     const fullPath = validatePathWithinRoot(this.rootDir, relativePath, { allowSymlinkEscape: true });
 
@@ -3230,7 +3233,7 @@ export class ExtractionOrchestrator {
       };
     }
 
-    return this.indexFileWithContent(relativePath, content, stats);
+    return this.indexFileWithContent(relativePath, content, stats, again);
   }
 
   /**
@@ -3240,7 +3243,8 @@ export class ExtractionOrchestrator {
   async indexFileWithContent(
     relativePath: string,
     content: string,
-    stats: fs.Stats
+    stats: fs.Stats,
+    again = false
   ): Promise<ExtractionResult> {
     // Prevent `../` traversal; follow in-root symlinks like the directory walk (#935).
     const fullPath = validatePathWithinRoot(this.rootDir, relativePath, { allowSymlinkEscape: true });
@@ -3295,7 +3299,7 @@ export class ExtractionOrchestrator {
     const result = extractFromSource(relativePath, content, language, frameworkNames);
 
     // Store in database
-    await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder());
+    await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder(), again);
 
     return result;
   }
@@ -3337,7 +3341,8 @@ export class ExtractionOrchestrator {
     language: Language,
     stats: fs.Stats,
     result: ExtractionResult,
-    onYield?: MaybeYield
+    onYield?: MaybeYield,
+    again = false
   ): Promise<void> {
     // The file was never parsed: its grammar failed to load (#2335). Storing
     // this would replace the file's symbols with an empty row under the new
@@ -3368,7 +3373,7 @@ export class ExtractionOrchestrator {
     // successful retry's symbols — a permanent empty file presented as
     // recovered (the #1541 wipe, reintroduced through the marker path).
     const existingFile = this.queries.getFileByPath(filePath);
-    if (existingFile && existingFile.contentHash === contentHash) {
+    if (existingFile && existingFile.contentHash === contentHash && !again) {
       const existingIsMarker =
         existingFile.nodeCount === 0 && (existingFile.errors?.length ?? 0) > 0;
       const incomingHasContent = result.nodes.length > 0;
@@ -3971,6 +3976,9 @@ export class ExtractionOrchestrator {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
     }
+    // The names a removed `.m` file made reachable go with it, as they are
+    // not in a fresh index's (see MatlabInsertFilter).
+    if (removed.some((f) => f.path.toLowerCase().endsWith('.m'))) this.matlabFilter.forget();
 
     // Adds / modifications.
     for (const filePath of currentFiles) {
@@ -4110,6 +4118,34 @@ export class ExtractionOrchestrator {
     for (const pair of pairsBefore) if (!pairsAfter.has(pair)) deltaNames.add(nameOf(pair));
     for (const pair of pairsAfter) if (!pairsBefore.has(pair)) deltaNames.add(nameOf(pair));
     const definitionDelta = [...deltaNames];
+
+    // A built-in's name that gained its first project carrier, or lost its
+    // last (see resolution/matlab-builtin-carriers): the calls of it in files
+    // this sync leaves alone were judged by the carriers they had. A gained
+    // one's files are extracted again here, as a changed file is, and join
+    // the changed files for resolution; a lost one's rows go.
+    const carriers = matlabCarrierChanges(this.queries, {
+      deltaNames, pairsBefore, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
+    });
+    if (carriers.lost.length > 0 || carriers.unreached.length > 0) dropUncarriedMatlabRows(this.queries, carriers);
+    if (carriers.gained.length > 0) {
+      const tCarriers = Date.now();
+      const again = matlabFilesNaming(this.queries, this.rootDir, carriers.gained, new Set(filesToIndex));
+      const scanMs = Date.now() - tCarriers;
+      if (again.length > 0) await loadGrammarsForLanguages(['matlab']);
+      for (const { filePath, content } of again) {
+        onFileChange?.(filePath, content);
+        const result = await this.indexFile(filePath, true);
+        if (result.errors.some(e => e.severity === 'error')) failedFilePaths.push(filePath);
+        if (!hasGrammarLoadFailure(result.errors)) nodesUpdated += result.nodes.length;
+        changedFilePaths.push(filePath);
+        const pause = backpressure?.();
+        if (pause) await pause;
+      }
+      if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
+        console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; word scan ${scanMs}ms; ${again.length} files extracted again)`);
+      }
+    }
 
     // Modified ES modules whose `export … from` statements changed (#2978): a
     // re-export retargeted, removed or passing other names on changes what

@@ -4,6 +4,7 @@
  * Types for the reference resolution system.
  */
 
+import type { MatlabSearchPath } from '../graph/matlab-search-path';
 import { EdgeKind, Language, Node, ReferenceKind } from '../types';
 
 /**
@@ -151,6 +152,13 @@ export interface ResolutionContext {
    * entry is valid from any call site. Optional for external/test contexts.
    */
   getMethodMatches?(typeName: string, methodName: string, language: Language): Node[];
+  /**
+   * The MATLAB search path the project's startup code sets (see
+   * ../graph/matlab-search-path), or null when none is in force. Read once
+   * per resolution pass. Optional: a context without it resolves as if the
+   * project set no path.
+   */
+  getMatlabSearchPath?(): MatlabSearchPath | null;
   /** Get project root */
   getProjectRoot(): string;
   /** Get all files */

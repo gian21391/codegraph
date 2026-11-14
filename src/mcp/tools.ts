@@ -61,6 +61,7 @@ import { callSiteLines, formatCallSiteLines } from '../graph/call-sites';
 import { DEFAULT_IMPACT_MAX_EDGES, DEFAULT_IMPACT_MAX_NODES, type CallSiteRow } from '../graph/traversal';
 import { isCopybookInclude, MAX_COPYBOOK_INCLUDES, type NamedCopybook } from '../graph/cobol-copybooks';
 import { matlabExploreFor } from '../graph/matlab-explore';
+import { keepMatlabCopies, matlabCopiesLine, matlabCopiesOf, type MatlabCopies, type MatlabSearchPath } from '../graph/matlab-search-path';
 import { groupFilesByPackage, packageGroupTitle, packageListingTitle } from '../graph/owning-package';
 import {
   findAllSymbols,
@@ -4741,6 +4742,17 @@ export class ToolHandler {
     // Tokens written like code names that resolved to no node at all, not even
     // a camel-infix definer: candidates for the "not in the index" note (#2462).
     const unresolvedNamedTokens: string[] = [];
+    // A MATLAB project's search path picks one of a name's copies: the others,
+    // off the path, and the names spelled differently, are counted on one
+    // line instead of taking file slots with dead bodies, from the same
+    // derivation codegraph_node renders (see ../graph/matlab-search-path). A
+    // name the query named gets its line; so does a gathered one a symbol of
+    // which is rendered. A named one with no copy on the path shows the copy
+    // codegraph_node lists first, marked as off the path.
+    const matlabPath = matlab ? cg.getMatlabSearchPath() : null;
+    const matlabLines = new Map<string, { line: string; named: boolean }>();
+    const matlabHidden = new Set<string>();
+    const matlabOffPathShown = new Set<string>();
     {
       const CALLABLE = new Set(['method', 'function', 'component', 'constructor']);
       // Variables/constants seed too: in Svelte/React a `$state` variable
@@ -4819,7 +4831,24 @@ export class ToolHandler {
         // type-token bias below couldn't pick the harness.rs one. (Same fix as
         // codegraph_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
         const isQual = /[.\/]|::/.test(t);
-        const raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        let raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        // The copy the path selects among several is as good as named: the
+        // path, not a co-named word, says it is the one.
+        const pathChosen = new Set<string>();
+        if (matlabPath && !isQual) {
+          const copies = this.matlabCopies(cg, matlabPath, t);
+          if (copies.offPath.length > 0 || copies.otherCase.length > 0) {
+            const offPathShown = copies.onPath.length > 0 ? 0 : 1;
+            const kept = new Set(keepMatlabCopies(raw, copies, offPathShown).map((n) => n.id));
+            for (const n of [...copies.onPath, ...copies.offPath, ...copies.otherCase]) if (!kept.has(n.id)) matlabHidden.add(n.id);
+            raw = raw.filter((n) => kept.has(n.id));
+            const chosen = copies.onPath[0] ?? copies.offPath[0];
+            if (chosen) pathChosen.add(chosen.id);
+            if (copies.onPath.length === 0 && chosen) matlabOffPathShown.add(chosen.filePath);
+            const line = matlabCopiesLine(copies, offPathShown);
+            if (line) matlabLines.set(t, { line, named: true });
+          }
+        }
         // A query that NAMES a declared type is a question ABOUT that type, and
         // must still reach its declaration file at full weight — so record the
         // files those declarations live in and exempt them from the
@@ -4884,7 +4913,7 @@ export class ToolHandler {
           const unnamed = cands.filter((n) => !coNamedInFile(t, n.filePath));
           const unnamedIds = new Set(unnamed.map((n) => n.id));
           const corroborated = matlab?.corroborated(unnamed, t, lcTypeTokens, lcTokens);
-          cands = cands.filter((n) => !unnamedIds.has(n.id) || corroborated?.has(n.id));
+          cands = cands.filter((n) => !unnamedIds.has(n.id) || corroborated?.has(n.id) || pathChosen.has(n.id));
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
@@ -4960,6 +4989,32 @@ export class ToolHandler {
         subgraph.nodes.set(n.id, n);
         if (flow.namedNodeIds.has(n.id)) namedSeedIds.add(n.id);
         else flowOnlyFiles.add(n.filePath);
+      }
+    }
+
+    // MATLAB copies the search gathered on its own (by text, or a
+    // neighbour's edge) leave too: a named name's that it does not show, and,
+    // of any other name, the copies off the path where it has one on it.
+    if (matlabPath) {
+      const names = new Set<string>();
+      for (const n of subgraph.nodes.values()) {
+        if (n.language === 'matlab' && (n.kind === 'function' || n.kind === 'class' || n.kind === 'enum') && !matlabPath.isVisible(n.filePath) && !matlabLines.has(n.name)) names.add(n.name);
+      }
+      for (const name of names) {
+        let copies: MatlabCopies<Node>;
+        try {
+          copies = this.matlabCopies(cg, matlabPath, name);
+        } catch {
+          continue;
+        }
+        if (copies.onPath.length === 0 || copies.offPath.length === 0) continue;
+        for (const n of copies.offPath) matlabHidden.add(n.id);
+        const line = matlabCopiesLine(copies, 0);
+        if (line) matlabLines.set(name, { line, named: false });
+      }
+      for (const id of matlabHidden) {
+        if (!subgraph.nodes.has(id) || namedSeedIds.has(id) || flow.pathNodeIds.has(id)) continue;
+        subgraph.nodes.delete(id);
       }
     }
 
@@ -7875,6 +7930,21 @@ export class ToolHandler {
     // hard ceiling drops trailing sections — so leave a sentinel here and fill it
     // in once the output is final.
     lines[summaryLineIdx] = SUMMARY_SENTINEL;
+    // The MATLAB copies' lines, under the summary: for the names the query
+    // named and the names of the symbols rendered (see matlabLines); and the
+    // copy shown for a named name none of whose copies is on the path is
+    // marked as off it.
+    if (matlabLines.size > 0) {
+      const renderedNames = new Set<string>();
+      for (const fp of renderedFilePaths) for (const n of fileGroups.get(fp)?.nodes ?? []) renderedNames.add(n.name);
+      const copyLines = [...matlabLines].filter(([name, l]) => l.named || renderedNames.has(name)).map(([, l]) => l.line);
+      if (copyLines.length > 0) lines[summaryLineIdx + 1] = `\n${copyLines.join('\n')}\n`;
+      for (const fp of matlabOffPathShown) {
+        const head = `${FILE_SECTION_PREFIX}${fp}\`**`;
+        const at = lines.findIndex((l) => l === head || l.startsWith(`${head} — `));
+        if (at >= 0) lines[at] = lines[at] === head ? `${head} — not on the MATLAB path` : `${lines[at]} · not on the MATLAB path`;
+      }
+    }
 
     // Add remaining files as references (from both relevant and peripheral files).
     // Small projects (per budget) skip this — the relevant story already fits
@@ -8150,9 +8220,26 @@ export class ToolHandler {
       if (narrowed.length > 0) matches = narrowed;
     }
 
+    // A MATLAB project's search path picks one of a name's copies: it comes
+    // first, and the copies off the path stand as one line, not as bodies,
+    // with the names spelled differently counted on it, from the same
+    // derivation codegraph_explore renders (see ../graph/matlab-search-path).
+    // With no copy on the path, every copy is listed. A `file` or `line` pin
+    // is the caller choosing a copy itself, and is left alone.
+    let offPathNote = '';
+    if (!fileHint && lineHint === undefined && !/[.\/]|::/.test(symbol)) {
+      const matlabPath = cg.getMatlabSearchPath();
+      if (matlabPath) {
+        const copies = this.matlabCopies(cg, matlabPath, symbol);
+        matches = keepMatlabCopies(matches, copies, copies.offPath.length);
+        offPathNote = matlabCopiesLine(copies, copies.offPath.length) ?? '';
+      }
+    }
+    const withOffPath = (text: string): string => (offPathNote ? `${text}\n\n${offPathNote}` : text);
+
     // Single definition — the common case.
     if (matches.length === 1) {
-      return this.textResult(this.truncateOutput(await this.renderNodeSection(cg, matches[0]!, includeCode)));
+      return this.textResult(this.truncateOutput(withOffPath(await this.renderNodeSection(cg, matches[0]!, includeCode))));
     }
 
     // Multiple definitions share this name — overloads, or same-named methods on
@@ -8205,7 +8292,7 @@ export class ToolHandler {
         }
         list = [...inIndexOrder(shown, (n) => n).map(listLine), omittedLine(capOrder.slice(shown.length))];
       }
-      return this.textResult(this.truncateOutput([...prefix, ...list].join('\n')));
+      return this.textResult(this.truncateOutput(withOffPath([...prefix, ...list].join('\n'))));
     }
 
     const BODY_BUDGET = 12000; // leaves room under MAX_OUTPUT_LENGTH for the header + list
@@ -8270,7 +8357,7 @@ export class ToolHandler {
         notRendered = rest;
       }
     }
-    return this.textResult(this.truncateOutput(compose(rendered, notRendered)));
+    return this.textResult(this.truncateOutput(withOffPath(compose(rendered, notRendered))));
   }
 
   /**
@@ -8988,6 +9075,17 @@ export class ToolHandler {
    * exact match returns [] rather than a misleading fuzzy file hit (#173); a
    * bare name with no exact match falls back to the single top fuzzy result.
    */
+  /**
+   * A name's MATLAB copies as the search path sees them (see
+   * ../graph/matlab-search-path), from every node of the name but for case,
+   * in codegraph_node's order (findSymbolMatches: generated files last).
+   */
+  private matlabCopies(cg: CodeGraph, searchPath: MatlabSearchPath, name: string): MatlabCopies<Node> {
+    const all = cg.getNodesByNameIgnoringCase(name);
+    const isGen = cg.generatedFilePredicate(all.map((n) => n.filePath));
+    return matlabCopiesOf(searchPath, name, [...all].sort((a, b) => (isGen(a.filePath) ? 1 : 0) - (isGen(b.filePath) ? 1 : 0)));
+  }
+
   private findSymbolMatches(cg: CodeGraph, symbol: string): Node[] {
     const isQualified = /[.\/]|::/.test(symbol);
 

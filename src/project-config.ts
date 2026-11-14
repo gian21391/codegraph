@@ -27,6 +27,7 @@ import * as path from 'path';
 import { Language } from './types';
 import { isLanguageSupported } from './extraction/grammars';
 import { logWarn } from './errors';
+import { MATLAB_COMPUTERS } from './graph/matlab-search-path';
 
 /** Filename of the project-scoped config, resolved relative to the project root. */
 export const PROJECT_CONFIG_FILENAME = 'codegraph.json';
@@ -82,6 +83,30 @@ export interface ProjectConfig {
    * beyond the built-ins.
    */
   deprioritize?: string[];
+  /**
+   * How a MATLAB project sets its search path: the startup code codegraph
+   * runs to learn it (see `MatlabProjectConfig`). Absent, a `startup.m` at the
+   * project root is that code; with neither there is no path.
+   */
+  matlab?: {
+    startup?: string | string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    computer?: string;
+    release?: string;
+  };
+}
+
+/**
+ * The validated `matlab` block: each field as written, a bad one left out
+ * (warned). `startup` is the code's lines.
+ */
+export interface MatlabProjectConfig {
+  startup?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  computer?: string;
+  release?: string;
 }
 
 /** Parsed, validated view of a project's `codegraph.json`. */
@@ -91,6 +116,7 @@ interface ParsedConfig {
   exclude: string[];
   deprioritize: string[];
   include: string[];
+  matlab: MatlabProjectConfig | null;
 }
 
 interface CacheEntry {
@@ -114,6 +140,7 @@ const EMPTY_CONFIG: ParsedConfig = Object.freeze({
   exclude: Object.freeze([]) as unknown as string[],
   include: Object.freeze([]) as unknown as string[],
   deprioritize: Object.freeze([]) as unknown as string[],
+  matlab: null,
 });
 
 /**
@@ -167,16 +194,69 @@ function parseConfig(file: string): ParsedConfig {
   const exclude = extractExclude(parsed, file);
   const include = extractInclude(parsed, file);
   const deprioritize = extractPatternList(parsed, file, 'deprioritize');
+  const matlab = extractMatlab(parsed, file);
   if (
     extensions === EMPTY_EXTENSIONS &&
     includeIgnored.length === 0 &&
     exclude.length === 0 &&
     include.length === 0 &&
-    deprioritize.length === 0
+    deprioritize.length === 0 &&
+    matlab === null
   ) {
     return EMPTY_CONFIG;
   }
-  return { extensions, includeIgnored, exclude, include, deprioritize };
+  return { extensions, includeIgnored, exclude, include, deprioritize, matlab };
+}
+
+/**
+ * Validate the `matlab` block. Each field is checked on its own: a bad one is
+ * warned and left out, the others kept (a bad `startup` leaves the block with
+ * no code, and a root `startup.m` is used as if there were none). Never throws.
+ * `release` is checked against the releases codegraph knows by the caller
+ * (see `resolution/matlab-path-eval`), which owns that table.
+ */
+function extractMatlab(parsed: object, file: string): MatlabProjectConfig | null {
+  const raw = (parsed as ProjectConfig).matlab as unknown;
+  if (raw === undefined) return null;
+  const warn = (what: string): void => logWarn(`Ignoring ${what} in ${PROJECT_CONFIG_FILENAME}`, { file });
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    warn('"matlab": it must be an object');
+    return null;
+  }
+  const block = raw as Record<string, unknown>;
+  const out: MatlabProjectConfig = {};
+  for (const key of Object.keys(block)) {
+    if (!['startup', 'cwd', 'env', 'computer', 'release'].includes(key)) warn(`"matlab.${key}": not a known key`);
+  }
+  const { startup, cwd, env, computer, release } = block;
+  if (startup !== undefined) {
+    if (typeof startup === 'string' && startup.trim()) out.startup = [startup];
+    else if (Array.isArray(startup) && startup.length > 0 && startup.every((l) => typeof l === 'string') && startup.some((l) => (l as string).trim())) out.startup = startup as string[];
+    else warn('"matlab.startup": it must be MATLAB code, as a string or an array of lines');
+  }
+  if (cwd !== undefined) {
+    if (typeof cwd === 'string' && !path.isAbsolute(cwd) && !/^[A-Za-z]:/.test(cwd) && !cwd.split(/[\\/]/).includes('..')) out.cwd = cwd;
+    else warn('"matlab.cwd": it must be a folder inside the project, relative to its root');
+  }
+  if (env !== undefined) {
+    if (env && typeof env === 'object' && !Array.isArray(env)) {
+      const vars: Record<string, string> = {};
+      for (const [name, value] of Object.entries(env as Record<string, unknown>)) {
+        if (typeof value === 'string') vars[name] = value;
+        else warn(`"matlab.env.${name}": an environment variable's value must be a string`);
+      }
+      out.env = vars;
+    } else warn('"matlab.env": it must be an object of strings');
+  }
+  if (computer !== undefined) {
+    if (typeof computer === 'string' && Object.hasOwn(MATLAB_COMPUTERS, computer)) out.computer = computer;
+    else warn(`"matlab.computer": it must be one of ${Object.keys(MATLAB_COMPUTERS).join(', ')}`);
+  }
+  if (release !== undefined) {
+    if (typeof release === 'string' && /^R\d{4}[ab]$/.test(release)) out.release = release;
+    else warn('"matlab.release": it must be a release name such as R2024b');
+  }
+  return out;
 }
 
 /**
@@ -389,6 +469,15 @@ export function loadDeprioritizePatterns(rootDir: string): string[] {
  */
 export function loadIncludePatterns(rootDir: string): string[] {
   return loadParsedConfig(rootDir).include;
+}
+
+/**
+ * Load the validated `matlab` block for a project, mtime-cached: how a MATLAB
+ * project sets its search path. Null when the file has none (the zero-config
+ * default: a root `startup.m`, if any, is the startup code).
+ */
+export function loadMatlabConfig(rootDir: string): MatlabProjectConfig | null {
+  return loadParsedConfig(rootDir).matlab;
 }
 
 /** Test/maintenance hook: forget cached config (e.g. after rewriting it in a test). */

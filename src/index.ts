@@ -49,6 +49,7 @@ import { engine } from './lazy-engine';
 import { GraphTraverser, GraphQueryManager } from './graph';
 import type { CallSiteRow } from './graph';
 import { findNamedCopybooks, type NamedCopybook } from './graph/cobol-copybooks';
+import { MATLAB_PATH_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from './graph/matlab-search-path';
 import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock, escapesRoot } from './utils';
 import type { FileWatcher, WatchOptions, PendingFile } from './sync';
@@ -764,6 +765,14 @@ export class CodeGraph {
           // before resolution so updated names show up in subsequent reads.
           this.resolver.runPostExtract();
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] resolver-reinit: ${Date.now() - tReinit}ms`);
+          // The MATLAB search path the project's startup code sets, which
+          // resolution reads (see resolution/matlab-path-record). Over an
+          // existing graph, a path that moved re-opens every MATLAB reference
+          // the old one resolved, as a sync does; it becomes the stored one
+          // once resolution below is done (commitMatlabPath).
+          const tPath = Date.now();
+          if (await this.resolver.refreshMatlabPath()) this.orchestrator.resurrectResolutionEdgesForLanguage('matlab');
+          if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] matlab-path: ${Date.now() - tPath}ms`);
         }
 
         // Resolve references to create call/import/extends edges
@@ -890,6 +899,8 @@ export class CodeGraph {
         if (result.success) this.stampWorkspaceFingerprint();
         if (result.success) this.stampModuleConfigSnapshot();
         if (result.success) this.stampIndexedFrameworks();
+        // Resolution is done by the MATLAB path worked out above: it is the stored one now.
+        if (result.success) this.resolver.commitMatlabPath();
 
         if (result.success && result.filesIndexed > 0) {
           try {
@@ -1345,6 +1356,31 @@ export class CodeGraph {
             if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
               console.error(`[phase-timing] sync-module-config: ${Date.now() - tConfig}ms (${changed.join(', ')} changed, ${reopened} refs re-opened)`);
             }
+          }
+        }
+
+        // The MATLAB search path (see resolution/matlab-path-record): worked
+        // out again when something it depends on may have moved — the
+        // `matlab` block of codegraph.json, a root `startup.m`, or any
+        // question the startup code asked of the project (a file it read, a
+        // folder it listed or looked for, a name it looked up) that answers
+        // differently now. A path that moved changes what a MATLAB call
+        // resolves to in files this sync never touched: every MATLAB
+        // reference goes back for the sweep below, which resolves them by the
+        // new path as a fresh index would, and the new path is stored only
+        // once that is done (commitMatlabPath, at the end): a run stopped in
+        // between leaves the work to the next sync. An index from before paths
+        // has none stored: its first sync stores one, and re-resolves only
+        // when the project sets a path.
+        {
+          const tPath = Date.now();
+          const moved = await this.resolver.refreshMatlabPath(true);
+          if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-matlab-path-gate: ${Date.now() - tPath}ms`);
+          if (moved) {
+            const reopened = this.orchestrator.resurrectResolutionEdgesForLanguage('matlab');
+            refreshSynthesis = true;
+            this.queries.setMetadata('synthesis_pending', '1');
+            if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-matlab-path: ${Date.now() - tPath}ms (${reopened} refs re-opened)`);
           }
         }
 
@@ -1894,6 +1930,9 @@ export class CodeGraph {
         // The config files this sync's resolution read join the snapshot, and
         // a changed one is recorded as it is now (#2977).
         this.stampModuleConfigSnapshotIfMoved();
+        // A MATLAB path this sync moved is what every MATLAB reference is now
+        // resolved by: it becomes the stored one.
+        this.resolver.commitMatlabPath();
         // The whole sync, as for indexAll: resolution and linking included (#2334).
         result.durationMs = Date.now() - startedAt;
         return result;
@@ -2305,6 +2344,24 @@ export class CodeGraph {
   }
 
   /**
+   * The MATLAB search path the project's startup code sets, as the last index
+   * or sync worked it out (see graph/matlab-search-path): the folders in
+   * order, the current folder and the notes. Null when no path is in force.
+   */
+  getMatlabSearchPath(): MatlabSearchPath | null {
+    return MatlabSearchPath.of(this.getMatlabPathRecord());
+  }
+
+  /** The stored MATLAB path record, including one that sets no path (its notes say why); null when there is none. */
+  getMatlabPathRecord(): MatlabPathRecord | null {
+    try {
+      return parseMatlabPathRecord(this.queries.getMetadata(MATLAB_PATH_METADATA_KEY));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * References extracted but never attempted by a resolution pass. Zero on a
    * healthy index — a completed pass consumes every pending row (resolving it
    * or parking it as failed, #1240). Non-zero at rest means a pass was
@@ -2639,6 +2696,12 @@ export class CodeGraph {
    */
   getNodesByName(name: string): Node[] {
     return this.queries.getNodesByName(name);
+  }
+
+  /** Every node whose name is `name` but for case (`FindM44` for `findm44`), in {@link getNodesByName}'s order: by file, line, id. */
+  getNodesByNameIgnoringCase(name: string): Node[] {
+    return [...this.queries.getNodesByLowerName(name)].sort((a, b) =>
+      a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : a.startLine - b.startLine || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /** Nodes whose name starts with `prefix` (index range scan, capped). */

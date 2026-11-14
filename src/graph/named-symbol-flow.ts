@@ -38,6 +38,7 @@ import { isTestFile, splitAtCjkSwitches, isQueryNameToken } from '../search/quer
 
 import { qualifiedSymbolMatches } from './symbol-lookup';
 import { goPackageReaderFor } from './go-package';
+import { keepMatlabCopies, matlabCopiesOf } from './matlab-search-path';
 
 // Preserve the existing imports while sharing the matcher with the CLI and MCP.
 export { RUST_PATH_PREFIXES, lastQualifierPart, matchesSymbol } from './symbol-lookup';
@@ -314,8 +315,13 @@ export function resolveNamedTokens(
       (e) => e.provenance === 'heuristic'
     );
 
+  // A MATLAB project's search path picks one of a name's copies: the others,
+  // off the path, are no flow's hop; with none on it, the first is, as
+  // codegraph_explore shows it (see ./matlab-search-path).
+  const matlabPath = typeof cg.getMatlabSearchPath === 'function' ? cg.getMatlabSearchPath() : null;
   for (const t of tokens) {
-    const hits = findAllSymbols(cg, t).nodes;
+    const found = findAllSymbols(cg, t).nodes;
+    const hits = matlabPath ? keepMatlabCopies(found, matlabCopiesOf(matlabPath, t, found), 1) : found;
     const cands = hits.filter((n) => FLOW_CALLABLE_KINDS.has(n.kind));
     out.tokenFamily.set(t, cands);
     // A qualified or otherwise-specific name (<=3 hits) keeps all of them.

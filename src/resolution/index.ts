@@ -70,6 +70,8 @@ import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
 import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
+import { MATLAB_PATH_METADATA_KEY, MATLAB_PATH_PENDING_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from '../graph/matlab-search-path';
+import { computeMatlabPathRecord, currentMatlabConfigDigest, matlabPathInputsMoved, sameMatlabPath } from './matlab-path-record';
 import { isTestPath } from '../search/query-utils';
 import { JS_BUILT_INS } from './js-builtins';
 import { builtinModules } from 'module';
@@ -484,6 +486,10 @@ export class ReferenceResolver {
   // files the maps above were read from, as absolute paths. A sync compares
   // what they say now with what the index was resolved by (#2977).
   private moduleConfigFiles = new Set<string>();
+  // The MATLAB search path in force (see ../graph/matlab-search-path), read
+  // from the index's metadata once per resolution pass: `undefined` = not yet
+  // read. refreshMatlabPath writes it; every thread reads the same record.
+  private matlabSearchPath: MatlabSearchPath | null | undefined = undefined;
 
   constructor(projectRoot: string, queries: QueryBuilder) {
     this.projectRoot = projectRoot;
@@ -755,6 +761,7 @@ export class ReferenceResolver {
     this.knownFiles = null;
     this.goModules = null;
     this.goPackageDirs.clear();
+    this.matlabSearchPath = undefined;
     this.cachesWarmed = false;
     // The import-resolver's and name-matcher's per-context memos assume the
     // same stable window as the caches above — drop them together.
@@ -1059,6 +1066,7 @@ export class ReferenceResolver {
       },
 
       getProjectRoot: () => this.projectRoot,
+      getMatlabSearchPath: () => this.getMatlabSearchPath(),
 
       getAllFiles: () => {
         return this.queries.getAllFilePaths();
@@ -3551,6 +3559,85 @@ export class ReferenceResolver {
   /** See ./matlab-sync's reopenMatlabScriptRuns. */
   reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): number {
     return reopenMatlabScriptRuns(this.queries, this.context, matlabFilePaths, changedFilePaths);
+  }
+
+  /**
+   * The MATLAB search path in force, from the index's record (see
+   * ../graph/matlab-search-path); null when none is. A record a run worked
+   * out and has not finished re-resolving by (the pending one) comes first:
+   * it is what this pass resolves by.
+   */
+  getMatlabSearchPath(): MatlabSearchPath | null {
+    if (this.matlabSearchPath === undefined) {
+      let record: MatlabPathRecord | null = null;
+      try {
+        record = parseMatlabPathRecord(this.queries.getMetadata(MATLAB_PATH_PENDING_METADATA_KEY)) ?? parseMatlabPathRecord(this.queries.getMetadata(MATLAB_PATH_METADATA_KEY));
+      } catch { /* metadata is advisory: no path */ }
+      this.matlabSearchPath = MatlabSearchPath.of(record);
+    }
+    return this.matlabSearchPath;
+  }
+
+  /**
+   * Work out the MATLAB search path the project's startup code sets (see
+   * ./matlab-path-record), before a resolution pass reads it. With `sync`,
+   * only when it could have moved: the configuration changed, the project
+   * root is not the one it was worked out under (a moved checkout), a
+   * question the stored record asked of the project answers differently now,
+   * or a run that moved the path stopped before it had re-resolved by it (a
+   * pending record is left).
+   *
+   * Returns whether the path differs from the one the index was resolved by,
+   * in which case every MATLAB reference must be resolved again. A record
+   * that moved the path is stored as pending: resolution reads it, and
+   * {@link commitMatlabPath}, once the references are resolved, makes it the
+   * stored one. One that did not is stored at once. An index without MATLAB,
+   * and without a stored path, does nothing.
+   */
+  async refreshMatlabPath(sync = false): Promise<boolean> {
+    let stored: MatlabPathRecord | null = null;
+    let pending = false;
+    try {
+      stored = parseMatlabPathRecord(this.queries.getMetadata(MATLAB_PATH_METADATA_KEY));
+      pending = parseMatlabPathRecord(this.queries.getMetadata(MATLAB_PATH_PENDING_METADATA_KEY)) !== null;
+      if (stored === null && !pending && !this.queries.hasFilesOfLanguage('matlab')) return false;
+    } catch {
+      return false;
+    }
+    let files: string[] | null = null;
+    if (sync && stored && !pending) {
+      const configNow = currentMatlabConfigDigest(this.projectRoot, (rel) => this.queries.getFileByPath(rel) !== null);
+      if (configNow === stored.config && stored.root === this.projectRoot) {
+        // No startup code: nothing was asked of the project.
+        if (stored.answers && Object.keys(stored.answers).length === 0) return false;
+        files = this.queries.getAllFilePaths();
+        if (!matlabPathInputsMoved(stored, this.projectRoot, files)) return false;
+      }
+    }
+    const record = await computeMatlabPathRecord(this.projectRoot, files ?? this.queries.getAllFilePaths());
+    const moved = pending || !sameMatlabPath(stored, record);
+    const text = JSON.stringify(record);
+    try {
+      if (moved) this.queries.setMetadata(MATLAB_PATH_PENDING_METADATA_KEY, text);
+      else if (this.queries.getMetadata(MATLAB_PATH_METADATA_KEY) !== text) this.queries.setMetadata(MATLAB_PATH_METADATA_KEY, text);
+    } catch { /* metadata is advisory */ }
+    this.matlabSearchPath = undefined;
+    clearMatlabLookupMemos(this.context);
+    return moved;
+  }
+
+  /**
+   * The path a run worked out and has now resolved every MATLAB reference
+   * by becomes the stored one (see refreshMatlabPath). Called at the end of
+   * an index or a sync, after resolution.
+   */
+  commitMatlabPath(): void {
+    try {
+      const pending = this.queries.getMetadata(MATLAB_PATH_PENDING_METADATA_KEY);
+      if (!pending) return;
+      this.queries.setMetadata(MATLAB_PATH_METADATA_KEY, pending);
+      this.queries.setMetadata(MATLAB_PATH_PENDING_METADATA_KEY, '');
+    } catch { /* metadata is advisory */ }
   }
 
   /** What a sync has to tell the resolver of the MATLAB classes it changes (see ./matlab-sync). */

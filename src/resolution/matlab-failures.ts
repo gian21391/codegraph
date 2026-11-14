@@ -5,7 +5,11 @@
  * large MATLAB codebase those are most of the database.
  *
  *   - A bare call of a built-in's name (`plot(x)`, `set(h, …)`, `@isempty`)
- *     that no project function answered: MATLAB's own.
+ *     that no project function answered, and no project symbol carries the
+ *     name of: MATLAB's own. One that a project symbol carries is kept: where
+ *     that definition stands (off the search path, behind a nearer case
+ *     variant) may change with the path, and a sync that changes it must
+ *     link the call as a fresh index would.
  *   - A call no symbol carries a name of (see matlabUnmatchableKeys), unless
  *     written with arguments (`f(x)`): a bare read (`t = cfg;`, a command
  *     `setup_paths`) is a variable of the workspace, a member (`v.field(k)`)
@@ -21,7 +25,10 @@
  * name links the calls in the files it re-indexes, not those in a file it
  * leaves alone — a member call written with arguments too (`r =
  * a.recalib(2)`, its row gone while no symbol was named `recalib`) — which a
- * full re-index does (pinned in __tests__/matlab-resolution.test.ts).
+ * full re-index does (pinned in __tests__/matlab-resolution.test.ts). A
+ * built-in's name is the exception: a sync that gives one its first carrier
+ * extracts the files naming it again, and one that takes the last away drops
+ * its rows (see ./matlab-builtin-carriers).
  */
 
 import type { UnresolvedRef } from './types';
@@ -99,6 +106,13 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
  * every node carries (read when the pass began, after its definitions were
  * stored), or, when the pass has none (its caches dropped since), of
  * `carriedAmong`, which asks the index.
+ *
+ * A built-in's name that a project symbol carries is kept too, with a MATLAB
+ * search path in force or not: the call failed because of where the
+ * project's definition is (off the path, or behind a nearer case variant),
+ * and a path that comes, changes or goes later (a sync re-resolves every
+ * MATLAB reference then) may make it the one MATLAB runs, as a fresh index
+ * would find it.
  */
 export function unanswerableMatlabFailures(
   failures: readonly UnresolvedRef[],
@@ -107,21 +121,22 @@ export function unanswerableMatlabFailures(
   carriedAmong: (names: string[]) => ReadonlySet<string>,
 ): Set<UnresolvedRef> {
   const discarded = new Set<UnresolvedRef>();
-  const pending: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+  const pending: Array<{ ref: UnresolvedRef; keys: string[]; builtin: boolean }> = [];
   for (const ref of failures) {
     if (ref.language !== 'matlab' || !isFreshReference(ref, fresh)) continue;
-    if (isMatlabBuiltinCall(ref)) discarded.add(ref);
-    else {
+    if (isMatlabBuiltinCall(ref)) {
+      pending.push({ ref, keys: [ref.referenceName, ...matlabFileNames(ref.referenceName)], builtin: true });
+    } else {
       const keys = matlabUnmatchableKeys(ref);
-      if (keys) pending.push({ ref, keys });
+      if (keys) pending.push({ ref, keys, builtin: false });
     }
   }
   if (pending.length === 0) return discarded;
   const carried = known ?? carriedAmong(pending.flatMap((p) => p.keys));
-  for (const { ref, keys } of pending) {
+  for (const { ref, keys, builtin } of pending) {
     if (keys.some((k) => carried.has(k))) continue;
     const facts = matlabRefFacts(ref);
-    if (isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) discarded.add(ref);
+    if (builtin || isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) discarded.add(ref);
   }
   return discarded;
 }
