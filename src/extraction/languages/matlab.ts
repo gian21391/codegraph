@@ -31,7 +31,6 @@ import {
   templateOf,
   type FnVal,
   type Val,
-  type ValueHost,
 } from './matlab-values';
 import {
   CALLBACK_PROPERTY,
@@ -1098,17 +1097,6 @@ function parseCode(code: string): ParsedText | null {
   return entry.parsed;
 }
 
-/** What evaluation asks of the walk: the frame on top answers. */
-function valueHost(source: string): ValueHost {
-  return {
-    source,
-    mfilename: () => fileStem,
-    isLocal: (name) => isLocal(frame(), name),
-    handle: (node) => handleRef(node, source),
-    named: namedRef,
-  };
-}
-
 /** What interpretation asks of the walk, for code `source` whose variables `isVariable` says. */
 function interpHost(source: string, isVariable: (name: string) => boolean): InterpHost {
   return {
@@ -1147,7 +1135,7 @@ function recordedValue(node: SyntaxNode): Val | undefined {
 
 /** What `node` holds where it is, what the caller passed included: as recorded, else as written (its literals). */
 function rawValueAt(node: SyntaxNode, source: string): Val {
-  return recordedValue(node) ?? evaluate(node, null, valueHost(source));
+  return recordedValue(node) ?? evaluate(node, null, interpHost(source, (name) => isLocal(frame(), name)));
 }
 
 /** What `node` holds where it is, as this file alone says it (what the caller passed unknown: see callersUnknown). */
@@ -1454,9 +1442,6 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, st
 // What calls pass, and what functions do with what they are passed
 // ---------------------------------------------------------------------------
 
-/** Arguments a call's `args` fact covers, from the first: past them, none is recorded. */
-const MAX_RECORDED_ARGS = MATLAB_ARG_PLACES;
-
 /**
  * Whether an argument may stand for several (a comma-separated list):
  * `c{:}`, `c{k}` with k no literal, `s(2:3).f` — every argument after it is
@@ -1521,7 +1506,7 @@ function callArgsFact(node: SyntaxNode, source: string): MatlabCallArgs | undefi
   const args = callArgs(node);
   let out: MatlabCallArgs | undefined;
   let guarded: boolean | undefined;
-  for (let i = 0; i < Math.min(args.length, MAX_RECORDED_ARGS); i++) {
+  for (let i = 0; i < Math.min(args.length, MATLAB_ARG_PLACES); i++) {
     const arg = args[i]!;
     if (arg.type !== 'string' && getNodeText(arg, source).includes(PLACEHOLDER)) break;
     let v = argValue(rawValueAt(arg, source)) ?? forwardedArg(arg, source);

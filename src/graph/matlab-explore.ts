@@ -16,19 +16,11 @@
  * that holds none asks nothing more of it.
  */
 
-import type { Edge, EdgeKind, Node } from '../types';
+import type CodeGraph from '../index';
+import type { Node } from '../types';
 import { MATLAB_CLASS_FOLDER_CONTAINS, isMatlabClassFolderFile } from '../resolution/matlab-class-folders';
 import { indexedMatlabScriptLookup, isMatlabScriptFile, type MatlabScriptLookup } from './matlab-scripts';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
-
-/** The reads this needs: satisfied by a `CodeGraph`. */
-export interface MatlabExploreIndex {
-  hasFilesOfLanguage(language: 'matlab'): boolean;
-  getNodesByName(name: string): Node[];
-  getNodesInFile(filePath: string): Node[];
-  getNodesByIds(ids: string[]): Map<string, Node>;
-  getIncomingEdgesTo(ids: string[], kinds: EdgeKind[]): Edge[];
-}
 
 export interface MatlabExplore {
   /** The file nodes of the scripts named `name` (`setup_paths.m` for `setup_paths`), by the resolver's own rule. */
@@ -45,7 +37,7 @@ export interface MatlabExplore {
 }
 
 /** The probes for one explore call, or null when the index holds no MATLAB (or cannot say). */
-export function matlabExploreFor(index: MatlabExploreIndex, projectRoot: string): MatlabExplore | null {
+export function matlabExploreFor(index: CodeGraph, projectRoot: string): MatlabExplore | null {
   try {
     if (!index.hasFilesOfLanguage('matlab')) return null;
   } catch {
@@ -71,7 +63,7 @@ export function matlabExploreFor(index: MatlabExploreIndex, projectRoot: string)
   };
 }
 
-function scriptsNamed(index: MatlabExploreIndex, name: string, lookup: MatlabScriptLookup): Node[] {
+function scriptsNamed(index: CodeGraph, name: string, lookup: MatlabScriptLookup): Node[] {
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return [];
   try {
     return matlabFileNames(name).flatMap((fileName) => index.getNodesByName(fileName).filter((n) => isMatlabScriptFile(n, lookup)));
@@ -81,7 +73,7 @@ function scriptsNamed(index: MatlabExploreIndex, name: string, lookup: MatlabScr
 }
 
 /** The class-folder methods among `nodes` whose class `typeTokens` names: one batched edge read and one node read. */
-function classFolderMethodsOfNamedTypes(index: MatlabExploreIndex, nodes: readonly Node[], typeTokens: ReadonlySet<string>): Set<string> {
+function classFolderMethodsOfNamedTypes(index: CodeGraph, nodes: readonly Node[], typeTokens: ReadonlySet<string>): Set<string> {
   const out = new Set<string>();
   if (typeTokens.size === 0) return out;
   const methods = nodes.filter((n) => n.language === 'matlab' && n.kind === 'method' && isMatlabClassFolderFile(n.filePath));
@@ -101,7 +93,7 @@ function classFolderMethodsOfNamedTypes(index: MatlabExploreIndex, nodes: readon
 }
 
 /** The scripts among `nodes` a function named by another of `tokens` runs: one batched edge read and one node read. */
-function scriptsRunByNamed(index: MatlabExploreIndex, nodes: readonly Node[], token: string, tokens: ReadonlySet<string>): Set<string> {
+function scriptsRunByNamed(index: CodeGraph, nodes: readonly Node[], token: string, tokens: ReadonlySet<string>): Set<string> {
   const out = new Set<string>();
   const scripts = nodes.filter((n) => n.kind === 'file' && n.language === 'matlab');
   if (scripts.length === 0) return out;

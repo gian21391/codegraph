@@ -124,22 +124,12 @@ function privateOwnerFolder(filePath: string): string | null {
 
 /** The path in force: the record's folders and current folder, with what visibility asks of them. */
 export class MatlabSearchPath {
-  readonly folders: readonly string[];
-  readonly cwd: string | null;
-  readonly notes: readonly string[];
-  readonly source: 'codegraph.json' | 'startup.m';
-  readonly startup: string;
   private readonly rank = new Map<string, number>();
 
   constructor(record: MatlabPathRecord) {
-    this.folders = record.folders ?? [];
-    this.cwd = record.cwd ?? null;
-    this.notes = record.notes ?? [];
-    this.source = record.source ?? 'startup.m';
-    this.startup = record.startup ?? '';
     // The current folder comes before the path.
-    if (this.cwd !== null) this.rank.set(this.cwd, 0);
-    this.folders.forEach((f, i) => {
+    if (record.cwd != null) this.rank.set(record.cwd, 0);
+    (record.folders ?? []).forEach((f, i) => {
       if (!this.rank.has(f)) this.rank.set(f, i + 1);
     });
   }

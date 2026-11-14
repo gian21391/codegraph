@@ -45,14 +45,9 @@ import * as path from 'path';
 import type { QueryBuilder } from '../db/queries';
 import { MATLAB_BUILTINS, addMatlabReachableNames } from '../extraction/languages/matlab-builtins';
 import { isJavaImport } from '../extraction/languages/matlab-java';
-import type { NodeFilter } from '../db/queries';
-import { MATLAB_VALUE_KINDS, matlabMemberCall, matlabNameKeys } from './matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_NODES, matlabMemberCall, matlabNameKeys } from './matlab-failures';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 
-/** The MATLAB nodes that carry a member's name for a call written with arguments. */
-export const MATLAB_NODES: NodeFilter = { language: 'matlab' };
-/** The MATLAB nodes that carry a member's name for one written without: the callable ones. */
-export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS };
 
 /** What a sync changed of the project's symbols and files, as the extraction step of a sync knows it. */
 export interface MatlabCarrierInput {
@@ -248,7 +243,7 @@ export function matlabFilesNaming(
   projectRoot: string,
   names: readonly string[],
   skip: ReadonlySet<string>,
-  members: readonly string[] = [],
+  members: readonly string[],
 ): Array<{ filePath: string; content: string }> {
   if (names.length === 0 && members.length === 0) return [];
   const scan = matlabNameScan(new Set(names), new Set(members));

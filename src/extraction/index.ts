@@ -37,9 +37,8 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
+import { MATLAB_CALLABLE_NODES, MATLAB_NODES } from '../resolution/matlab-failures';
 import {
-  MATLAB_CALLABLE_NODES,
-  MATLAB_NODES,
   applyMatlabCarrierRows,
   matlabCarrierChanges,
   matlabFilesNaming,

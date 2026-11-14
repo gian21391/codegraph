@@ -3760,7 +3760,7 @@ export class ToolHandler {
             // Synthesized links alone, which have a wiring site: not a resolved
             // call its resolver marked a guess (MATLAB's receiver named after
             // its class), which has neither and reads as the call it is.
-            if (edge.provenance !== 'heuristic' || !isSynthesizedEdge(edge)) continue;
+            if (!isSynthesizedEdge(edge)) continue;
             const otherId = edge.source === n.id ? edge.target : edge.source;
             const key = `${edge.source}>${edge.target}`;
             if (otherId === n.id || seen.has(key)) continue;

@@ -345,7 +345,7 @@ export function resolveNamedTokens(
   // A MATLAB project's search path picks one of a name's copies: the others,
   // off the path, are no flow's hop; with none on it, the first is, as
   // codegraph_explore shows it (see ./matlab-search-path).
-  const matlabPath = typeof cg.getMatlabSearchPath === 'function' ? cg.getMatlabSearchPath() : null;
+  const matlabPath = cg.getMatlabSearchPath();
   for (const t of tokens) {
     const found = findAllSymbols(cg, t).nodes;
     const hits = matlabPath ? keepMatlabCopies(found, matlabCopiesOf(matlabPath, t, found), 1) : found;

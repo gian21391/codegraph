@@ -48,6 +48,7 @@
  * no longer keeps (see ./matlab-builtin-carriers).
  */
 
+import type { NodeFilter, QueryBuilder } from '../db/queries';
 import type { UnresolvedRef } from './types';
 import { MATLAB_BUILTINS, callsByName } from '../extraction/languages/matlab-builtins';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
@@ -98,6 +99,11 @@ function isDottedMatlabName(name: string): boolean {
  * these kinds written without an argument list is read, never called.
  */
 export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'enum_member', 'field'];
+
+/** The MATLAB nodes that carry a member's name for a call written with arguments. */
+export const MATLAB_NODES: NodeFilter = { language: 'matlab' };
+/** The MATLAB nodes that carry a member's name for one written without: the callable ones. */
+export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS };
 
 /**
  * A MATLAB member or qualified call, the rule's subject (see the top of this
@@ -157,22 +163,14 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
 }
 
 /**
- * Which of a list of names MATLAB's symbols carry: any of them, or a
- * callable one (no property, constant, enumeration member or field).
- */
-export interface MatlabCarriers {
-  any(names: string[]): ReadonlySet<string>;
-  callable(names: string[]): ReadonlySet<string>;
-}
-
-/**
  * The failures among `failures` to delete (see the top of this file): a
  * member call's wherever it is (one with the `computed` fact never), any
  * other only when fresh. Whether a symbol carries a name is asked of
  * `known`, the names every node carries (read when the pass began, after its
  * definitions were stored), or, when the pass has none (its caches dropped
- * since), of `carriedAmong`, which asks the index; a member's carriers, of
- * `members`, which asks it of MATLAB's symbols alone.
+ * since), of the index; a member's carriers, of MATLAB's symbols alone
+ * (MATLAB_NODES for a call with arguments, MATLAB_CALLABLE_NODES for one
+ * without).
  *
  * A built-in's name that a project symbol carries is kept too, with a MATLAB
  * search path in force or not: the call failed because of where the
@@ -185,8 +183,7 @@ export function unanswerableMatlabFailures(
   failures: readonly UnresolvedRef[],
   fresh: MatlabFreshReferences | undefined,
   known: ReadonlySet<string> | null,
-  carriedAmong: (names: string[]) => ReadonlySet<string>,
-  members: MatlabCarriers,
+  queries: QueryBuilder,
 ): Set<UnresolvedRef> {
   const discarded = new Set<UnresolvedRef>();
   const pending: Array<{ ref: UnresolvedRef; keys: string[]; builtin: boolean }> = [];
@@ -212,15 +209,15 @@ export function unanswerableMatlabFailures(
       if (keys) pending.push({ ref, keys, builtin: false });
     }
   }
-  const dropUncarried = (list: Array<{ ref: UnresolvedRef; keys: string[] }>, carried: (names: string[]) => ReadonlySet<string>): void => {
+  const dropUncarried = (list: Array<{ ref: UnresolvedRef; keys: string[] }>, filter: NodeFilter): void => {
     if (list.length === 0) return;
-    const found = carried(list.flatMap((p) => p.keys));
+    const found = queries.getNodeNamesAmong(list.flatMap((p) => p.keys), filter);
     for (const { ref, keys } of list) if (!keys.some((k) => found.has(k))) discarded.add(ref);
   };
-  dropUncarried(bareMembers, (names) => members.callable(names));
-  dropUncarried(calledMembers, (names) => members.any(names));
+  dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
+  dropUncarried(calledMembers, MATLAB_NODES);
   if (pending.length === 0) return discarded;
-  const carried = known ?? carriedAmong(pending.flatMap((p) => p.keys));
+  const carried = known ?? queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
   for (const { ref, keys, builtin } of pending) {
     if (keys.some((k) => carried.has(k))) continue;
     const facts = matlabRefFacts(ref);
@@ -240,7 +237,6 @@ export function splitDiscarded(
   failures: readonly UnresolvedRef[],
   discarded: ReadonlySet<UnresolvedRef>,
 ): { kept: UnresolvedRef[]; deleted: UnresolvedRef[] } {
-  if (discarded.size === 0) return { kept: [...failures], deleted: [] };
   const keyOf = (ref: UnresolvedRef): string => `${ref.fromNodeId}\0${ref.referenceName}\0${ref.referenceKind}`;
   const keptKeys = new Set<string>();
   for (const ref of failures) if (!discarded.has(ref)) keptKeys.add(keyOf(ref));

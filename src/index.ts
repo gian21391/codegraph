@@ -2345,8 +2345,9 @@ export class CodeGraph {
 
   /**
    * The MATLAB search path the project's startup code sets, as the last index
-   * or sync worked it out (see graph/matlab-search-path): the folders in
-   * order, the current folder and the notes. Null when no path is in force.
+   * or sync worked it out (see graph/matlab-search-path), as the ranks and
+   * visibility lookups read it; the record itself, notes included, is
+   * getMatlabPathRecord's. Null when no path is in force.
    */
   getMatlabSearchPath(): MatlabSearchPath | null {
     return MatlabSearchPath.of(this.getMatlabPathRecord());
