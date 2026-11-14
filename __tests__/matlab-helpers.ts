@@ -113,3 +113,72 @@ export async function indexOfProject(files: Record<string, string>): Promise<{ e
 export async function edgesOfProject(files: Record<string, string>): Promise<string[]> {
   return (await indexOfProject(files)).edges;
 }
+
+/** One step of {@link syncedAndFreshEachStep}: the synced and fresh edges and unresolved rows. */
+export interface SyncedStep {
+  synced: string[];
+  fresh: string[];
+  syncedRows: string[];
+  freshRows: string[];
+}
+
+/**
+ * Indexes `initial`, applies each step with a sync, and indexes each step's
+ * files afresh beside it: per step, the synced and fresh edges and unresolved
+ * rows, for a test that every step of a sequence ends where a fresh index
+ * does.
+ */
+export async function syncedAndFreshEachStep(
+  initial: Record<string, string>,
+  ...steps: Array<Record<string, string | null>>
+): Promise<SyncedStep[]> {
+  return (await syncSteps(initial, steps)).steps;
+}
+
+/**
+ * {@link syncedAndFreshEachStep}, read at the end: the edges after the first
+ * index and after each step, and the synced and fresh edges and unresolved
+ * rows of the last step.
+ */
+export async function syncedAndFresh(
+  initial: Record<string, string>,
+  ...steps: Array<Record<string, string | null>>
+): Promise<{ steps: string[][]; synced: string[]; fresh: string[]; syncedRows: string[]; freshRows: string[] }> {
+  const run = await syncSteps(initial, steps);
+  const last = run.steps[run.steps.length - 1]!;
+  return { steps: [run.initial, ...run.steps.map((s) => s.synced)], ...last };
+}
+
+async function syncSteps(initial: Record<string, string>, steps: Array<Record<string, string | null>>): Promise<{ initial: string[]; steps: SyncedStep[] }> {
+  const root = tempDir('cg-matlab-sync-');
+  const current: Record<string, string | null> = { ...initial };
+  writeTree(root, initial);
+  const cg = await CodeGraph.init(root, { index: true });
+  const out: SyncedStep[] = [];
+  try {
+    const first = allEdges(cg);
+    for (const step of steps) {
+      writeTree(root, step);
+      Object.assign(current, step);
+      await cg.sync();
+      const freshRoot = tempDir('cg-matlab-fresh-');
+      try {
+        writeTree(freshRoot, Object.fromEntries(Object.entries(current).filter(([, c]) => c !== null)));
+        const fresh = await CodeGraph.init(freshRoot, { index: true });
+        let freshEdges: string[];
+        try {
+          freshEdges = allEdges(fresh);
+        } finally {
+          fresh.close();
+        }
+        out.push({ synced: allEdges(cg), fresh: freshEdges, syncedRows: unresolvedRows(root), freshRows: unresolvedRows(freshRoot) });
+      } finally {
+        fs.rmSync(freshRoot, { recursive: true, force: true });
+      }
+    }
+    return { initial: first, steps: out };
+  } finally {
+    cg.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}

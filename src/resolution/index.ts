@@ -67,7 +67,7 @@ import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
 import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
 import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
-import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
+import { MATLAB_VALUE_KINDS, splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
 import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { MATLAB_PATH_METADATA_KEY, MATLAB_PATH_PENDING_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from '../graph/matlab-search-path';
@@ -2194,6 +2194,7 @@ export class ReferenceResolver {
         kind,
         line: ref.original.line,
         column: ref.original.column,
+        ...(ref.provenance ? { provenance: ref.provenance } : {}),
         metadata: {
           ...(t.metadata ?? {}),
           confidence: ref.confidence,
@@ -2305,7 +2306,16 @@ export class ReferenceResolver {
     kept: UnresolvedRef[];
     deleted: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> };
   } {
-    const discarded = unanswerableMatlabFailures(failures, matlabFresh, this.knownNames, (names) => this.queries.getNodeNamesAmong(names));
+    const discarded = unanswerableMatlabFailures(
+      failures,
+      matlabFresh,
+      this.knownNames,
+      (names) => this.queries.getNodeNamesAmong(names),
+      {
+        any: (names) => this.queries.getNodeNamesAmong(names, { language: 'matlab' }),
+        callable: (names) => this.queries.getNodeNamesAmong(names, { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS }),
+      },
+    );
     if (discarded.size === 0) return { kept: failures, deleted: { rowIds: [], legacyKeys: [] } };
     const { kept, deleted } = splitDiscarded(failures, discarded);
     const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(deleted);

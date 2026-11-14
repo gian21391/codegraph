@@ -45,7 +45,12 @@
  * `classdef X < A & B` signature. A method on a variable of no stated class
  * (`robot.accel(…)` on a parameter) resolves only when one class defines it,
  * or one class and subclasses of it that override it, and no property shares
- * its name. A local function of ANOTHER file is never
+ * its name — or, when several unrelated classes define it, the one a
+ * capitalised parameter the function never writes to is named after,
+ * ignoring case (`Problem.Evaluation(x)` in `main(Algorithm, Problem)` →
+ * `PROBLEM`'s; never a lower-case `model`, a struct far more often).
+ * A member written without parentheses on such a variable is a struct's
+ * field, never a method. A local function of ANOTHER file is never
  * reachable — that is what made the generic name matcher unsafe here: every
  * MATLAB project has a dozen local `parseInputs` / `helper`s.
  *
@@ -73,7 +78,7 @@ const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KIN
 const METHOD_KINDS: ReadonlySet<string> = new Set(['method']);
 
 /** `pkg::sub` for `pkg::sub::f`, `pkg::Cls` for its method `pkg::Cls::m`; '' for a top-level name. */
-function ownerOf(n: Node): string {
+export function ownerOf(n: Pick<Node, 'qualifiedName'>): string {
   const i = n.qualifiedName.lastIndexOf('::');
   return i < 0 ? '' : n.qualifiedName.slice(0, i);
 }
@@ -88,6 +93,12 @@ function privateInReach(candidate: Node, callerFile: string): boolean {
   if (!/(?:^|\/)private$/.test(dir)) return true;
   const callerDir = dirOf(callerFile);
   return callerDir === dir || callerDir === dirOf(dir);
+}
+
+/** Whether a method is its class's constructor (`pkg::Cls::Cls`). */
+export function isConstructor(n: Pick<Node, 'name' | 'qualifiedName'>): boolean {
+  const owner = ownerOf(n);
+  return owner === n.name || owner.endsWith(`::${n.name}`);
 }
 
 /** Whether a node sits in a class folder (`…/@Cls/x.m`). */
@@ -338,7 +349,7 @@ function resolveType(written: string, caller: Pick<Caller, 'file' | 'imports'>, 
  * ReferenceResolver.clearCaches).
  */
 const SUPERCLASSES = new WeakMap<ResolutionContext, Map<string, Node[]>>();
-const VARIABLE_METHODS = new WeakMap<ResolutionContext, Map<string, Node | null>>();
+const VARIABLE_METHODS = new WeakMap<ResolutionContext, Map<string, VariableMethods>>();
 
 /** Drop the memos above (see ReferenceResolver.clearCaches). */
 export function clearMatlabLookupMemos(context: ResolutionContext): void {
@@ -611,46 +622,84 @@ export function isMatlabPathScript(filePath: string, context: ResolutionContext)
  * `v` holds that class or one of its subclasses: the call is that class's
  * method, overridden or not.
  */
-function resolveVariableMethod(name: string, callerFile: string, context: ResolutionContext): Node | undefined {
-  const member = name.slice(name.lastIndexOf('.') + 1);
+function resolveVariableMethod(name: string, callerFile: string, context: ResolutionContext, param = false): VariableMethod | undefined {
+  const dot = name.lastIndexOf('.');
+  const member = name.slice(dot + 1);
   // The answer depends on the caller only through its folder (see nearest).
   const key = `${member}\0${dirOf(callerFile)}`;
   let memo = VARIABLE_METHODS.get(context);
   if (!memo) VARIABLE_METHODS.set(context, (memo = new Map()));
   let hit = memo.get(key);
-  if (hit === undefined) memo.set(key, (hit = variableMethod(member, callerFile, context) ?? null));
-  return hit ?? undefined;
+  if (hit === undefined) memo.set(key, (hit = variableMethod(member, callerFile, context)));
+  if (hit.method) return { method: hit.method };
+  if (!param || hit.roots.length < 2) return undefined;
+  // `Problem.Evaluation(x)` in `main(Algorithm, Problem)`: of the classes at
+  // the top of the method's hierarchies, the one the parameter is named after.
+  // Capitalised, as a class's name is: a lower-case `model` beside a class
+  // `Model` is far more often a struct (MATLAB variables are lower-case).
+  const written = name.slice(0, dot);
+  if (!/^[A-Z]/.test(written)) return undefined;
+  const receiver = written.toLowerCase();
+  const named = hit.roots.filter((m) => {
+    const owner = ownerOf(m);
+    return owner.slice(owner.lastIndexOf(':') + 1).toLowerCase() === receiver;
+  });
+  return named.length === 1 ? { method: named[0]!, byReceiverName: true } : undefined;
 }
 
-function variableMethod(member: string, callerFile: string, context: ResolutionContext): Node | undefined {
+/** What a `v.m()` on a variable of no stated class resolves to (see resolveVariableMethod). */
+interface VariableMethod {
+  method: Node;
+  /** Picked from several hierarchies' roots by the parameter's name (the edge says so: `via: 'receiver-name'`). */
+  byReceiverName?: boolean;
+}
+
+/**
+ * A member's answer for a `v.m()`, per member and calling folder: the method
+ * when one class, or one hierarchy, defines it; else the roots' methods, one
+ * per class that inherits it from none of the others (none when a property
+ * shares the name, or a copy is not seen from the caller).
+ */
+interface VariableMethods {
+  method: Node | null;
+  roots: Node[];
+}
+
+const NO_VARIABLE_METHODS: VariableMethods = { method: null, roots: [] };
+
+function variableMethod(member: string, callerFile: string, context: ResolutionContext): VariableMethods {
   const named = matlab(context.getNodesByName(member));
-  if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return undefined;
-  const all = named.filter((n) => n.kind === 'method');
+  if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return NO_VARIABLE_METHODS;
+  // A constructor (`Astar::Astar`) is called through its class, never on an object.
+  const all = named.filter((n) => n.kind === 'method' && !isConstructor(n));
   // A class-folder method's `Static` is on its classdef's declaration.
   const statics = new Set(all.filter((n) => n.isStatic).map((n) => n.qualifiedName));
   // With a search path, a caller it runs sees only the classes on it.
   const methods = seenFrom(preferBodies(all.filter((n) => !statics.has(n.qualifiedName))), callerFile, context);
   const classes = new Set(methods.map(ownerOf));
-  if (classes.size === 0) return undefined;
+  if (classes.size === 0) return NO_VARIABLE_METHODS;
   // Of each class's copies, the one MATLAB would see from the caller.
   const chosen = new Map<string, Node>();
   for (const owner of classes) {
     const copy = choose(methods.filter((n) => ownerOf(n) === owner), callerFile, context);
-    if (!copy) return undefined;
+    if (!copy) return NO_VARIABLE_METHODS;
     chosen.set(owner, copy);
   }
-  if (chosen.size === 1) return [...chosen.values()][0];
-  const root = commonRoot(chosen, context);
-  return root === undefined ? undefined : chosen.get(root);
+  if (chosen.size === 1) return { method: [...chosen.values()][0]!, roots: [] };
+  const roots = hierarchyRoots(chosen, context);
+  if (roots === undefined) return NO_VARIABLE_METHODS;
+  if (roots.length === 1) return { method: chosen.get(roots[0]!)!, roots: [] };
+  return { method: null, roots: roots.map((r) => chosen.get(r)!) };
 }
 
 /**
- * Of the classes whose methods `chosen` holds (by class), the one every other
- * one inherits from, or undefined when there is no single such class. Each
- * class's superclasses are read from the copy of it its method is in, so a
- * copy elsewhere is not taken for it.
+ * Of the classes whose methods `chosen` holds (by class), the ones that
+ * inherit from none of the others: one when every other one inherits from
+ * it. Undefined when a class is not found. Each class's superclasses are
+ * read from the copy of it its method is in, so a copy elsewhere is not taken
+ * for it.
  */
-function commonRoot(chosen: ReadonlyMap<string, Node>, context: ResolutionContext): string | undefined {
+function hierarchyRoots(chosen: ReadonlyMap<string, Node>, context: ResolutionContext): string[] | undefined {
   const ancestry = new Map<string, Set<string>>();
   for (const [owner, method] of chosen) {
     const cls = byQualifiedName(owner, method.filePath, context, TYPE_KINDS);
@@ -664,8 +713,18 @@ function commonRoot(chosen: ReadonlyMap<string, Node>, context: ResolutionContex
     walk(cls);
     ancestry.set(owner, seen);
   }
-  const roots = [...ancestry.keys()].filter((r) => [...ancestry.values()].every((a) => a.has(r)));
-  return roots.length === 1 ? roots[0] : undefined;
+  const common = [...ancestry.keys()].filter((r) => [...ancestry.values()].every((a) => a.has(r)));
+  if (common.length === 1) return common;
+  return [...ancestry.keys()].filter((r) => [...ancestry.keys()].every((o) => o === r || !ancestry.get(r)!.has(o)));
+}
+
+/**
+ * Whether `cls` is an old-style class: an `@Cls` folder whose `Cls.m` is a
+ * constructor function (`class(s, 'Cls')`), not a `classdef`. Its object is
+ * a struct: `obj.f` reads a field of it, never a method.
+ */
+function isOldStyleClass(cls: Node | undefined): boolean {
+  return cls !== undefined && cls.kind === 'class' && !(cls.signature ?? '').startsWith('classdef');
 }
 
 export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
@@ -677,6 +736,8 @@ export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionCont
     targetNodeId: target.id,
     confidence: via.includes('.') && !via.includes('::') ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
     resolvedBy: ref.referenceKind === 'function_ref' ? 'function-ref' : via.includes('::') ? 'qualified-name' : 'exact-match',
+    // A guess from the parameter's name: marked one (see ../graph/synthesized-hop).
+    ...(found.byReceiverName ? { metadata: { via: 'receiver-name' }, provenance: 'heuristic' as const } : {}),
   };
 }
 
@@ -684,10 +745,17 @@ export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionCont
 interface Found {
   target: Node;
   via: string;
+  /** A `v.m()` whose class the parameter's name gave (see resolveVariableMethod). */
+  byReceiverName?: boolean;
 }
 
 function foundBy(target: Node | undefined, via: string): Found | null {
   return target ? { target, via } : null;
+}
+
+function foundByVariable(found: VariableMethod | undefined, via: string): Found | null {
+  if (!found) return null;
+  return { target: found.method, via, ...(found.byReceiverName ? { byReceiverName: true } : {}) };
 }
 
 function matlabTarget(ref: UnresolvedRef, context: ResolutionContext): Found | null {
@@ -721,11 +789,20 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
   let caller: Caller | undefined;
   const callerHere = (): Caller => (caller ??= callerOf(ref, context));
   if (!name.includes('::')) {
-    if (name.includes('.')) return foundBy(resolveVariableMethod(name, ref.filePath, context), name);
+    if (name.includes('.')) {
+      // A member written without an argument list on a variable of no stated
+      // class is a struct's field (`data.fsample`): the extractor emits none,
+      // and none is linked.
+      if (facts.form === 'bare') return null;
+      return foundByVariable(resolveVariableMethod(name, ref.filePath, context, facts.param === true), name);
+    }
     // A statement runs a script: a call written as one, or a callback given as text that is one (`'Callback', 'refresh_plots'`).
     return foundBy(resolveBare(name, callerHere(), context, undefined, facts.form === 'statement'), name);
   }
   const owner = name.slice(0, name.lastIndexOf('::'));
+  // `this.path` on an old-style class's object is a field of its struct, not
+  // its `path` method (inside the class's methods, always).
+  if (facts.form === 'bare' && isOldStyleClass(resolveType(owner, callerHere(), context))) return null;
   if (facts.variable !== undefined) {
     // `aa.getData()` after `aa = Archive;`: `Archive::getData`, unless the bare
     // name is a function of the project's and no class (`G = GetCfg;` calls
@@ -734,7 +811,7 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
     // stays a class: `r = SE2;` makes an object of a toolbox's class, whose
     // methods are none of the project's.
     if (!resolveType(owner, callerHere(), context) && resolveBare(owner, callerHere(), context)?.kind === 'function') {
-      return foundBy(resolveVariableMethod(facts.variable, ref.filePath, context), facts.variable);
+      return facts.form === 'bare' ? null : foundByVariable(resolveVariableMethod(facts.variable, ref.filePath, context), facts.variable);
     }
     return foundBy(resolveQualified(name, callerHere(), context), name);
   }

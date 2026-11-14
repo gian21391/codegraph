@@ -56,7 +56,7 @@ import { clamp, validatePathWithinRoot, validateProjectPath, isConfigLeafNode, C
 import { guardLabel, guardsForFileSync, siteKey, supportsBranchGuards, warmBranchGuardGrammars } from '../graph/branch-guards';
 import { findDynamicBoundaries, type BoundarySite } from '../graph/dynamic-boundary-report';
 import { countImplementers } from '../graph/type-hierarchy';
-import { describeSynthesizedHop } from '../graph/synthesized-hop';
+import { describeSynthesizedHop, isSynthesizedEdge } from '../graph/synthesized-hop';
 import { callSiteLines, formatCallSiteLines } from '../graph/call-sites';
 import { DEFAULT_IMPACT_MAX_EDGES, DEFAULT_IMPACT_MAX_NODES, type CallSiteRow } from '../graph/traversal';
 import { isCopybookInclude, MAX_COPYBOOK_INCLUDES, type NamedCopybook } from '../graph/cobol-copybooks';
@@ -3687,8 +3687,8 @@ export class ToolHandler {
    * for an ordinary static edge. The wording is `graph/synthesized-hop.ts`'s,
    * shared with ContextBuilder's call paths.
    */
-  private synthEdgeNote(edge: Edge | null): string | null {
-    const hop = describeSynthesizedHop(edge);
+  private synthEdgeNote(edge: Edge | null, of?: number): string | null {
+    const hop = describeSynthesizedHop(edge, { of });
     if (!hop) return null;
     return `dynamic: ${hop.summary}${hop.registeredAt ? ` @${hop.registeredAt}` : ''}`;
   }
@@ -3757,7 +3757,10 @@ export class ToolHandler {
           // RAW edges for the same reason as `hasHeuristicEdge` in named-symbol-flow
           // — a static edge over the same pair hides the synthesized one from getCallers.
           for (const edge of [...cg.getIncomingEdges(n.id), ...cg.getOutgoingEdges(n.id)]) {
-            if (edge.provenance !== 'heuristic') continue;
+            // Synthesized links alone, which have a wiring site: not a resolved
+            // call its resolver marked a guess (MATLAB's receiver named after
+            // its class), which has neither and reads as the call it is.
+            if (edge.provenance !== 'heuristic' || !isSynthesizedEdge(edge)) continue;
             const otherId = edge.source === n.id ? edge.target : edge.source;
             const key = `${edge.source}>${edge.target}`;
             if (otherId === n.id || seen.has(key)) continue;
@@ -3798,13 +3801,17 @@ export class ToolHandler {
           shown.add(edge.source === prev.id ? linkLine(edge, prev, node) : linkLine(edge, node, prev));
         }
         const synthLines: string[] = [];
+        // The links past the cap are counted, so a base method's six shown
+        // overrides do not read as its only six.
+        let more = 0;
         for (const { edge, src, tgt } of links) {
-          if (synthLines.length >= MAX_SYNTH_LINKS) break;
           const line = linkLine(edge, src, tgt);
           if (shown.has(line)) continue;
           shown.add(line);
-          synthLines.push(line);
+          if (synthLines.length < MAX_SYNTH_LINKS) synthLines.push(line);
+          else more++;
         }
+        if (more > 0) synthLines.push(`- … +${more} more (${synthLines.length + more} links in all)`);
         return synthLines;
       };
       /**
@@ -3934,7 +3941,7 @@ export class ToolHandler {
           const step = best![i]!;
           if (step.edge) {
             const when = i > 0 ? this.whenLabel(cg, best![i - 1]!.node, step.edge) : '';
-            out.push(`   ↓ ${this.synthEdgeNote(step.edge) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
+            out.push(`   ↓ ${this.synthEdgeNote(step.edge, step.of) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
           }
           out.push(`${i + 1}. ${step.node.name} (${step.node.filePath}:${step.node.startLine})`);
         }

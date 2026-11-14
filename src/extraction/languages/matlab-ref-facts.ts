@@ -14,7 +14,11 @@
  *     (`aa = Archive; aa.getData()` → `Archive::getData`): the variable's own
  *     dotted name, taken when that bare name is a function, not a class;
  *   - `bare` — a bare name written without an argument list: read as a value
- *     (`t = cfg;`, `if isReady`) or a command (`hold on`);
+ *     (`t = cfg;`, `if isReady`) or a command (`hold on`); or a member written
+ *     without one (`m.reset;`, `x = Model.make;`), on the method's own object,
+ *     a variable the function says holds a class, or a class or package
+ *     name: a call of a method, or a read of a property, which only the
+ *     resolver can tell apart;
  *   - `statement` — a bare name that is a statement of its own
  *     (`setup_paths`, `if ok, setup_paths, end`, `catch⏎ cleanupAll`), or
  *     the script a `run` statement names (`run setup_paths`,
@@ -27,6 +31,22 @@
  *     `evalin` runs), whose variables the index cannot see: resolved like
  *     any other, and dropped when nothing answers it (see
  *     ../../resolution/matlab-failures.ts).
+ *   - `self` — a member call on the method's own object (`obj.step()`,
+ *     `veh.deriv(t, y)`), recorded as `Cls::m`: one whose class neither
+ *     defines nor inherits `m` runs a subclass's (see
+ *     ../../resolution/matlab-override-synthesizer.ts);
+ *   - `param` — a member call on a parameter of the calling function that the
+ *     function never writes to, nor into a field of (`Problem.Evaluation(x)`
+ *     in `main(Algorithm, Problem)`): a receiver named like one of the classes
+ *     defining the method holds that class's object (see variableMethod in
+ *     ../../resolution/matlab-lookup.ts);
+ *   - `computed` — a member or qualified name (`pkg::scale`, `Model::make`)
+ *     that the value interpreter built from anything but one literal written
+ *     where it is given: `feval(strcat('pkg.', 'scale'), x)`, `a =
+ *     lower('PKG.SHIFT'); feval(a)`, `eval(['x = Model.' 'make(r);'])`, a
+ *     handle `str2func` made of a built text. No text spells the name, so its
+ *     row is kept whatever carries the member (see
+ *     ../../resolution/matlab-failures.ts);
  *   - `args:<json>` — what a call written with arguments (`dacefit(S, Y,
  *     'regpoly0')`, `gui('LoadLattice', h)` in callback code) passes, where
  *     the code says (see MatlabCallArgs): read by nothing in resolution, it
@@ -86,6 +106,9 @@ export interface MatlabRefFacts {
   variable?: string;
   form?: 'bare' | 'statement';
   runtime?: boolean;
+  self?: boolean;
+  param?: boolean;
+  computed?: boolean;
   args?: MatlabCallArgs;
 }
 
@@ -95,6 +118,12 @@ const VARIABLE = 'variable:';
 const ARGS = 'args:';
 /** The `runtime` fact's tag. */
 export const RUNTIME_TAG = 'runtime';
+/** The `self` fact's tag. */
+const SELF_TAG = 'self';
+/** The `param` fact's tag. */
+const PARAM_TAG = 'param';
+/** The `computed` fact's tag. */
+export const COMPUTED_TAG = 'computed';
 
 /** `facts` as a reference's `candidates`, or undefined when there are none. */
 export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined {
@@ -103,6 +132,9 @@ export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined
   if (facts.variable) out.push(VARIABLE + facts.variable);
   if (facts.form) out.push(facts.form);
   if (facts.runtime) out.push(RUNTIME_TAG);
+  if (facts.self) out.push(SELF_TAG);
+  if (facts.param) out.push(PARAM_TAG);
+  if (facts.computed) out.push(COMPUTED_TAG);
   if (facts.args) out.push(ARGS + JSON.stringify(facts.args));
   return out.length > 0 ? out : undefined;
 }
@@ -150,6 +182,9 @@ export function matlabRefFacts(ref: { candidates?: readonly string[] }): MatlabR
     else if (c.startsWith(VARIABLE)) facts.variable = c.slice(VARIABLE.length);
     else if (c === 'bare' || c === 'statement') facts.form = c;
     else if (c === RUNTIME_TAG) facts.runtime = true;
+    else if (c === SELF_TAG) facts.self = true;
+    else if (c === PARAM_TAG) facts.param = true;
+    else if (c === COMPUTED_TAG) facts.computed = true;
     // `args` is resolution's to carry, not to read: see splitMatlabArgs.
   }
   return facts;

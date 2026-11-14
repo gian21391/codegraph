@@ -991,7 +991,10 @@ describe('MATLAB methods on a variable', () => {
       ].join('\n'),
     });
     expect(edges).toEqual([
+      // The overrides, from the base's (see matlab-dispatch.test.ts).
+      'PROBLEM.m PROBLEM::CalObj -calls-> ZDT1::CalObj @ ZDT1.m',
       'ZDT1.m ZDT1 -extends-> PROBLEM @ PROBLEM.m',
+      'ZDT1.m ZDT1::CalObj -calls-> ZDT2::CalObj @ ZDT2.m',
       'ZDT2.m ZDT2 -extends-> ZDT1 @ ZDT1.m',
       'run_alg.m run_alg -calls-> Archive::getData @ Archive.m',
       'run_alg.m run_alg -calls-> PROBLEM::CalObj @ PROBLEM.m',
@@ -1025,8 +1028,13 @@ describe('MATLAB methods on a variable, with copies of the classes', () => {
       'C/user4.m': 'function user4(c)\nc.go(1);\nend\n',
     });
     expect(edges.filter((e) => !e.includes('-extends->'))).toEqual([
+      // The overrides, from the base's (see matlab-dispatch.test.ts): each copy's own.
+      'C/P.m P::go -calls-> M::go @ C/M.m',
+      'C/Q.m Q::go -calls-> M::go @ C/M.m',
       'E/user3.m user3 -calls-> R::tick @ E/R.m',
+      'F1/Z.m Z::zz -calls-> Z1::zz @ F1/Z1.m',
       'F1/user1.m user1 -calls-> Z::zz @ F1/Z.m',
+      'F2/Z.m Z::zz -calls-> Z1::zz @ F2/Z1.m',
       'F2/user2.m user2 -calls-> Z::zz @ F2/Z.m',
     ]);
   });
@@ -1038,7 +1046,11 @@ describe('MATLAB methods on a variable, with copies of the classes', () => {
       'S2.m': cls('S2', 'Base', 'calc'),
       'user.m': 'function user(b)\ny = b.calc(1);\nend\n',
     });
-    expect(edges.filter((e) => !e.includes('-extends->'))).toEqual(['user.m user -calls-> Base::calc @ Base.m']);
+    expect(edges.filter((e) => !e.includes('-extends->'))).toEqual([
+      'Base.m Base::calc -calls-> S1::calc @ S1.m',
+      'Base.m Base::calc -calls-> S2::calc @ S2.m',
+      'user.m user -calls-> Base::calc @ Base.m',
+    ]);
   });
 
   it('reads `v = Name;` as a function\'s call when `Name` is a function of the project\'s: `v.m()` is then a call on a variable of no stated class', async () => {
@@ -1210,7 +1222,7 @@ describe('MATLAB unresolved rows', () => {
     }
   });
 
-  it('on a sync that adds a method to a class, links a member call written with arguments only in the files it re-indexes (accepted)', async () => {
+  it('on a sync that adds a method to a class, links a member call written with arguments in every file, as a full re-index does', async () => {
     const root = tempDir('cg-matlab-rows-member-');
     const caller = (name: string) => `function ${name}(a)\nr = a.recalib(2);\nend\n`;
     writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
@@ -1223,8 +1235,9 @@ describe('MATLAB unresolved rows', () => {
         'edited.m': caller('edited') + '% edited\n',
       });
       await cg.sync();
-      // The limitation: untouched.m's row went before Cal.m came, and nothing is left to retry.
-      expect(allEdges(cg)).toEqual(['edited.m edited -calls-> Cal::recalib @ Cal.m']);
+      // untouched.m's row went while nothing carried `recalib`; the sync that
+      // gives the name its first carrier extracts the files writing `.recalib` again.
+      expect(allEdges(cg)).toEqual(['edited.m edited -calls-> Cal::recalib @ Cal.m', 'untouched.m untouched -calls-> Cal::recalib @ Cal.m']);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });

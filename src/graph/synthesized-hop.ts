@@ -31,15 +31,44 @@ export interface SynthesizedHop {
   registeredAt?: string;
 }
 
+/** `, 1 of N` for a hop that is one of N alternatives (see SynthesizedHopOptions.of), else nothing. */
+function oneOf(of: number | undefined): string {
+  return of !== undefined && of > 1 ? `, 1 of ${of}` : '';
+}
+
+export interface SynthesizedHopOptions {
+  /**
+   * The hop is one of this many of its kind leaving the same symbol, to a
+   * target nobody asked for (see FlowStep.of in ./named-symbol-flow): said
+   * in the summary, so one override of hundreds does not read as the one.
+   */
+  of?: number;
+}
+
+/**
+ * Whether `edge` is a synthesized one (a synthesizer's, with its wiring
+ * site): heuristic and named by a synthesizer. A resolved call its resolver
+ * marked a guess (heuristic, no synthesizer) is not.
+ */
+export function isSynthesizedEdge(edge: Edge): boolean {
+  return edge.provenance === 'heuristic' && typeof (edge.metadata as Record<string, unknown> | undefined)?.synthesizedBy === 'string';
+}
+
 /**
  * Describe a synthesized (dynamic-dispatch) edge; null for an ordinary static
  * one. A synthesizer not named below still reads as dynamic dispatch, by its own
  * name and with its wiring site — never as a bare call or a borrowed label.
  */
-export function describeSynthesizedHop(edge: Edge | null | undefined): SynthesizedHop | null {
+export function describeSynthesizedHop(edge: Edge | null | undefined, opts: SynthesizedHopOptions = {}): SynthesizedHop | null {
   const m = edge?.provenance === 'heuristic' ? (edge.metadata as Record<string, unknown> | undefined) : undefined;
   const by = m?.synthesizedBy;
-  if (!m || typeof by !== 'string') return null;
+  if (!m) return null;
+  if (typeof by !== 'string') {
+    // A resolution edge its resolver marked a guess: MATLAB's `Problem.Evaluation(x)`
+    // on a parameter `Problem`, taken for the class `PROBLEM`.
+    if (m.via === 'receiver-name') return { summary: 'receiver named after its class', detail: '' };
+    return null;
+  }
   const registeredAt = typeof m.registeredAt === 'string' ? m.registeredAt : undefined;
   const hop = (summary: string, detail = ''): SynthesizedHop => ({ summary, detail, registeredAt });
   const quoted = (value: unknown, otherwise: string): string => (value ? `\`${String(value)}\`` : otherwise);
@@ -75,6 +104,14 @@ export function describeSynthesizedHop(edge: Edge | null | undefined): Synthesiz
       // Go: the implementing struct gets the method from a type it embeds.
       if (typeof m.promotedInto === 'string') return hop(`interface → method promoted into ${m.promotedInto}`);
       return hop('interface → impl');
+    case 'matlab-override':
+      // MATLAB: a base class's method → a subclass's override of it — one of
+      // `of` when the hop goes to an override the reader did not pick.
+      return hop(`base → override${oneOf(opts.of)}`);
+    case 'matlab-subclass-method':
+      // MATLAB: a call on the own object of a method only its subclasses
+      // define — one of `of` likewise.
+      return hop(`self call → subclass method${oneOf(opts.of)}`);
     case 'closure-collection':
       return hop(`runs ${quoted(m.field, 'a collection')} handlers`);
     case 'fn-pointer-dispatch':

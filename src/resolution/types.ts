@@ -56,6 +56,12 @@ export interface ResolvedRef {
   edgeKind?: EdgeKind;
   /** Extra metadata the strategy wants persisted on the edge (`href`, …). */
   metadata?: Record<string, unknown>;
+  /**
+   * `heuristic` for a guess the strategy says is one (a MATLAB receiver taken
+   * for the class it is named after): stored on the edge, which still carries
+   * its `refName` and is resurrected and rebound like any resolution edge.
+   */
+  provenance?: 'heuristic';
   /** Picked by a name-only strategy (the receiver's word, not its type). Not persisted. */
   byName?: boolean;
   /**

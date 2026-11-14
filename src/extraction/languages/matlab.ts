@@ -7,7 +7,7 @@ import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isOctave } from './matlab-syntax';
 import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
-import { MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
+import { COMPUTED_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
 import { GuardScope, type MatlabGuard } from './matlab-guards';
 import {
   HOLE,
@@ -88,7 +88,11 @@ import {
  *                 `c = Cls;`) they are `pkg::Cls::m`. On any other variable
  *                 `v.m()` is `v.m`, which the resolver links only to an
  *                 unambiguous method; a field the function fills in itself
- *                 emits nothing. How each was written (with arguments, bare,
+ *                 emits nothing. Written without parentheses (`m.reset;`,
+ *                 `s = Model.make;`) a member is a call too on the method's
+ *                 own object, a constructed variable, or a class or package
+ *                 name — never on another variable, where it is a struct's
+ *                 field. How each was written (with arguments, bare,
  *                 as a statement, the name a dispatched call was written
  *                 with) rides along: see matlab-ref-facts.ts. A built-in's
  *                 name is recorded like any other: whether a project function
@@ -374,6 +378,8 @@ interface Frame {
   site?: string;
   /** Its parameters passed on unchanged wherever read (see forwardable). */
   forwards?: ReadonlySet<string>;
+  /** Its parameters it never writes to, nor into (see isUntouchedParameter). */
+  untouchedParams?: ReadonlySet<string>;
   /** Its definition, which the conditions of its sinks and calls are read from (see guardScope). */
   def?: SyntaxNode;
   /** Those conditions, read when first asked for (see guardScope). */
@@ -839,7 +845,7 @@ function addRef(
 function memberRef(path: string[], member: string): MemberRef | null {
   const f = frame();
   const head = path[0]!;
-  if (f.self && head === f.self.name) return path.length === 1 ? { name: `${f.self.cls}::${member}` } : null;
+  if (f.self && head === f.self.name) return path.length === 1 ? { name: `${f.self.cls}::${member}`, self: true } : null;
   if (isLocal(f, head)) {
     if (path.length !== 1) return null;
     const hint = classHintOf(f, head);
@@ -848,10 +854,27 @@ function memberRef(path: string[], member: string): MemberRef | null {
       if (isJavaClass(hint.cls)) return null;
       return { name: `${hint.cls}::${member}`, ...(hint.bare && !field ? { variable: `${head}.${member}` } : {}) };
     }
-    return field ? null : { name: `${head}.${member}` };
+    if (field) return null;
+    return { name: `${head}.${member}`, ...(isUntouchedParameter(f, head) ? { param: true } : {}) };
   }
   if (isJavaHead(head)) return null;
   return { name: [...path, member].join('::') };
+}
+
+/**
+ * Whether `v`, where frame `f` reads it, is a parameter of the function the
+ * code is in that the function never writes to: not assigned, not indexed or
+ * field-assigned into (`problem.x = 1` makes it a struct the function fills
+ * in), and no lambda parameter hiding it. A nested function's parameters are
+ * variables of the workspace it shares, which is never asked here.
+ */
+function isUntouchedParameter(f: Frame, v: string): boolean {
+  let g = f;
+  while (g.kind === 'lambda' || g.kind === 'eval') {
+    if (g.locals.has(v) || !g.parent) return false;
+    g = g.parent;
+  }
+  return g.kind === 'function' && g.untouchedParams?.has(v) === true;
 }
 
 /**
@@ -862,6 +885,10 @@ function memberRef(path: string[], member: string): MemberRef | null {
 interface MemberRef {
   name: string;
   variable?: string;
+  /** On the method's own object (the `self` fact). */
+  self?: boolean;
+  /** On a parameter the function never writes to (the `param` fact). */
+  param?: boolean;
 }
 
 /**
@@ -870,7 +897,7 @@ interface MemberRef {
  * (`obj.get().run()`) act on a returned value with no static type — silent,
  * and so is a first call that can only be indexing (`s.data(end)`, `obj.c{k}`).
  */
-function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: SyntaxNode }) | null {
+function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: SyntaxNode; bare?: true }) | null {
   const object = getChildByField(node, 'object');
   if (object?.type !== 'identifier') return null;
   const path = [getNodeText(object, source)];
@@ -887,7 +914,45 @@ function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: Syn
     const ref = memberRef(path, getNodeText(callee, source));
     return ref ? { ...ref, at: f } : null;
   }
-  return null;
+  return path.length === 2 ? bareMemberRef(node, path[0]!, path[1]!) : null;
+}
+
+/**
+ * `m.reset;`, `x = m.compute;`, `s = Model.make;`, `v = pkg.pf;`: a member
+ * written without an argument list, which MATLAB calls when it is a method
+ * (or a package's function) and reads when it is a property, a constant or an
+ * enumeration member — which only the resolver can tell, so the reference
+ * carries the `bare` fact (a read gets no edge, and its row stays only while
+ * a callable symbol carries the name: see ../../resolution/matlab-failures).
+ * Only where the head says whose member it is: the
+ * method's own object, a variable the function says holds a class, or a name
+ * that is no variable (a class or a package). On any other variable it is a
+ * struct's field far more often than a method of one class (`data.fsample`):
+ * nothing. Nor deeper (`obj.p.m`, a property's value), nor in a statement the
+ * parser could not read whole (text that is no code: `hs_err_pid30205.log`
+ * in a listing pasted into a file).
+ */
+function bareMemberRef(node: SyntaxNode, head: string, member: string): (MemberRef & { at: SyntaxNode; bare: true }) | null {
+  if (inUnreadStatement(node)) return null;
+  const f = frame();
+  const own = f.self !== null && head === f.self.name;
+  if (!own && isLocal(f, head) && !classHintOf(f, head)) return null;
+  // `gcf.Position`: a property of what a built-in returns.
+  if (!own && !isLocal(f, head) && MATLAB_BUILTINS.has(head)) return null;
+  const ref = memberRef([head], member);
+  if (!ref || ref.name.includes('.')) return null;
+  return { ...ref, at: node, bare: true };
+}
+
+/** Whether `node` is in a command's arguments, or in a statement whose parse has an error in it. */
+function inUnreadStatement(node: SyntaxNode): boolean {
+  for (let n: SyntaxNode | null = node; n; n = n.parent) {
+    if (n.type === 'command' || n.type === 'ERROR') return true;
+    const p = n.parent?.type;
+    if (p === 'block' || p === 'source_file') return n.hasError;
+    if (n.type === 'function_definition' || n.type === 'class_definition') return false;
+  }
+  return false;
 }
 
 /** `@f` / `@pkg.f` / `@obj.m` (`@(x) …` is a lambda node, not this). */
@@ -1182,32 +1247,58 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
     const arg = args[index]!;
     if (sinkCollector) collectParamSink(arg, name, kind, args, index, isStatement(node), source);
     const v = valueAt(arg, source);
+    const computed = !writtenAsLiteral(arg);
     switch (kind) {
       case 'feval':
-        handleCalls(v.fns, v.strs, arg, args[1], ctx);
+        handleCalls(v.fns, v.strs, arg, args[1], ctx, computed);
         break;
       case 'function':
         // A handle written with `@` is referenced there.
         for (const text of v.strs) {
           if (!NAME_SHAPED.test(text) || (name === 'cellfun' && MATLAB_CELLFUN_NAMES.has(text))) continue;
           const f = namedRef(text.split('.'));
-          if (f) addRef(ctx, f.name, 'function_ref', arg);
+          if (f) addRef(ctx, f.name, 'function_ref', arg, computedFact(f.name, computed));
         }
         break;
       case 'eval':
         // `x = eval('cfgscript')` evaluates an expression, which a script is not; `evalc` runs it as a statement.
-        codeRefs(v.strs, arg, ctx, 'here', name === 'eval' && !isStatement(node));
+        codeRefs(v.strs, arg, ctx, 'here', name === 'eval' && !isStatement(node), computed);
         break;
       case 'evalin':
         // `p = evalin('base', 'SimParams')` reads what a name holds there, most
         // often a variable of that workspace: no telling it from a call.
-        codeRefs(isStatement(node) ? v.strs : v.strs.filter((c) => !/^\s*[A-Za-z]\w*\s*;?\s*$/.test(c)), arg, ctx, 'elsewhere', !isStatement(node));
+        codeRefs(isStatement(node) ? v.strs : v.strs.filter((c) => !/^\s*[A-Za-z]\w*\s*;?\s*$/.test(c)), arg, ctx, 'elsewhere', !isStatement(node), computed);
         break;
       case 'callback':
-        codeRefs(v.strs, arg, ctx, 'callback');
+        codeRefs(v.strs, arg, ctx, 'callback', false, computed);
         break;
     }
   }
+}
+
+/**
+ * Whether an argument is one literal written where it is passed (`'pkg.f'`,
+ * `"pkg.f"`, `@pkg.f`): what it names, the text spells. Anything else
+ * (`strcat('pkg.', 'f')`, `[p '.f']`, `lower('PKG.F')`, a variable holding
+ * any of these) is a value the interpreter built.
+ */
+function writtenAsLiteral(arg: SyntaxNode): boolean {
+  return arg.type === 'string' || arg.type === 'handle_operator';
+}
+
+/** Whether a reference name is a member or qualified one (`v.f`, `pkg::f`). */
+function isDottedName(name: string): boolean {
+  return name.includes('.') || name.includes(':');
+}
+
+/**
+ * The `computed` fact of a reference to `name` built from a value the
+ * interpreter built (see writtenAsLiteral), when the name is a dotted one:
+ * no text spells it, so its row must not wait on a word scan (see
+ * ../../resolution/matlab-failures.ts).
+ */
+function computedFact(name: string, computed: boolean): MatlabRefFacts {
+  return computed && isDottedName(name) ? { computed: true } : {};
 }
 
 /**
@@ -1216,11 +1307,11 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
  * dispatches on the object passed first (`dispatchOn`) as a call written so
  * would: `feval('area', c)` after `c = Shape(…)` is `Shape::area`.
  */
-function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext): void {
+function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext, computed: boolean): void {
   const cls = dispatchClass(dispatchOn, ctx.source);
   const call = (f: FnVal): void => {
     if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name });
-    else addRef(ctx, f.name, 'calls', at, f.variable ? { variable: f.variable } : {});
+    else addRef(ctx, f.name, 'calls', at, { ...(f.variable ? { variable: f.variable } : {}), ...computedFact(f.name, computed) });
   };
   for (const text of strs) {
     const f = NAME_SHAPED.test(text) ? namedRef(text.split('.')) : null;
@@ -1256,7 +1347,7 @@ function withRuntimeNames(locals: ReadonlySet<string>, f: Frame): ReadonlySet<st
  * where no statement runs a script. Code in code is read to MAX_CODE_DEPTH;
  * code the walk fails on gives nothing.
  */
-function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContext, mode: CodeMode, asValue = false): void {
+function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContext, mode: CodeMode, asValue = false, computed = false): void {
   if (codeDepth >= MAX_CODE_DEPTH) return;
   for (const code of new Set(codes)) {
     const parsed = parseCode(code);
@@ -1275,7 +1366,7 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
       values: NO_VALUES,
     };
     const refs: UnresolvedReference[] = [];
-    const sub = codeContext(ctx, text, at, { callback: mode === 'callback', runtime: !here, asValue }, refs);
+    const sub = codeContext(ctx, text, at, { callback: mode === 'callback', runtime: !here, asValue, computed }, refs);
     const memo = arrayEvidenceMemo;
     const stem = fileStem;
     // Node ids are per tree: this one's must not meet the file's in the memo.
@@ -1309,6 +1400,8 @@ interface CodeRefStyle {
   runtime: boolean;
   /** Code evaluated for a value: a statement there is an expression, never a script run (`statement` read as `bare`). */
   asValue: boolean;
+  /** Code whose text the interpreter built (no one literal written where it is given): a dotted name in it is `computed`. */
+  computed: boolean;
 }
 
 /**
@@ -1334,6 +1427,7 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, st
       if (ref.referenceName.includes(PLACEHOLDER) || candidates.some((c) => c.includes(PLACEHOLDER))) return;
       if (style.asValue) candidates = candidates.map((c) => (c === 'statement' ? 'bare' : c));
       if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = [...candidates, RUNTIME_TAG];
+      if (style.computed && isDottedName(ref.referenceName) && !candidates.includes(COMPUTED_TAG)) candidates = [...candidates, COMPUTED_TAG];
       const out: UnresolvedReference = { ...ref, line, column };
       if (candidates.length > 0) out.candidates = candidates;
       else delete out.candidates;
@@ -1708,6 +1802,13 @@ interface MethodsBlock {
   className: string;
 }
 
+/** The parameters among `params` that the scope `facts` were read from never writes to (see ScopeFacts.assigned). */
+function untouched(params: readonly (string | null)[], facts: ScopeFacts): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const p of params) if (p && !facts.assigned.has(p)) out.add(p);
+  return out;
+}
+
 function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: MethodsBlock | null = null): void {
   const source = ctx.source;
   const nameNode = getChildByField(node, 'name');
@@ -1790,7 +1891,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     structFields: facts.structFields,
     self,
     parent,
-    ...(params ? { params, forwards: forwardable(params, facts, walk), def: node } : {}),
+    ...(params ? { params, forwards: forwardable(params, facts, walk), def: node, untouchedParams: untouched(params, facts) } : {}),
     site,
   };
 
@@ -2027,8 +2128,11 @@ export const matlabExtractor: LanguageExtractor = {
         const ref = callRef(node, written, source);
         // Written with arguments: the list right after the name. Not where a
         // parse that recovered from an error put something else between
-        // (`Tune = (0.2, 0.1)` in a notes file read as MATLAB).
-        const form = callee.nextSibling?.type === '(' ? undefined : 'bare';
+        // (`Tune = (0.2, 0.1)` in a notes file read as MATLAB). A superclass
+        // call (`obj@Base(x)`, `m@Base(obj)`) has its `@Base` between: a
+        // call written with arguments too, never a member read.
+        const sup = callee.nextSibling?.type === '@' && callee.nextSibling.nextSibling?.type === 'superclass' ? callee.nextSibling.nextSibling : null;
+        const form = (sup ?? callee).nextSibling?.type === '(' ? undefined : 'bare';
         // (A walk for parameter sinks keeps no reference: what calls pass is no part of it.)
         const args = form || sinkCollector || MATLAB_BUILTINS.has(written) ? undefined : callArgsFact(node, source);
         if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtimeFact(frame(), written), ...(args ? { args } : {}) });
@@ -2037,7 +2141,8 @@ export const matlabExtractor: LanguageExtractor = {
         else if (isLocal(frame(), written)) {
           // `fh(x)` after `fh = @solve`: a call of what the handle holds.
           const held = recordedValue(callee);
-          if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx);
+          // What the handle holds was given elsewhere: computed, as far as this call's text says.
+          if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx, true);
           if (held && sinkCollector && dispatchClass(callArgs(node)[0], source) === undefined) {
             sinkCollector.add(held, { sink: written, takes: 'handle', edge: 'calls', asValue: false }, node);
           }
@@ -2052,7 +2157,7 @@ export const matlabExtractor: LanguageExtractor = {
         if (left?.type === 'field_expression' && right) {
           const parts = namedChildren(left);
           const last = parts[parts.length - 1];
-          if (last?.type === 'identifier' && CALLBACK_PROPERTY.test(getNodeText(last, source))) codeRefs(valueAt(right, source).strs, right, ctx, 'callback');
+          if (last?.type === 'identifier' && CALLBACK_PROPERTY.test(getNodeText(last, source))) codeRefs(valueAt(right, source).strs, right, ctx, 'callback', false, !writtenAsLiteral(right));
         }
         return false;
       }
@@ -2062,7 +2167,15 @@ export const matlabExtractor: LanguageExtractor = {
         if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
         const head = getChildByField(node, 'object');
-        if (ref) addRef(ctx, ref.name, 'calls', ref.at, { ...(ref.variable ? { variable: ref.variable } : {}), ...(head ? runtimeFact(frame(), getNodeText(head, source)) : {}) });
+        if (ref) {
+          addRef(ctx, ref.name, 'calls', ref.at, {
+            ...(ref.variable ? { variable: ref.variable } : {}),
+            ...(ref.bare ? { form: 'bare' as const } : {}),
+            ...(head ? runtimeFact(frame(), getNodeText(head, source)) : {}),
+            ...(ref.self ? { self: true } : {}),
+            ...(ref.param ? { param: true } : {}),
+          });
+        }
         return false;
       }
 

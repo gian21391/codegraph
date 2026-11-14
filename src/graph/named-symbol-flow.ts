@@ -185,6 +185,33 @@ export interface FlowStep {
   node: Node;
   /** The edge INTO this node from the previous step; null on the first. */
   edge: Edge | null;
+  /**
+   * When the edge is one of a fan-out (a MATLAB base method's call into each
+   * subclass's override, a call on the own object into each subclass that
+   * defines the method) and this node is none the query named: how many
+   * such edges leave the previous step for the same method, this one among
+   * them. Read by synthesized-hop's wording (`base → override, 1 of 375`).
+   */
+  of?: number;
+}
+
+/**
+ * Synthesizers whose edges out of one symbol for one method (`metadata.via`)
+ * are alternatives, one of which runs.
+ */
+const FAN_OUT_SYNTHESIZERS: ReadonlySet<string> = new Set(['matlab-override', 'matlab-subclass-method']);
+
+/** Sets {@link FlowStep.of} on each step of `steps` it applies to. */
+function markFanOut(cg: CodeGraph, steps: FlowStep[], namedIds: ReadonlySet<string>): void {
+  const meta = (e: Edge): Record<string, unknown> | undefined => (e.provenance === 'heuristic' ? (e.metadata as Record<string, unknown> | undefined) : undefined);
+  for (let i = 1; i < steps.length; i++) {
+    const step = steps[i]!;
+    const m = step.edge ? meta(step.edge) : undefined;
+    const by = m?.synthesizedBy;
+    if (typeof by !== 'string' || !FAN_OUT_SYNTHESIZERS.has(by) || namedIds.has(step.node.id)) continue;
+    const of = cg.getOutgoingEdges(step.edge!.source).filter((e) => meta(e)?.synthesizedBy === by && meta(e)?.via === m!.via).length;
+    if (of > 1) step.of = of;
+  }
 }
 
 export interface FlowChain {
@@ -723,6 +750,7 @@ export function resolveNamedSymbolFlow(
       const key = steps.map((s) => s.node.id).join('>');
       if (kept.some((other) => other === key || other.includes(key))) continue;
       kept.push(key);
+      markFanOut(cg, steps, namedIds);
       flow.chains.push({ steps, callSites: callSitesOf(steps) });
       if (flow.chains.length >= maxChains) break;
     }

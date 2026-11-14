@@ -432,7 +432,8 @@ describe('MATLAB fields of objects', () => {
   end
 end
 `;
-    expect(called(code, 'Elem.m')).toEqual(['Elem::update', 'fn_direct']);
+    // `self.PassMethod` / `self.Mode` read without parentheses are bare members, which the resolver drops as property reads.
+    expect(called(code, 'Elem.m')).toEqual(['Elem::Mode', 'Elem::PassMethod', 'Elem::update', 'fn_direct']);
   });
 
   it('keeps a struct the function built across calls, and an object field only up to the next call', () => {
@@ -453,7 +454,8 @@ feval(x.fn);
 end
 `;
     // s may be a handle that t aliases; x a handle helper changes.
-    expect(called(code, 'al.m')).toEqual(['Holder', 'consume', 'fn_epass', 'fn_param', 'helper']);
+    // `s.method` on the constructed `s` is a bare member (`Holder::method`), linked only if Holder has such a method.
+    expect(called(code, 'al.m')).toEqual(['Holder', 'Holder::method', 'consume', 'fn_epass', 'fn_param', 'helper']);
   });
 });
 

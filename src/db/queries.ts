@@ -107,6 +107,54 @@ const THROUGH_NAMES = (column: string): string => `(
  * peripheral top-10 slots cleared), so a deeper discount buys little and costs
  * the invariant. Pinned by a test.
  */
+/**
+ * An edge (`e`) that resolution made, which a sync may take back to its
+ * reference and resolve again: not a synthesized one (`provenance =
+ * 'heuristic'` and a `synthesizedBy`), but one a resolver marked a guess (a
+ * MATLAB receiver named after its class: heuristic, its `refName` stamped
+ * and no synthesizer) still is.
+ */
+const RESOLUTION_EDGE_SQL = `(e.provenance IS NULL OR e.provenance != 'heuristic'
+  OR (CASE WHEN json_valid(e.metadata) THEN json_extract(e.metadata, '$.refName') END IS NOT NULL
+      AND CASE WHEN json_valid(e.metadata) THEN json_extract(e.metadata, '$.synthesizedBy') END IS NULL))`;
+
+/**
+ * A MATLAB member call's row kept for a later sync, not for a call the index
+ * saw leave it (see isParkedMatlabMemberRow in ../resolution/matlab-failures,
+ * which this states in SQL, and which a test holds it to): one written
+ * without an argument list (`t = m.Total;`), most often a read of a
+ * property, or one whose name the value interpreter built (the `computed`
+ * fact: `feval(strcat('pkg.', 'f'))`), kept whatever carries the member. The
+ * surfaces that list references leaving the index, or count one against a
+ * symbol's name, leave these out.
+ */
+export const PARKED_MATLAB_MEMBER_READ_SQL = `(language = 'matlab' AND reference_kind = 'calls'
+  AND (instr(reference_name, '.') > 0 OR instr(reference_name, ':') > 0)
+  AND (coalesce(candidates, '') LIKE '%"bare"%' OR coalesce(candidates, '') LIKE '%"statement"%'
+    OR coalesce(candidates, '') LIKE '%"computed"%')
+  AND coalesce(candidates, '') NOT LIKE '%"dispatch:%')`;
+
+/**
+ * Which nodes a name probe counts: of any kind but `exceptKinds`, and of
+ * `language` alone when one is given.
+ */
+export interface NodeFilter {
+  exceptKinds?: readonly string[];
+  language?: string;
+}
+
+/** A NodeFilter as SQL to append to a `nodes` WHERE clause, with its parameters. */
+function nodeFilterSql(filter: NodeFilter): { sql: string; params: string[] } {
+  const kinds = filter.exceptKinds ?? [];
+  let sql = kinds.length > 0 ? ` AND kind NOT IN (${kinds.map(() => '?').join(',')})` : '';
+  const params = [...kinds];
+  if (filter.language !== undefined) {
+    sql += ' AND language = ?';
+    params.push(filter.language);
+  }
+  return { sql, params };
+}
+
 export const DEPRIORITIZED_NAME_BONUS_SCALE = 0.75;
 
 /**
@@ -3010,7 +3058,8 @@ export class QueryBuilder {
    * `greet`), because the question being asked is "could this name be the one
    * we failed to follow", and a maybe has to count as a yes. A reference
    * parked under its module (`store.get` → 'module:store') is matched on the
-   * tail its name gives.
+   * tail its name gives. A MATLAB member read parked for a later sync (see
+   * PARKED_MATLAB_MEMBER_READ_SQL) does not count by its tail.
    *
    * Bounded-lookup like {@link getGeneratedPathsAmong}: the caller holds a
    * candidate list, so this is a chunked probe over `idx_unresolved_name`
@@ -3036,7 +3085,7 @@ export class QueryBuilder {
             `${byName}
             UNION
            SELECT DISTINCT name_tail AS name FROM unresolved_refs
-            WHERE name_tail IN (${placeholders})
+            WHERE name_tail IN (${placeholders}) AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}
             UNION
            SELECT DISTINCT ${MEMBER_TAIL_SQL} AS name FROM unresolved_refs
             WHERE ${MODULE_PARKED_SQL} AND ${MEMBER_TAIL_SQL} IN (${placeholders})`
@@ -3048,29 +3097,38 @@ export class QueryBuilder {
     return found;
   }
 
-  /** Which of `names` some node (any kind, any language) carries as its name. Chunked probe over `idx_nodes_name`. */
-  getNodeNamesAmong(names: Iterable<string>): Set<string> {
+  /**
+   * Which of `names` some node carries as its name: any node, or one that
+   * `filter` admits (see NodeFilter). Chunked probe over `idx_nodes_name`.
+   */
+  getNodeNamesAmong(names: Iterable<string>, filter: NodeFilter = {}): Set<string> {
     const unique = [...new Set(names)];
     const found = new Set<string>();
+    const where = nodeFilterSql(filter);
     for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
       const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
       const rows = this.db
-        .prepare(`SELECT DISTINCT name FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})`)
-        .all(...chunk) as Array<{ name: string }>;
+        .prepare(`SELECT DISTINCT name FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})${where.sql}`)
+        .all(...chunk, ...where.params) as Array<{ name: string }>;
       for (const row of rows) found.add(row.name);
     }
     return found;
   }
 
-  /** The files whose nodes carry each of `names` (`name` → files), for the names some node carries. Chunked probe over `idx_nodes_name`. */
-  getFilesCarryingNames(names: Iterable<string>): Map<string, Set<string>> {
+  /**
+   * The files whose nodes carry each of `names` (`name` → files), for the
+   * names some node carries: any node, or one that `filter` admits (see
+   * NodeFilter). Chunked probe over `idx_nodes_name`.
+   */
+  getFilesCarryingNames(names: Iterable<string>, filter: NodeFilter = {}): Map<string, Set<string>> {
     const unique = [...new Set(names)];
     const found = new Map<string, Set<string>>();
+    const where = nodeFilterSql(filter);
     for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
       const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
       const rows = this.db
-        .prepare(`SELECT DISTINCT name, file_path FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})`)
-        .all(...chunk) as Array<{ name: string; file_path: string }>;
+        .prepare(`SELECT DISTINCT name, file_path FROM nodes WHERE name IN (${chunk.map(() => '?').join(',')})${where.sql}`)
+        .all(...chunk, ...where.params) as Array<{ name: string; file_path: string }>;
       for (const row of rows) {
         const files = found.get(row.name);
         if (files) files.add(row.file_path);
@@ -3078,6 +3136,28 @@ export class QueryBuilder {
       }
     }
     return found;
+  }
+
+  /**
+   * The failed MATLAB `calls` rows parked under one of `tails` (the member
+   * of `v.f`, `Cls::m`, `pkg::f`). Chunked probe over
+   * `idx_unresolved_failed_tail`.
+   */
+  getFailedMatlabCallsByTail(tails: Iterable<string>): Array<{ id: number; referenceName: string; candidates?: string[] }> {
+    const unique = [...new Set(tails)];
+    const out: Array<{ id: number; referenceName: string; candidates?: string[] }> = [];
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const rows = this.db
+        .prepare(`SELECT id, reference_name, candidates FROM unresolved_refs
+                   WHERE status = 'failed' AND name_tail IN (${chunk.map(() => '?').join(',')})
+                     AND language = 'matlab' AND reference_kind = 'calls'`)
+        .all(...chunk) as Array<{ id: number; reference_name: string; candidates: string | null }>;
+      for (const row of rows) {
+        out.push({ id: row.id, referenceName: row.reference_name, ...(row.candidates ? { candidates: safeJsonParse(row.candidates, undefined) } : {}) });
+      }
+    }
+    return out;
   }
 
   /** The MATLAB rows, of any status, of a bare call or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe over `idx_unresolved_name`. */
@@ -3624,11 +3704,13 @@ export class QueryBuilder {
    * per row, and a generated file with fifty thousand of them would ship
    * megabytes to say something a count already says. Rows come back in line
    * order, so a cap trims the END of the file, which is at least legible.
+   * A MATLAB member read parked for a later sync (PARKED_MATLAB_MEMBER_READ_SQL)
+   * marks nothing leaving the index, and is left out.
    */
   getUnresolvedReferencesInFile(filePath: string, limit = 5000): UnresolvedReference[] {
     if (!this.stmts.getUnresolvedInFile) {
       this.stmts.getUnresolvedInFile = this.db.prepare(
-        'SELECT * FROM unresolved_refs WHERE file_path = ? ORDER BY line, col LIMIT ?'
+        `SELECT * FROM unresolved_refs WHERE file_path = ? AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL} ORDER BY line, col LIMIT ?`
       );
     }
     const rows = this.stmts.getUnresolvedInFile.all(filePath, limit) as UnresolvedRefRow[];
@@ -3652,12 +3734,14 @@ export class QueryBuilder {
    *
    * Read-only. It exists so a reader can say "N calls into symbols outside the
    * index" instead of silently showing a callee list shorter than the body's
-   * call sites, which reads as "nothing else happens here".
+   * call sites, which reads as "nothing else happens here". A MATLAB member
+   * read parked for a later sync (PARKED_MATLAB_MEMBER_READ_SQL) is none of
+   * those, and is left out, as by {@link getUnresolvedReferencesInFile}.
    */
   getUnresolvedReferencesFrom(fromNodeId: string): UnresolvedReference[] {
     if (!this.stmts.getUnresolvedFromNode) {
       this.stmts.getUnresolvedFromNode = this.db.prepare(
-        'SELECT * FROM unresolved_refs WHERE from_node_id = ?'
+        `SELECT * FROM unresolved_refs WHERE from_node_id = ? AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}`
       );
     }
     const rows = this.stmts.getUnresolvedFromNode.all(fromNodeId) as UnresolvedRefRow[];
@@ -3880,7 +3964,7 @@ export class QueryBuilder {
              JOIN nodes tgt ON tgt.id = e.target
             WHERE src.file_path = ?
               AND e.kind != 'contains'
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')
+              AND ${RESOLUTION_EDGE_SQL}
          ) WHERE ${THROUGH_NAMES('ref_name')}`
       )
       .all(filePath, JSON.stringify(names), JSON.stringify(names)) as Array<
@@ -3919,7 +4003,7 @@ export class QueryBuilder {
              JOIN nodes tgt ON tgt.id = e.target
             WHERE e.source IN (${placeholders})
               AND e.kind = 'imports'
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')
+              AND ${RESOLUTION_EDGE_SQL}
               AND json_valid(e.metadata)
               AND json_extract(e.metadata, '$.resolvedBy') != 'import'`
         )
@@ -3958,7 +4042,7 @@ export class QueryBuilder {
              JOIN nodes tgt ON tgt.id = e.target
             WHERE e.target IN (${placeholders})
               AND e.kind != 'contains'
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+              AND ${RESOLUTION_EDGE_SQL}`
         )
         .all(...chunk) as Array<EdgeRow & { source_file_path: string; source_language: Language; target_file_path: string }>;
       for (const row of rows) {
@@ -4000,7 +4084,7 @@ export class QueryBuilder {
            JOIN nodes tgt ON tgt.id = e.target
           WHERE src.file_path = ?
             AND e.kind = 'imports'
-            AND (e.provenance IS NULL OR e.provenance != 'heuristic')
+            AND ${RESOLUTION_EDGE_SQL}
             AND tgt.file_path != ?`
       )
       .all(filePath, filePath) as Array<{ target: string }>)
@@ -4143,7 +4227,7 @@ export class QueryBuilder {
              JOIN nodes src ON src.id = e.source
             WHERE e.target IN (${placeholders})
               AND e.kind != 'contains'
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+              AND ${RESOLUTION_EDGE_SQL}`
         )
         .all(...chunk) as Array<{ file_path: string }>;
       for (const row of rows) files.add(row.file_path);
@@ -5222,6 +5306,32 @@ export class QueryBuilder {
   }
 
   /**
+   * Every failed MATLAB call on a method's own object (the `self` fact, see
+   * matlab-ref-facts), whatever its class defines: the override pass
+   * (../resolution/matlab-override-synthesizer) keeps the ones whose class
+   * neither defines nor inherits the method, which a subclass's runs.
+   */
+  getFailedMatlabSelfCalls(): UnresolvedReference[] {
+    return (this.db
+      .prepare(
+        `SELECT * FROM unresolved_refs
+          WHERE status = 'failed' AND language = 'matlab' AND reference_kind = 'calls' AND candidates LIKE '%"self"%'`
+      )
+      .all() as UnresolvedRefRow[])
+      .map((row) => ({
+        fromNodeId: row.from_node_id,
+        referenceName: row.reference_name,
+        referenceKind: row.reference_kind as EdgeKind,
+        line: row.line,
+        column: row.col,
+        candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
+        filePath: row.file_path,
+        language: row.language as Language,
+        rowId: row.id,
+      }));
+  }
+
+  /**
    * Failed imports of the folder the importing file is in or under (`.`,
    * `..`, `../..`). Their tail is empty, since they name a folder only
    * through where they are written, so no added file's keys find them.
@@ -5286,7 +5396,7 @@ export class QueryBuilder {
         `SELECT e.*, src.file_path AS source_file_path, src.language AS source_language
            FROM edges e
            JOIN nodes src ON src.id = e.source
-          WHERE e.kind = 'navigates' AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+          WHERE e.kind = 'navigates' AND ${RESOLUTION_EDGE_SQL}`
       )
       .all() as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
     return rows.map((row) => ({
@@ -5383,7 +5493,7 @@ export class QueryBuilder {
              FROM edges e
              JOIN nodes tgt ON tgt.id = e.target
             WHERE tgt.name IN (${placeholders})
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')
+              AND ${RESOLUTION_EDGE_SQL}
               ${counted}
             GROUP BY tgt.name`
         )
@@ -5407,7 +5517,7 @@ export class QueryBuilder {
              JOIN nodes tgt ON tgt.id = e.target
              JOIN nodes src ON src.id = e.source
             WHERE tgt.name IN (${placeholders})
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+              AND ${RESOLUTION_EDGE_SQL}`
         )
         .all(...chunk) as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
       for (const row of rows) {
@@ -5447,7 +5557,7 @@ export class QueryBuilder {
            JOIN nodes tgt ON tgt.id = e.target
           WHERE src.kind = 'route'
             AND e.kind != 'contains'
-            AND (e.provenance IS NULL OR e.provenance != 'heuristic')
+            AND ${RESOLUTION_EDGE_SQL}
             AND src.file_path NOT IN (SELECT value FROM json_each(?))
             AND (tgt.file_path IN (SELECT value FROM json_each(?))
               OR (tgt.file_path = src.file_path AND tgt.kind IN ('constant', 'variable')))
@@ -5479,7 +5589,7 @@ export class QueryBuilder {
            JOIN nodes src ON src.id = e.source
           WHERE src.language = ?
             AND e.kind != 'contains'
-            AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+            AND ${RESOLUTION_EDGE_SQL}`
       )
       .all(language) as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
     return rows.map((row) => ({
@@ -5593,7 +5703,7 @@ export class QueryBuilder {
             WHERE e.id IN (${chunk.map(() => '?').join(',')})
               AND src.language = ?
               AND e.kind != 'contains'
-              AND (e.provenance IS NULL OR e.provenance != 'heuristic')`
+              AND ${RESOLUTION_EDGE_SQL}`
         )
         .all(...chunk, language) as Row[];
       for (const row of rows) {
@@ -5854,17 +5964,19 @@ export class QueryBuilder {
    * both sides and cancels out of the symmetric difference — even though a
    * definition genuinely appeared or vanished and every reference to that name
    * repo-wide may now bind elsewhere. Keying by file makes each definition its
-   * own fact, so the move is seen as one removal plus one addition.
+   * own fact, so the move is seen as one removal plus one addition. With a
+   * `filter`, only the nodes it admits count (see NodeFilter).
    */
-  getNodeNamePairsByFiles(filePaths: string[]): Set<string> {
+  getNodeNamePairsByFiles(filePaths: string[], filter: NodeFilter = {}): Set<string> {
     const pairs = new Set<string>();
     if (filePaths.length === 0) return pairs;
+    const where = nodeFilterSql(filter);
     for (let i = 0; i < filePaths.length; i += SQLITE_PARAM_CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       const rows = this.db
-        .prepare(`SELECT DISTINCT file_path, name FROM nodes WHERE file_path IN (${placeholders})`)
-        .all(...chunk) as Array<{ file_path: string; name: string }>;
+        .prepare(`SELECT DISTINCT file_path, name FROM nodes WHERE file_path IN (${placeholders})${where.sql}`)
+        .all(...chunk, ...where.params) as Array<{ file_path: string; name: string }>;
       // NUL-joined: a path or a symbol name can contain a space, never a NUL.
       for (const row of rows) pairs.add(`${row.file_path}\0${row.name}`);
     }

@@ -10,25 +10,42 @@
  *     that definition stands (off the search path, behind a nearer case
  *     variant) may change with the path, and a sync that changes it must
  *     link the call as a fresh index would.
- *   - A call no symbol carries a name of (see matlabUnmatchableKeys), unless
- *     written with arguments (`f(x)`): a bare read (`t = cfg;`, a command
- *     `setup_paths`) is a variable of the workspace, a member (`v.field(k)`)
- *     a struct's field, a qualified name (`pkg.f`, `Cls.m`) an outside
- *     package's. A call written with arguments is a call leaving the index,
- *     which the viewer lists — unless it is of a name code run at runtime
- *     makes (the `runtime` fact: `eval('x = 3;'); x(2)`, a `load`ed name,
- *     anything a callback given as text or `evalin` runs), most often a
- *     variable there; such a handle reference (a callback's) goes the same
- *     way.
+ *   - A member or qualified call (`v.f(x)`, `Cls.m`, `pkg.f`, `obj@Base(x)`;
+ *     see matlabMemberCall) whose member no symbol could answer: written with
+ *     arguments, no symbol of the member's name (nor a `.m` file of it);
+ *     written without (`t = m.Total;`, `Cls.MAX`, the `bare` fact), no
+ *     callable one — a property, a constant, an enumeration member or a field
+ *     of the name is read, never called. Only MATLAB's symbols and `.m`
+ *     files count: a MATLAB call resolves to nothing else. One the member's
+ *     name has an answer for is kept, a read of the class's own property too
+ *     (resolution gives that one no edge): which of a class's members is a
+ *     property and which a method, and which class a head names, is other
+ *     files' to say, and the row is what a sync that changes them links
+ *     again. The rule depends on the project's symbols alone, never on which
+ *     file a sync extracted, so it holds in every file: a sync ends with the
+ *     rows a fresh index of the same files has. One whose name the value
+ *     interpreter built (the `computed` fact: `feval(strcat('pkg.', 'f'))`,
+ *     `eval(['x = Model.' 'make;'])`) is kept whatever carries its member: no
+ *     text spells the name, so no word scan could find its file again when
+ *     a carrier comes back, and its row is what relinks it then.
+ *   - Any other call no symbol carries a name of (see matlabUnmatchableKeys),
+ *     unless written with arguments (`f(x)`): a bare read (`t = cfg;`, a
+ *     command `setup_paths`) is a variable of the workspace. A call written
+ *     with arguments is a call leaving the index, which the viewer lists —
+ *     unless it is of a name code run at runtime makes (the `runtime` fact:
+ *     `eval('x = 3;'); x(2)`, a `load`ed name, anything a callback given as
+ *     text or `evalin` runs), most often a variable there; such a handle
+ *     reference (a callback's) goes the same way.
  *
- * What is discarded is gone for good: a sync that later adds a symbol of the
- * name links the calls in the files it re-indexes, not those in a file it
- * leaves alone — a member call written with arguments too (`r =
- * a.recalib(2)`, its row gone while no symbol was named `recalib`) — which a
- * full re-index does (pinned in __tests__/matlab-resolution.test.ts). A
- * built-in's name is the exception: a sync that gives one its first carrier
- * extracts the files naming it again, and one that takes the last away drops
- * its rows (see ./matlab-builtin-carriers).
+ * A bare name's failure is judged only where its file was extracted afresh
+ * (see MatlabFreshReferences), and what is discarded of it is gone for good:
+ * a sync that later adds a symbol of the name links the bare reads in the
+ * files it re-indexes, not those in a file it leaves alone, which a full
+ * re-index does (pinned in __tests__/matlab-resolution.test.ts). A
+ * built-in's name and a member's are the exceptions: a sync that gives one
+ * its first carrier (of the kind the rule asks for) extracts the files
+ * naming it again, and one that takes the last away drops the rows the rule
+ * no longer keeps (see ./matlab-builtin-carriers).
  */
 
 import type { UnresolvedRef } from './types';
@@ -39,7 +56,8 @@ import { referenceNameTail } from '../db/reference-tail';
 
 /**
  * The references a resolution pass may discard (see the top of this file):
- * the ones it extracted afresh. Any other failure is a reference of a file a
+ * the ones it extracted afresh, a member call aside, which is judged
+ * wherever it is. Any other failure is a reference of a file a
  * sync left alone — one whose target the sync removed (its edge went back to
  * a reference), or one re-opened for a retry — and is kept, parked as failed,
  * so that the sync that brings its target back links it again, as it would a
@@ -76,6 +94,44 @@ function isDottedMatlabName(name: string): boolean {
 }
 
 /**
+ * The node kinds that hold a value rather than run code: a member of one of
+ * these kinds written without an argument list is read, never called.
+ */
+export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'enum_member', 'field'];
+
+/**
+ * A MATLAB member or qualified call, the rule's subject (see the top of this
+ * file): `v.f(x)`, `v.f`, `Cls::m`, `pkg::f`, `Base::Base` for `obj@Base(x)`;
+ * what its member is named (the tail it is parked under), and whether it was
+ * written without an argument list, so that only a callable symbol answers
+ * it. Not `m(obj, …)` (`Cls::m` with the `dispatch` fact: a call written as
+ * a function's, kept like any `f(x)`), and no handle.
+ */
+export function matlabMemberCall(ref: { referenceName: string; referenceKind: string; language?: string; candidates?: readonly string[] }): { member: string; bare: boolean } | null {
+  if (ref.language !== 'matlab' || ref.referenceKind !== 'calls' || !isDottedMatlabName(ref.referenceName)) return null;
+  const facts = matlabRefFacts(ref);
+  if (facts.dispatch !== undefined) return null;
+  return { member: referenceNameTail(ref.referenceName, ref.referenceKind), bare: facts.form !== undefined };
+}
+
+/** The names a symbol answering a name `name` may carry: its own, and its `.m` file's (`f`, `f.m`). */
+export function matlabNameKeys(name: string): string[] {
+  return [name, ...matlabFileNames(name)];
+}
+
+/**
+ * Whether a MATLAB row is a member call kept for a later sync rather than a
+ * call leaving the index: written without an argument list (most often a
+ * read of a property), or with a name the value interpreter built (see the
+ * top of this file). PARKED_MATLAB_MEMBER_READ_SQL (../db/queries) states
+ * the same in SQL, for the surfaces that leave such rows out.
+ */
+export function isParkedMatlabMemberRow(ref: { referenceName: string; referenceKind: string; language?: string; candidates?: readonly string[] }): boolean {
+  const call = matlabMemberCall(ref);
+  return call !== null && (call.bare || matlabRefFacts(ref).computed === true);
+}
+
+/**
  * The names a project symbol would have to carry for a MATLAB call that
  * resolved to nothing to be worth keeping: its name and the tail it is parked
  * under (`v.f` → `f`, `pkg::sub::f` → `f`), the two the dead-code check and
@@ -101,11 +157,22 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
 }
 
 /**
- * The failures among `failures` to delete (see the top of this file): only
- * fresh ones. Whether a symbol carries a name is asked of `known`, the names
- * every node carries (read when the pass began, after its definitions were
- * stored), or, when the pass has none (its caches dropped since), of
- * `carriedAmong`, which asks the index.
+ * Which of a list of names MATLAB's symbols carry: any of them, or a
+ * callable one (no property, constant, enumeration member or field).
+ */
+export interface MatlabCarriers {
+  any(names: string[]): ReadonlySet<string>;
+  callable(names: string[]): ReadonlySet<string>;
+}
+
+/**
+ * The failures among `failures` to delete (see the top of this file): a
+ * member call's wherever it is (one with the `computed` fact never), any
+ * other only when fresh. Whether a symbol carries a name is asked of
+ * `known`, the names every node carries (read when the pass began, after its
+ * definitions were stored), or, when the pass has none (its caches dropped
+ * since), of `carriedAmong`, which asks the index; a member's carriers, of
+ * `members`, which asks it of MATLAB's symbols alone.
  *
  * A built-in's name that a project symbol carries is kept too, with a MATLAB
  * search path in force or not: the call failed because of where the
@@ -119,18 +186,39 @@ export function unanswerableMatlabFailures(
   fresh: MatlabFreshReferences | undefined,
   known: ReadonlySet<string> | null,
   carriedAmong: (names: string[]) => ReadonlySet<string>,
+  members: MatlabCarriers,
 ): Set<UnresolvedRef> {
   const discarded = new Set<UnresolvedRef>();
   const pending: Array<{ ref: UnresolvedRef; keys: string[]; builtin: boolean }> = [];
+  const bareMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+  const calledMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   for (const ref of failures) {
-    if (ref.language !== 'matlab' || !isFreshReference(ref, fresh)) continue;
+    if (ref.language !== 'matlab') continue;
+    const member = matlabMemberCall(ref);
+    if (member) {
+      // Judged in every file, fresh or not: the rule reads the project's
+      // symbols only, and a sync keeps it true where they change (see
+      // ./matlab-builtin-carriers). A computed name is kept.
+      if (matlabRefFacts(ref).computed) continue;
+      if (member.bare) bareMembers.push({ ref, keys: matlabNameKeys(member.member) });
+      else calledMembers.push({ ref, keys: matlabUnmatchableKeys(ref)! });
+      continue;
+    }
+    if (!isFreshReference(ref, fresh)) continue;
     if (isMatlabBuiltinCall(ref)) {
-      pending.push({ ref, keys: [ref.referenceName, ...matlabFileNames(ref.referenceName)], builtin: true });
+      pending.push({ ref, keys: matlabNameKeys(ref.referenceName), builtin: true });
     } else {
       const keys = matlabUnmatchableKeys(ref);
       if (keys) pending.push({ ref, keys, builtin: false });
     }
   }
+  const dropUncarried = (list: Array<{ ref: UnresolvedRef; keys: string[] }>, carried: (names: string[]) => ReadonlySet<string>): void => {
+    if (list.length === 0) return;
+    const found = carried(list.flatMap((p) => p.keys));
+    for (const { ref, keys } of list) if (!keys.some((k) => found.has(k))) discarded.add(ref);
+  };
+  dropUncarried(bareMembers, (names) => members.callable(names));
+  dropUncarried(calledMembers, (names) => members.any(names));
   if (pending.length === 0) return discarded;
   const carried = known ?? carriedAmong(pending.flatMap((p) => p.keys));
   for (const { ref, keys, builtin } of pending) {

@@ -12,40 +12,11 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
-import { allEdges, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
+import { allEdges, syncedAndFresh, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
 describe('MATLAB sync converges on a fresh index', () => {
-  /** Index `initial`, apply each step with a sync, and return the synced edges and a fresh index's of the final files. */
-  async function syncedAndFresh(initial: Record<string, string>, ...steps: Array<Record<string, string | null>>): Promise<{ steps: string[][]; synced: string[]; fresh: string[] }> {
-    const root = tempDir('cg-matlab-sync-');
-    const freshRoot = tempDir('cg-matlab-fresh-');
-    const final: Record<string, string | null> = { ...initial };
-    writeTree(root, initial);
-    const cg = await CodeGraph.init(root, { index: true });
-    try {
-      const seen: string[][] = [allEdges(cg)];
-      for (const step of steps) {
-        writeTree(root, step);
-        Object.assign(final, step);
-        await cg.sync();
-        seen.push(allEdges(cg));
-      }
-      writeTree(freshRoot, Object.fromEntries(Object.entries(final).filter(([, c]) => c !== null)));
-      const fresh = await CodeGraph.init(freshRoot, { index: true });
-      try {
-        return { steps: seen, synced: seen[seen.length - 1]!, fresh: allEdges(fresh) };
-      } finally {
-        fresh.close();
-      }
-    } finally {
-      cg.close();
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(freshRoot, { recursive: true, force: true });
-    }
-  }
-
   const MAIN = 'function main()\nsetup_paths\nend\n';
   const SCRIPT_CALL = 'main.m main -calls-> setup_paths.m @ setup_paths.m';
   const FUNCTION_CALL = 'main.m main -calls-> setup_paths @ setup_paths.m';
@@ -233,13 +204,15 @@ describe('MATLAB sync converges on a fresh index when a superclass list changes'
       { 'Mid.m': mid('Base') },
     );
     const greet = ['main.m main -calls-> Base::greet @ Base.m', 'main.m main -calls-> Base::greet @ Base.m'];
-    const all = ['Mid.m Mid -extends-> Base @ Base.m', 'Sub2.m Sub2 -extends-> Mid @ Mid.m', ...greet,
+    // Base's wave reaches Mid's override while Mid inherits from Base.
+    const override = 'Base.m Base::wave -calls-> Mid::wave @ Mid.m';
+    const all = [override, 'Mid.m Mid -extends-> Base @ Base.m', 'Sub2.m Sub2 -extends-> Mid @ Mid.m', ...greet,
       'main.m main -calls-> Base::wave @ Base.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'];
     expect(steps.map((s) => s.synced)).toEqual([
       all,
       ['Sub2.m Sub2 -extends-> Mid @ Mid.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'],
       all,
-      ['Mid.m Mid -extends-> Base @ Base.m', 'main.m main -calls-> Base::wave @ Base.m'],
+      [override, 'Mid.m Mid -extends-> Base @ Base.m', 'main.m main -calls-> Base::wave @ Base.m'],
       ['main.m main -calls-> Base::wave @ Base.m', 'main.m main -instantiates-> Sub2 @ Sub2.m'],
       all,
     ]);

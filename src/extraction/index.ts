@@ -37,7 +37,18 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
-import { dropUncarriedMatlabRows, matlabCarrierChanges, matlabFilesNaming } from '../resolution/matlab-builtin-carriers';
+import {
+  MATLAB_CALLABLE_NODES,
+  MATLAB_NODES,
+  applyMatlabCarrierRows,
+  matlabCarrierChanges,
+  matlabFilesNaming,
+  readMatlabCarrierStep,
+  recalledMatlabRowIds,
+  uncarriedMatlabRowIds,
+  writeMatlabCarrierStep,
+  type MatlabCarrierStep,
+} from '../resolution/matlab-builtin-carriers';
 import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
 export { oversizeStamp };
 
@@ -2517,6 +2528,20 @@ export class ExtractionOrchestrator {
     // this run stores their files fresh. No-op on a fresh DB.
     this.healZeroNodeRows();
 
+    // A MATLAB carrier step a killed sync left unfinished (see
+    // resolution/matlab-builtin-carriers): its rows go now, and its files are
+    // stored afresh with the rest, as changed ones. Then the record goes.
+    // No-op on a fresh DB.
+    const unfinished = readMatlabCarrierStep(this.queries);
+    if (unfinished) {
+      applyMatlabCarrierRows(this.queries, unfinished);
+      for (const filePath of unfinished.files) {
+        const file = this.queries.getFileByPath(filePath);
+        if (file) this.queries.upsertFile({ ...file, contentHash: '' });
+      }
+      writeMatlabCarrierStep(this.queries, null);
+    }
+
     // Detect frameworks once per indexAll run using the scanned file list.
     // Names are passed to each parse call so framework-specific extractors
     // (route nodes, middleware, etc.) run after the tree-sitter pass.
@@ -3797,6 +3822,40 @@ export class ExtractionOrchestrator {
   }
 
   /**
+   * Runs a MATLAB carrier step (see resolution/matlab-builtin-carriers),
+   * recorded first and cleared once done, so that a sync killed in it leaves
+   * the record for the next sync to finish: its rows deleted and put back to
+   * pending, its files extracted again. Returns the files it extracted.
+   */
+  private async runMatlabCarrierStep(
+    step: MatlabCarrierStep,
+    onFileChange: ((filePath: string, content?: string) => void) | undefined,
+    backpressure: (() => Promise<void> | null) | undefined,
+  ): Promise<{ extracted: string[]; failed: string[]; nodes: number }> {
+    writeMatlabCarrierStep(this.queries, step);
+    applyMatlabCarrierRows(this.queries, step);
+    const out = { extracted: [] as string[], failed: [] as string[], nodes: 0 };
+    if (step.files.length > 0) await loadGrammarsForLanguages(['matlab']);
+    for (const filePath of step.files) {
+      let content: string | undefined;
+      try {
+        content = fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8');
+      } catch {
+        content = undefined;
+      }
+      onFileChange?.(filePath, content);
+      const result = await this.indexFile(filePath, true);
+      if (result.errors.some(e => e.severity === 'error')) out.failed.push(filePath);
+      if (!hasGrammarLoadFailure(result.errors)) out.nodes += result.nodes.length;
+      out.extracted.push(filePath);
+      const pause = backpressure?.();
+      if (pause) await pause;
+    }
+    writeMatlabCarrierStep(this.queries, null);
+    return out;
+  }
+
+  /**
    * Sync the index with the current file state.
    *
    * Change detection is filesystem-based, never git: a (size, mtime) stat
@@ -3843,6 +3902,19 @@ export class ExtractionOrchestrator {
     // BEFORE their nodes are replaced/deleted. Compared against the post-store
     // pairs below to derive `definitionDelta` (CG-33).
     const pairsBefore = new Set<string>();
+    // The same pairs of the MATLAB nodes alone, and of the callable ones
+    // among them (no property, constant, enumeration member or field), for a
+    // MATLAB member call's carriers (see resolution/matlab-builtin-carriers):
+    // a property turned into a method of the same name changes the second and
+    // leaves the first as it was.
+    const trackMatlab = this.queries.hasFilesOfLanguage('matlab');
+    const matlabPairsBefore = new Set<string>();
+    const callablePairsBefore = new Set<string>();
+    const sampleMatlabPairs = (files: string[]): void => {
+      if (!trackMatlab) return;
+      for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_NODES)) matlabPairsBefore.add(pair);
+      for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_CALLABLE_NODES)) callablePairsBefore.add(pair);
+    };
     // Importers' import statements, read once per sync for the files it removes.
     const importReader = createImportReader(this.rootDir);
 
@@ -3854,6 +3926,28 @@ export class ExtractionOrchestrator {
 
     const filesToIndex: string[] = [];
     const failedFilePaths: string[] = [];
+
+    // A MATLAB carrier step a sync killed in it left unfinished (see
+    // resolution/matlab-builtin-carriers): finished before anything else, so
+    // that this sync starts where that one would have ended. A file of it
+    // that changed since, or went, is this sync's to extract or remove.
+    const unfinished = readMatlabCarrierStep(this.queries);
+    if (unfinished) {
+      const files = unfinished.files.filter((filePath) => {
+        const tracked = this.queries.getFileByPath(filePath);
+        if (!tracked) return false;
+        try {
+          return tracked.contentHash === hashContent(fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8'));
+        } catch {
+          return false;
+        }
+      });
+      const done = await this.runMatlabCarrierStep({ ...unfinished, files }, onFileChange, backpressure);
+      changedFilePaths.push(...done.extracted);
+      failedFilePaths.push(...done.failed);
+      nodesUpdated += done.nodes;
+    }
+
     // === Filesystem reconcile (git-independent) ===
     // The source of truth for "what changed" is the filesystem vs the indexed
     // state — never git. We enumerate the current source files and reconcile
@@ -3937,6 +4031,7 @@ export class ExtractionOrchestrator {
       // Every name this file defined is about to stop existing here, which
       // narrows the candidate set for that name repo-wide (CG-33).
       for (const pair of this.queries.getNodeNamePairsByFiles([tracked.path])) pairsBefore.add(pair);
+      sampleMatlabPairs([tracked.path]);
       const incoming = this.queries.getCrossFileIncomingEdgesWithTarget(tracked.path);
       if (incoming.length > 0) {
         const resurrected = incoming
@@ -4056,6 +4151,7 @@ export class ExtractionOrchestrator {
     // definition set is readable (CG-33).
     if (filesToIndex.length > 0) {
       for (const pair of this.queries.getNodeNamePairsByFiles(filesToIndex)) pairsBefore.add(pair);
+      sampleMatlabPairs(filesToIndex);
     }
     // The `export … from` statements of each file, before the store replaces
     // its import nodes (#2978).
@@ -4124,27 +4220,36 @@ export class ExtractionOrchestrator {
     // this sync leaves alone were judged by the carriers they had. A gained
     // one's files are extracted again here, as a changed file is, and join
     // the changed files for resolution; a lost one's rows go.
+    // A member's name (`m.Total`, `a.recalib(2)`, `obj@Base(x)`) likewise,
+    // for a carrier of the kind its calls need.
+    // A member's name whose callable carriers changed has its kept rows
+    // resolved again, past the retry's ceiling (MatlabCarrierChange.membersRecalled).
+    const watchMatlab = trackMatlab || this.queries.hasFilesOfLanguage('matlab');
     const carriers = matlabCarrierChanges(this.queries, {
       deltaNames, pairsBefore, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
+      matlabPairsBefore,
+      matlabPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_NODES) : new Set(),
+      callablePairsBefore,
+      callablePairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_CALLABLE_NODES) : new Set(),
     });
-    if (carriers.lost.length > 0 || carriers.unreached.length > 0) dropUncarriedMatlabRows(this.queries, carriers);
-    if (carriers.gained.length > 0) {
-      const tCarriers = Date.now();
-      const again = matlabFilesNaming(this.queries, this.rootDir, carriers.gained, new Set(filesToIndex));
-      const scanMs = Date.now() - tCarriers;
-      if (again.length > 0) await loadGrammarsForLanguages(['matlab']);
-      for (const { filePath, content } of again) {
-        onFileChange?.(filePath, content);
-        const result = await this.indexFile(filePath, true);
-        if (result.errors.some(e => e.severity === 'error')) failedFilePaths.push(filePath);
-        if (!hasGrammarLoadFailure(result.errors)) nodesUpdated += result.nodes.length;
-        changedFilePaths.push(filePath);
-        const pause = backpressure?.();
-        if (pause) await pause;
-      }
-      if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
-        console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; word scan ${scanMs}ms; ${again.length} files extracted again)`);
-      }
+    const tCarriers = Date.now();
+    const drop = uncarriedMatlabRowIds(this.queries, carriers);
+    const reopen = recalledMatlabRowIds(this.queries, carriers, new Set(drop));
+    let scanMs = 0;
+    let again: string[] = [];
+    if (carriers.gained.length > 0 || carriers.membersGained.length > 0) {
+      const tScan = Date.now();
+      again = matlabFilesNaming(this.queries, this.rootDir, carriers.gained, new Set(filesToIndex), carriers.membersGained).map((f) => f.filePath);
+      scanMs = Date.now() - tScan;
+    }
+    if (drop.length > 0 || reopen.length > 0 || again.length > 0) {
+      const done = await this.runMatlabCarrierStep({ drop, reopen, files: again }, onFileChange, backpressure);
+      changedFilePaths.push(...done.extracted);
+      failedFilePaths.push(...done.failed);
+      nodesUpdated += done.nodes;
+    }
+    if (process.env.CODEGRAPH_SYNTH_TIMINGS && (carriers.gained.length > 0 || carriers.membersGained.length > 0 || drop.length > 0 || reopen.length > 0)) {
+      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; members ${carriers.membersGained.join(', ')} gained; word scan ${scanMs}ms; ${again.length} files extracted again; ${drop.length} rows dropped; ${reopen.length} rows resolved again)`);
     }
 
     // Modified ES modules whose `export … from` statements changed (#2978): a

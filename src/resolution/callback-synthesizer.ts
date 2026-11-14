@@ -32,6 +32,7 @@ import { goframeRouteEdges } from './goframe-synthesizer';
 import { goFuncFieldEdges } from './go-func-field-synthesizer';
 import { isMatlabClassFolderFile, matlabClassFolderContainsEdges } from './matlab-class-folders';
 import { matlabArgumentEdges } from './matlab-argument-synthesizer';
+import { matlabOverrideEdges } from './matlab-override-synthesizer';
 import { looksLikeMatlab } from '../extraction/grammars';
 import { expoRouterReturnEdges } from './expo-router-synthesizer';
 import { nextLinkEdges, nextProxyEdges } from './next-router-synthesizer';
@@ -5449,6 +5450,8 @@ export const SYNTH_PASSES: SynthPassDef[] = [
   { name: 'nixOptionEdges', gate: (has) => has('nix'), run: (q, _c, y) => nixOptionPathEdges(q, y) },
   // `@Cls/m.m` — a class folder's method file is the folder's class's member (structural, no provenance).
   { name: 'matlabClassFolderEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabClassFolderContainsEdges(q, y) },
+  // `ALGORITHM::main` onto each subclass's override; a self call of a method only subclasses define onto theirs.
+  { name: 'matlabOverrideEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabOverrideEdges(q, y) },
   // `feval(regr, S)` onto each function a call of dacefit passes as `regr` (`'regpoly0'`, `@regpoly1`).
   { name: 'matlabArgumentEdges', gate: (has) => has('matlab'), run: (q, c, y) => matlabArgumentEdges(q, c, y, MAX_CALLBACKS_PER_CHANNEL) },
 ];

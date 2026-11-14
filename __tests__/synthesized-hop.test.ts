@@ -123,4 +123,14 @@ describe('describeSynthesizedHop', () => {
     expect(describeSynthesizedHop(edge({ confidence: 0.5 }))).toBeNull();
     expect(describeSynthesizedHop(null)).toBeNull();
   });
+
+  it('says a MATLAB override hop is one of many when asked, and labels a resolved MATLAB receiver guess', () => {
+    expect(describeSynthesizedHop(edge({ synthesizedBy: 'matlab-override', via: 'main' }), { of: 375 })?.summary).toBe('base → override, 1 of 375');
+    expect(describeSynthesizedHop(edge({ synthesizedBy: 'matlab-override', via: 'main' }))?.summary).toBe('base → override');
+    expect(describeSynthesizedHop(edge({ synthesizedBy: 'matlab-override', via: 'main' }), { of: 1 })?.summary).toBe('base → override');
+    expect(describeSynthesizedHop(edge({ synthesizedBy: 'matlab-subclass-method', via: 'step' }), { of: 3 })?.summary).toBe('self call → subclass method, 1 of 3');
+    expect(describeSynthesizedHop(edge({ synthesizedBy: 'matlab-subclass-method', via: 'step' }))?.summary).toBe('self call → subclass method');
+    // No synthesizer: a resolution edge marked a guess, with no wiring site.
+    expect(describeSynthesizedHop(edge({ via: 'receiver-name', refName: 'Problem.Evaluation' }))).toEqual({ summary: 'receiver named after its class', detail: '' });
+  });
 });
