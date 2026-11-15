@@ -78,19 +78,31 @@ export function edgesFrom(cg: CodeGraph, file: string, symbol?: string): string[
     .sort();
 }
 
-/** `file:line kind:name` of every row left in `root`'s unresolved_refs, sorted. */
+/**
+ * `file:line kind:name` of every live row left in `root`'s unresolved_refs
+ * (pending or failed: not a dormant one, which no reader counts), sorted.
+ */
 export function unresolvedRows(root: string): string[] {
+  return refRows(root, "status <> 'dormant'");
+}
+
+/** `file:line kind:name` of every dormant row in `root`'s unresolved_refs (a MATLAB call no symbol answers now), sorted. */
+export function dormantRows(root: string): string[] {
+  return refRows(root, "status = 'dormant'");
+}
+
+function refRows(root: string, where: string): string[] {
   const db = DatabaseConnection.open(getDatabasePath(root));
   try {
-    const rows = db.getDb().prepare('SELECT file_path AS file, line, reference_kind AS kind, reference_name AS name FROM unresolved_refs').all() as Array<{ file: string; line: number; kind: string; name: string }>;
+    const rows = db.getDb().prepare(`SELECT file_path AS file, line, reference_kind AS kind, reference_name AS name FROM unresolved_refs WHERE ${where}`).all() as Array<{ file: string; line: number; kind: string; name: string }>;
     return rows.map((r) => `${r.file}:${r.line} ${r.kind}:${r.name}`).sort();
   } finally {
     db.close();
   }
 }
 
-/** Indexes a throwaway project holding `files`: its {@link allEdges}, {@link classMembers} and {@link unresolvedRows}. */
-export async function indexOfProject(files: Record<string, string>): Promise<{ edges: string[]; members: string[]; unresolved: string[] }> {
+/** Indexes a throwaway project holding `files`: its {@link allEdges}, {@link classMembers}, {@link unresolvedRows} and {@link dormantRows}. */
+export async function indexOfProject(files: Record<string, string>): Promise<{ edges: string[]; members: string[]; unresolved: string[]; dormant: string[] }> {
   const root = tempDir('cg-matlab-project-');
   try {
     writeTree(root, files);
@@ -103,7 +115,7 @@ export async function indexOfProject(files: Record<string, string>): Promise<{ e
     } finally {
       cg.close();
     }
-    return { edges, members, unresolved: unresolvedRows(root) };
+    return { edges, members, unresolved: unresolvedRows(root), dormant: dormantRows(root) };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -114,12 +126,14 @@ export async function edgesOfProject(files: Record<string, string>): Promise<str
   return (await indexOfProject(files)).edges;
 }
 
-/** One step of {@link syncedAndFreshEachStep}: the synced and fresh edges and unresolved rows. */
+/** One step of {@link syncedAndFreshEachStep}: the synced and fresh edges, live unresolved rows and dormant rows. */
 export interface SyncedStep {
   synced: string[];
   fresh: string[];
   syncedRows: string[];
   freshRows: string[];
+  syncedDormant: string[];
+  freshDormant: string[];
 }
 
 /**
@@ -143,7 +157,7 @@ export async function syncedAndFreshEachStep(
 export async function syncedAndFresh(
   initial: Record<string, string>,
   ...steps: Array<Record<string, string | null>>
-): Promise<{ steps: string[][]; synced: string[]; fresh: string[]; syncedRows: string[]; freshRows: string[] }> {
+): Promise<{ steps: string[][] } & SyncedStep> {
   const run = await syncSteps(initial, steps);
   const last = run.steps[run.steps.length - 1]!;
   return { steps: [run.initial, ...run.steps.map((s) => s.synced)], ...last };
@@ -171,7 +185,11 @@ async function syncSteps(initial: Record<string, string>, steps: Array<Record<st
         } finally {
           fresh.close();
         }
-        out.push({ synced: allEdges(cg), fresh: freshEdges, syncedRows: unresolvedRows(root), freshRows: unresolvedRows(freshRoot) });
+        out.push({
+          synced: allEdges(cg), fresh: freshEdges,
+          syncedRows: unresolvedRows(root), freshRows: unresolvedRows(freshRoot),
+          syncedDormant: dormantRows(root), freshDormant: dormantRows(freshRoot),
+        });
       } finally {
         fs.rmSync(freshRoot, { recursive: true, force: true });
       }

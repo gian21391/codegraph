@@ -339,6 +339,7 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     run.forEach((step, i) => {
       expect(step.synced, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} edges`).toEqual(step.fresh);
       expect(step.syncedRows, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} rows`).toEqual(step.freshRows);
+      expect(step.syncedDormant, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} dormant rows`).toEqual(step.freshDormant);
     });
   };
 
@@ -374,10 +375,11 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     expect(run[0]!.syncedRows).toEqual([]);
   }, 180_000);
 
-  // Added or deleted, the same carrier is not followed for a bare read or a
-  // dispatched call: a known gap (sync != fresh), left for the step that
-  // keeps such reads as dormant rows. A built-in's own call is followed.
-  it('a sync that adds or deletes the only carrier of a bare read or of a dispatched built-in\'s name leaves the untouched caller as it was', async () => {
+  // Added or deleted, the same carrier is followed for a bare read and a
+  // dispatched call: their rows sleep while nothing carries the name, and
+  // wake when a sync gives it a carrier. A built-in's own call is followed
+  // by extracting its files again.
+  it('a sync ends where a fresh index ends when it adds or deletes the only carrier of a bare read or of a dispatched built-in\'s name', async () => {
     const steps: Array<Record<string, string | null>> = [
       { 'blob/color.m': COLOR },
       { 'blob/color.m': null },
@@ -385,13 +387,16 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
       { 'EPICS/datestr.m': null },
     ];
     const run = await syncedAndFreshEachStep(CARRIED, ...steps);
-    expectEachStepFresh([run[1]!, run[2]!], [steps[1]!, steps[2]!]);
+    expectEachStepFresh(run, steps);
+    // The untouched caller's bare read links to the function added, and
+    // sleeps again when it goes; the dispatched call wakes while the `.m`
+    // file carries its name, and sleeps again when it goes.
+    expect(run[0]!.synced).toContain('user.m user -calls-> color @ blob/color.m');
+    expect(run[1]!.syncedDormant).toEqual(['user.m:3 calls:EPICS2MatlabTime::datestr', 'user.m:4 calls:color']);
     expect(run[2]!.synced).toContain('user.m user -calls-> datestr @ EPICS/datestr.m');
-    expect(run[0]!.fresh).toEqual([...run[0]!.synced, 'user.m user -calls-> color @ blob/color.m'].sort());
-    expect(run[0]!.syncedRows).toEqual(run[0]!.freshRows);
-    expect(run[3]!.synced).toEqual(run[3]!.fresh);
-    expect(run[3]!.freshRows).toEqual([]);
-    expect(run[3]!.syncedRows).toEqual(['user.m:3 calls:EPICS2MatlabTime::datestr']);
+    expect(run[2]!.syncedDormant).toEqual(['user.m:4 calls:color']);
+    expect(run[3]!.syncedRows).toEqual([]);
+    expect(run[3]!.syncedDormant).toContain('user.m:3 calls:EPICS2MatlabTime::datestr');
   }, 180_000);
 });
 
@@ -416,8 +421,14 @@ describe('MATLAB recovery from an interrupted index', () => {
       writeTree(freshRoot, files);
       (await CodeGraph.init(freshRoot, { index: true })).close();
       const fresh = rows(freshRoot);
-      // A call written with arguments that resolves to nothing stays; the bare reads nothing defines go.
-      expect(fresh).toEqual(['main.m:4 missing_fn failed']);
+      // A call written with arguments that resolves to nothing stays; the bare
+      // reads and the member call nothing defines are kept dormant.
+      expect(fresh).toEqual([
+        'helper.m:2 nope_read dormant',
+        'main.m:2 cfg dormant',
+        'main.m:4 missing_fn failed',
+        'main.m:5 a.field dormant',
+      ]);
 
       writeTree(root, files);
       const cg = await CodeGraph.init(root, { index: true });
@@ -468,13 +479,15 @@ describe('MATLAB sync in a project with Objective-C', () => {
       ]);
       expect(allEdges(cg).filter((e) => e.startsWith('main.m '))).toEqual(['main.m main -calls-> setup_paths.m @ setup_paths.m']);
       // The script re-read as Objective-C: the MATLAB call into it still has
-      // to go, though the file is no MATLAB file any more.
+      // to go, though the file is no MATLAB file any more. A file stored in
+      // another language takes every edge into it back to its reference when
+      // it is stored, so none is left for the scripts pass to settle.
       calls.length = 0;
       writeTree(root, { 'setup_paths.m': '#import <Foundation/Foundation.h>\n@implementation Setup\n- (void)go {\n}\n@end\n' });
       await cg.sync();
       expect(cg.getFiles().find((f) => f.path === 'setup_paths.m')?.language).toBe('objc');
       expect(allEdges(cg).filter((e) => e.startsWith('main.m '))).toEqual([]);
-      expect(calls).toEqual([[['setup_paths.m'], ['setup_paths.m']]]);
+      expect(calls).toEqual([]);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });

@@ -17,7 +17,7 @@ import { createResolver } from '../src/resolution';
 import { matchMatlabReference } from '../src/resolution/matlab-lookup';
 import { extractFromSource } from '../src/extraction';
 import { isMatlabClassFolderFile } from '../src/resolution/matlab-class-folders';
-import { allEdges, edgesFrom, edgesOfProject, indexOfProject, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
+import { allEdges, dormantRows, edgesFrom, edgesOfProject, indexOfProject, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -1201,22 +1201,33 @@ describe('MATLAB unresolved rows', () => {
     }
   });
 
-  it('on a sync, links a call written with arguments to a function added later everywhere, and a bare read of it only in the files it re-indexes', async () => {
+  it('on a sync, links a call written with arguments and a bare read of it to a function added later everywhere, as a full re-index does', async () => {
     const root = tempDir('cg-matlab-rows-sync-');
     const caller = (name: string) => `function ${name}()\nt = later;\nlater(1);\nend\n`;
     writeTree(root, { 'untouched.m': caller('untouched'), 'edited.m': caller('edited') });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       expect(unresolvedRows(root)).toEqual(['edited.m:3 calls:later', 'untouched.m:3 calls:later']);
+      // The bare reads nothing defines are kept dormant, counted by no reader.
+      expect(dormantRows(root)).toEqual(['edited.m:2 calls:later', 'untouched.m:2 calls:later']);
+      expect([...cg.getUnresolvedNamesAmong(['later'])]).toEqual(['later']);
       writeTree(root, { 'later.m': 'function later(n)\nend\n', 'edited.m': caller('edited') + '% edited\n' });
       await cg.sync();
-      // untouched.m's bare read was dropped when nothing defined `later`, and no row is left to retry.
-      // A known gap (sync != fresh), left for the step that keeps such reads as dormant rows.
+      // untouched.m's dormant bare read wakes, as a fresh index links it.
       expect(allEdges(cg)).toEqual([
         'edited.m edited -calls-> later @ later.m',
         'edited.m edited -calls-> later @ later.m',
         'untouched.m untouched -calls-> later @ later.m',
+        'untouched.m untouched -calls-> later @ later.m',
       ]);
+      expect(allEdges(cg)).toEqual((await indexOfProject({ 'untouched.m': caller('untouched'), 'edited.m': caller('edited') + '% edited\n', 'later.m': 'function later(n)\nend\n' })).edges);
+      expect(unresolvedRows(root)).toEqual([]);
+      expect(dormantRows(root)).toEqual([]);
+      // And back: the function deleted, both bare reads sleep again, wherever they are.
+      fs.rmSync(path.join(root, 'later.m'));
+      await cg.sync();
+      expect(dormantRows(root)).toEqual(['edited.m:2 calls:later', 'untouched.m:2 calls:later']);
+      expect(unresolvedRows(root)).toEqual(['edited.m:3 calls:later', 'untouched.m:3 calls:later']);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
@@ -1260,9 +1271,9 @@ describe('MATLAB unresolved rows', () => {
     try {
       const db = DatabaseConnection.open(getDatabasePath(root));
       try {
-        const rows = db.getDb().prepare('SELECT reference_name AS name, line FROM unresolved_refs').all() as Array<{ name: string; line: number }>;
-        // `undefined_fn(1)` is kept, the bare read of it dropped.
-        expect(rows.map((r) => `${r.name}:${r.line}`)).toEqual(['undefined_fn:2']);
+        const rows = db.getDb().prepare('SELECT reference_name AS name, line, status FROM unresolved_refs ORDER BY line').all() as Array<{ name: string; line: number; status: string }>;
+        // `undefined_fn(1)` is kept, the bare read of it dormant.
+        expect(rows.map((r) => `${r.name}:${r.line}:${r.status}`)).toEqual(['undefined_fn:2:failed', 'undefined_fn:3:dormant']);
       } finally {
         db.close();
       }
@@ -1272,7 +1283,7 @@ describe('MATLAB unresolved rows', () => {
     }
   });
 
-  it('deletes a hand-built ref (no row id) by its key only when no failure of that key is kept', () => {
+  it('deletes a hand-built ref (no row id) by its key only when no failure of that key is kept, and keeps none dormant', () => {
     const root = tempDir('cg-matlab-rows-key-');
     const db = DatabaseConnection.initialize(path.join(root, 'test.db'));
     try {
@@ -1293,7 +1304,8 @@ describe('MATLAB unresolved rows', () => {
       q.insertUnresolvedRefsBatch(refs);
       createResolver(root, q).resolveAndPersist(refs.map((r) => ({ ...r })));
       const rows = db.getDb().prepare('SELECT reference_name AS name, line, status FROM unresolved_refs ORDER BY line').all() as Array<{ name: string; line: number; status: string }>;
-      // The key delete would have taken `nowhere(1)`'s row too: both stay, parked as failed. `gone` goes.
+      // The key delete would have taken `nowhere(1)`'s row too: both stay, parked as failed. `gone`, which a
+      // ref read from the table would keep dormant, goes: no index or sync resolves a ref with no row id.
       expect(rows.map((r) => `${r.name}:${r.line}:${r.status}`)).toEqual(['nowhere:2:failed', 'nowhere:3:failed']);
     } finally {
       db.close();

@@ -19,7 +19,7 @@ import { ReferenceResolver } from '../src/resolution';
 import { matchMatlabReference } from '../src/resolution/matlab-lookup';
 import { describeSynthesizedHop } from '../src/graph/synthesized-hop';
 import { ToolHandler } from '../src/mcp/tools';
-import { allEdges, indexOfProject, edgesOfProject, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree, type SyncedStep } from './matlab-helpers';
+import { allEdges, dormantRows, indexOfProject, edgesOfProject, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree, type SyncedStep } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -515,6 +515,7 @@ describe('MATLAB parameter named after its class (G3)', () => {
     for (const st of steps) {
       expect(st.synced).toEqual(st.fresh);
       expect(st.syncedRows).toEqual(st.freshRows);
+      expect(st.syncedDormant).toEqual(st.freshDormant);
     }
   }, 120_000);
 
@@ -561,6 +562,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     expect(r.steps.map((s) => s.filter((e) => e.includes('A::step -calls-> B::step')).length)).toEqual([0, 1, 0]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when a classdef line\'s superclass changes', async () => {
@@ -571,6 +573,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     expect(r.synced.filter((e) => e.includes('-> B::step'))).toEqual(['C.m C::step -calls-> B::step @ B.m']);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when the base method comes later: the self call reaches the subclasses, then the base and its override', async () => {
@@ -585,6 +588,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     ]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when the class a parameter is named after is added, or renamed', async () => {
@@ -604,6 +608,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     ]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when a property is added with the name of a member read without an argument list', async () => {
@@ -614,6 +619,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     expect(r.synced.filter((e) => e.includes('Total'))).toEqual([]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when a property is added with the name of a member read without an argument list that another class has a method of', async () => {
@@ -628,6 +634,7 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     // The row in user.m, which the sync left alone, goes as a fresh index's does.
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 
   it('when a method file is added under a class folder', async () => {
@@ -641,15 +648,17 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
     expect(r.synced.filter((e) => e.includes('-> Circle::area'))).toEqual(['@Shape/Shape.m Shape::area -calls-> Circle::area @ @Circle/area.m']);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   });
 });
 
 describe('MATLAB member call rows: kept while the member has a carrier, and a sync keeps that true', () => {
   const withProps = (code: string, props: string): string => code.replace('    methods\n', `    properties\n${props}    end\n    methods\n`);
-  const expectEveryStepFresh = (steps: Array<{ synced: string[]; fresh: string[]; syncedRows: string[]; freshRows: string[] }>): void => {
+  const expectEveryStepFresh = (steps: SyncedStep[]): void => {
     for (const step of steps) {
       expect(step.synced).toEqual(step.fresh);
       expect(step.syncedRows).toEqual(step.freshRows);
+      expect(step.syncedDormant).toEqual(step.freshDormant);
     }
   };
 
@@ -866,6 +875,7 @@ describe('MATLAB member call whose name the value interpreter built (review 2, c
     for (const st of steps) {
       expect(st.synced).toEqual(st.fresh);
       expect(st.syncedRows).toEqual(st.freshRows);
+      expect(st.syncedDormant).toEqual(st.freshDormant);
     }
     const root = tempDir('cg-matlab-dispatch-computed-');
     writeTree(root, { 'caller.m': CALLER });
@@ -944,6 +954,7 @@ describe('MATLAB kept member rows past the retry ceiling (review 2, cases 6 and 
       expect(st.synced).toEqual(st.fresh);
       expect(st.syncedRows.length).toBe(st.freshRows.length);
       expect(st.syncedRows).toEqual(st.freshRows);
+      expect(st.syncedDormant).toEqual(st.freshDormant);
     }
   };
 
@@ -965,19 +976,19 @@ describe('MATLAB kept member rows past the retry ceiling (review 2, cases 6 and 
   }, 600_000);
 });
 
-describe('MATLAB member scan: linear in the text, and started by MATLAB names only', () => {
-  it('finds a member written `.f`, `. f`, `@f` or `f@`, and a word whole', () => {
-    const hit = matlabNameScan(new Set(['beep']), new Set(['recalib']));
-    expect(['a.recalib(2)', 'a. recalib(2)', 'a .\n  recalib', 'obj@recalib(x)', 'recalib @Base(obj)', 'beep;', 'x = beep'].filter((t) => !hit(t))).toEqual([]);
-    expect(['recalib(2)', 'a.recalib2(1)', 'a.xrecalib', 'beeper', 'my_beep', '1recalib', 'recalib = 3'].filter(hit)).toEqual([]);
+describe('MATLAB carrier step: a word scan for the built-ins, and member rows woken by MATLAB names only', () => {
+  it('finds a word whole', () => {
+    const hit = matlabNameScan(new Set(['beep']));
+    expect(['beep;', 'x = beep', 'a.beep(2)'].filter((t) => !hit(t))).toEqual([]);
+    expect(['beeper', 'my_beep', '1beep'].filter(hit)).toEqual([]);
     // Past the pattern's size, every word is looked up: the same answers.
     const many = new Set(['beep', ...Array.from({ length: 40 }, (_, i) => `zz${i}`)]);
-    const wide = matlabNameScan(many, new Set(['recalib']));
+    const wide = matlabNameScan(many);
     expect(['beep;', 'x = beep', 'zz7(1)'].filter((t) => !wide(t))).toEqual([]);
     expect(['beeper', 'my_beep', 'zz77'].filter(wide)).toEqual([]);
   });
 
-  it('starts no member scan for a JavaScript file\'s new names, and a sync still ends where a fresh index does', async () => {
+  it('wakes no member row for a JavaScript file\'s new names, and a sync still ends where a fresh index does', async () => {
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
@@ -1001,13 +1012,16 @@ describe('MATLAB member scan: linear in the text, and started by MATLAB names on
       else process.env.CODEGRAPH_SYNTH_TIMINGS = prior;
     }
     const carrierLines = lines.filter((l) => l.includes('sync-matlab-builtin-carriers'));
-    // The JavaScript step starts nothing; the MATLAB method does.
-    expect(carrierLines.filter((l) => /members [^;]*\bWeight\b/.test(l))).toEqual([]);
-    expect(carrierLines.filter((l) => /members [^;]*\bTotal\b/.test(l)).length).toBe(1);
+    // The JavaScript step wakes nothing (its names are no MATLAB member's
+    // carriers), and re-extracts nothing; the MATLAB method wakes one row.
+    expect(carrierLines.length).toBe(2);
+    expect(carrierLines[0]).toMatch(/: 0 rows woken, 0 put to sleep, 0 resolved again; word scan 0ms; 0 files extracted again/);
+    expect(carrierLines[1]).toMatch(/: 1 rows woken, 0 put to sleep, 0 resolved again; word scan 0ms; 0 files extracted again/);
     expect(steps.map((st) => st.synced.filter((e) => e.startsWith('user.m ') && e.includes('-calls->')))).toEqual([[], ['user.m user -calls-> Model::Total @ Model.m']]);
     for (const st of steps) {
       expect(st.synced).toEqual(st.fresh);
       expect(st.syncedRows).toEqual(st.freshRows);
+      expect(st.syncedDormant).toEqual(st.freshDormant);
     }
   }, 120_000);
 });
@@ -1028,7 +1042,7 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
     initial: Record<string, string>,
     steps: Array<Record<string, string | null>>,
     kill: () => () => void,
-  ): Promise<{ synced: string[]; fresh: string[]; syncedRows: string[]; freshRows: string[]; record: string | null; afterIndexAll: string | null }> {
+  ): Promise<SyncedStep & { record: string | null; afterIndexAll: string | null }> {
     const root = tempDir('cg-matlab-killed-');
     const freshRoot = tempDir('cg-matlab-killed-fresh-');
     const current: Record<string, string | null> = { ...initial };
@@ -1055,6 +1069,7 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
       await cg.sync();
       const synced = allEdges(cg);
       const syncedRows = unresolvedRows(root);
+      const syncedDormant = dormantRows(root);
       writeTree(freshRoot, Object.fromEntries(Object.entries(current).filter(([, c]) => c !== null)));
       const fresh = await CodeGraph.init(freshRoot, { index: true });
       let freshEdges: string[];
@@ -1063,7 +1078,7 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
       } finally {
         fresh.close();
       }
-      return { synced, fresh: freshEdges, syncedRows, freshRows: unresolvedRows(freshRoot), record, afterIndexAll: null };
+      return { synced, fresh: freshEdges, syncedRows, freshRows: unresolvedRows(freshRoot), syncedDormant, freshDormant: dormantRows(freshRoot), record, afterIndexAll: null };
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
@@ -1081,7 +1096,7 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
     }
   }
 
-  /** Makes the first re-extraction of the carrier step throw: a sync killed after its rows are dropped. */
+  /** Makes the first re-extraction of the carrier step throw: a sync killed after its rows are dropped, woken or put to sleep. */
   const killAtReextract = (): (() => void) => {
     const proto = ExtractionOrchestrator.prototype as unknown as { indexFile: (p: string, again?: boolean) => Promise<unknown> };
     const orig = proto.indexFile;
@@ -1094,58 +1109,86 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
     };
   };
 
-  /** Makes the carrier step's first row deletion throw: a sync killed after the step is recorded, before it changed anything. */
-  const killAtDrop = (): (() => void) => {
-    const proto = QueryBuilder.prototype as unknown as { deleteReferencesByRowIds: (ids: number[]) => number };
-    const orig = proto.deleteReferencesByRowIds;
-    proto.deleteReferencesByRowIds = function () {
-      throw new Error('simulated kill at the carrier drop');
+  /** Makes the carrier step's first wake or sleep throw: a sync killed after the step is recorded, before its dormant rows changed. */
+  const killAtDormancy = (): (() => void) => {
+    const proto = QueryBuilder.prototype as unknown as { setMatlabDormancy: (wake: number[], sleep: number[]) => number };
+    const orig = proto.setMatlabDormancy;
+    proto.setMatlabDormancy = function () {
+      throw new Error('simulated kill at the carrier dormancy');
     };
     return () => {
-      proto.deleteReferencesByRowIds = orig;
+      proto.setMatlabDormancy = orig;
     };
   };
 
-  const expectFresh = (r: { synced: string[]; fresh: string[]; syncedRows: string[]; freshRows: string[] }): void => {
+  const expectFresh = (r: SyncedStep): void => {
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
+    expect(r.syncedDormant).toEqual(r.freshDormant);
   };
 
-  it('re-extracts the files of a member that gained its carrier, killed at the first of them (case 2)', async () => {
-    const r = await killedThenSynced({ 'Model.m': MODEL_WITH, 'user.m': USER }, [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH }], killAtReextract);
+  it('wakes the rows of a member that gained its carrier, killed before the wake (case 2)', async () => {
+    const r = await killedThenSynced({ 'Model.m': MODEL_WITH, 'user.m': USER }, [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH }], killAtDormancy);
     expect(r.synced).toContain('user.m user -calls-> Model::recalib @ Model.m');
     expectFresh(r);
-    expect(JSON.parse(r.record!).files).toEqual(['user.m']);
+    expect(JSON.parse(r.record!)).toMatchObject({ wake: [expect.any(Number)], sleep: [], files: [] });
   }, 120_000);
 
-  it('drops the rows of a member that lost its carrier, killed before the drop', async () => {
-    const r = await killedThenSynced({ 'Model.m': MODEL_WITH, 'Other.m': OTHER, 'rater.m': RATER }, [{ 'Other.m': null }], killAtDrop);
+  it('puts to sleep the rows of a member that lost its carrier, killed before', async () => {
+    const r = await killedThenSynced({ 'Model.m': MODEL_WITH, 'Other.m': OTHER, 'rater.m': RATER }, [{ 'Other.m': null }], killAtDormancy);
     expect(r.syncedRows).toEqual([]);
+    expect(r.syncedDormant).toEqual(['rater.m:3 calls:Model::Rate']);
     expectFresh(r);
-    expect(JSON.parse(r.record!).drop.length).toBe(1);
+    expect(JSON.parse(r.record!)).toMatchObject({ wake: [], sleep: [expect.any(Number)] });
   }, 120_000);
 
-  it('finishes a step that drops and re-extracts, killed between the two', async () => {
+  it('finishes a step that wakes and re-extracts, killed between the two', async () => {
+    const BEEPER = 'function beeper()\nbeep\nend\n';
     const r = await killedThenSynced(
-      { 'Model.m': MODEL_WITH, 'Other.m': OTHER, 'rater.m': RATER, 'user.m': USER },
-      [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH, 'Other.m': null }],
+      { 'Model.m': MODEL_WITH, 'user.m': USER, 'beeper.m': BEEPER },
+      [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH, 'tools/beep.m': 'function beep()\nend\n' }],
       killAtReextract,
     );
     expect(r.synced).toContain('user.m user -calls-> Model::recalib @ Model.m');
+    expect(r.synced).toContain('beeper.m beeper -calls-> beep @ tools/beep.m');
     expectFresh(r);
-    expect(JSON.parse(r.record!)).toMatchObject({ files: ['user.m'] });
+    expect(JSON.parse(r.record!)).toMatchObject({ wake: [expect.any(Number)], files: ['beeper.m'] });
+  }, 120_000);
+
+  it('accepts a record written before dormant rows were kept (no wake, no sleep)', async () => {
+    const root = tempDir('cg-matlab-killed-old-record-');
+    try {
+      writeTree(root, { 'Model.m': MODEL_WITH, 'user.m': USER });
+      const cg = await CodeGraph.init(root, { index: true });
+      cg.close();
+      const db = DatabaseConnection.open(getDatabasePath(root));
+      try {
+        new QueryBuilder(db.getDb()).setMetadata(MATLAB_CARRIER_STEP_KEY, JSON.stringify({ drop: [], reopen: [], files: ['user.m'] }));
+      } finally {
+        db.close();
+      }
+      const again = await CodeGraph.open(root);
+      try {
+        await again.sync();
+        expect(allEdges(again)).toContain('user.m user -calls-> Model::recalib @ Model.m');
+      } finally {
+        again.close();
+      }
+      expect(carrierRecord(root)).toBeNull();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }, 120_000);
 
   it('is cleared by a full index, which finishes it', async () => {
     const root = tempDir('cg-matlab-killed-index-');
-    const freshRoot = tempDir('cg-matlab-killed-index-fresh-');
     try {
       writeTree(root, { 'Model.m': MODEL_WITH, 'user.m': USER });
       let cg = await CodeGraph.init(root, { index: true });
       writeTree(root, { 'Model.m': MODEL_WITHOUT });
       await cg.sync();
       writeTree(root, { 'Model.m': MODEL_WITH });
-      const restore = killAtReextract();
+      const restore = killAtDormancy();
       try {
         await expect(cg.sync()).rejects.toThrow('simulated kill');
       } finally {
@@ -1161,11 +1204,11 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
         cg.close();
       }
       expect(carrierRecord(root)).toBeNull();
-      writeTree(freshRoot, { 'Model.m': MODEL_WITH, 'user.m': USER });
-      expect(unresolvedRows(root)).toEqual((await indexOfProject({ 'Model.m': MODEL_WITH, 'user.m': USER })).unresolved);
+      const fresh = await indexOfProject({ 'Model.m': MODEL_WITH, 'user.m': USER });
+      expect(unresolvedRows(root)).toEqual(fresh.unresolved);
+      expect(dormantRows(root)).toEqual(fresh.dormant);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(freshRoot, { recursive: true, force: true });
     }
   }, 120_000);
 });

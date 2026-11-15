@@ -136,6 +136,18 @@ export const PARKED_MATLAB_MEMBER_READ_SQL = `(language = 'matlab' AND reference
   AND coalesce(candidates, '') NOT LIKE '%"dispatch:%')`;
 
 /**
+ * A row of a MATLAB call kept for the sync that gives its name a carrier
+ * (see ../resolution/matlab-failures): no symbol answers it now, and no
+ * reader counts it — it is neither a call leaving the index nor a name the
+ * resolver failed to follow. Every reader that does not filter on an explicit
+ * `pending` or `failed` status leaves these out with LIVE_REF_SQL.
+ */
+export const DORMANT_REF_STATUS = 'dormant';
+
+/** The rows a reader counts: any but a dormant one (see DORMANT_REF_STATUS). */
+const LIVE_REF_SQL = `status <> '${DORMANT_REF_STATUS}'`;
+
+/**
  * Which nodes a name probe counts: of any kind but `exceptKinds`, and of
  * `language` alone when one is given.
  */
@@ -703,6 +715,15 @@ export class QueryBuilder {
       : this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
     if (found) this.presentSchema.add(key);
     return found;
+  }
+
+  /**
+   * LIVE_REF_SQL, or a term true of every row where `unresolved_refs` has no
+   * status column yet (a read-only open of an older index: see hasSchema),
+   * which holds no dormant row.
+   */
+  private liveRefSql(): string {
+    return this.hasSchema('unresolved_refs', 'status') ? LIVE_REF_SQL : '1';
   }
 
   /**
@@ -3076,7 +3097,8 @@ export class QueryBuilder {
    * we failed to follow", and a maybe has to count as a yes. A reference
    * parked under its module (`store.get` → 'module:store') is matched on the
    * tail its name gives. A MATLAB member read parked for a later sync (see
-   * PARKED_MATLAB_MEMBER_READ_SQL) does not count by its tail.
+   * PARKED_MATLAB_MEMBER_READ_SQL) does not count by its tail, and a dormant
+   * row (DORMANT_REF_STATUS) not at all.
    *
    * Bounded-lookup like {@link getGeneratedPathsAmong}: the caller holds a
    * candidate list, so this is a chunked probe over `idx_unresolved_name`
@@ -3099,10 +3121,10 @@ export class QueryBuilder {
       const rows = (parked
         ? this.db
           .prepare(
-            `${byName}
+            `${byName} AND ${LIVE_REF_SQL}
             UNION
            SELECT DISTINCT name_tail AS name FROM unresolved_refs
-            WHERE name_tail IN (${placeholders}) AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}
+            WHERE name_tail IN (${placeholders}) AND ${LIVE_REF_SQL} AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}
             UNION
            SELECT DISTINCT ${MEMBER_TAIL_SQL} AS name FROM unresolved_refs
             WHERE ${MODULE_PARKED_SQL} AND ${MEMBER_TAIL_SQL} IN (${placeholders})`
@@ -3155,29 +3177,7 @@ export class QueryBuilder {
     return found;
   }
 
-  /**
-   * The failed MATLAB `calls` rows parked under one of `tails` (the member
-   * of `v.f`, `Cls::m`, `pkg::f`). Chunked probe over
-   * `idx_unresolved_failed_tail`.
-   */
-  getFailedMatlabCallsByTail(tails: Iterable<string>): Array<{ id: number; referenceName: string; candidates?: string[] }> {
-    const unique = [...new Set(tails)];
-    const out: Array<{ id: number; referenceName: string; candidates?: string[] }> = [];
-    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
-      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
-      const rows = this.db
-        .prepare(`SELECT id, reference_name, candidates FROM unresolved_refs
-                   WHERE status = 'failed' AND name_tail IN (${chunk.map(() => '?').join(',')})
-                     AND language = 'matlab' AND reference_kind = 'calls'`)
-        .all(...chunk) as Array<{ id: number; reference_name: string; candidates: string | null }>;
-      for (const row of rows) {
-        out.push({ id: row.id, referenceName: row.reference_name, ...(row.candidates ? { candidates: safeJsonParse(row.candidates, undefined) } : {}) });
-      }
-    }
-    return out;
-  }
-
-  /** The MATLAB rows, of any status, of a bare call or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe over `idx_unresolved_name`. */
+  /** The MATLAB rows, pending or failed, of a bare call or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe over `idx_unresolved_name`. */
   getMatlabCallRowsNamed(names: Iterable<string>): Array<{ id: number; filePath: string; name: string }> {
     const unique = [...new Set(names)];
     const out: Array<{ id: number; filePath: string; name: string }> = [];
@@ -3186,48 +3186,11 @@ export class QueryBuilder {
       const rows = this.db
         .prepare(`SELECT id, file_path, reference_name FROM unresolved_refs
                    WHERE reference_name IN (${chunk.map(() => '?').join(',')})
-                     AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`)
+                     AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref') AND ${LIVE_REF_SQL}`)
         .all(...chunk) as Array<{ id: number; file_path: string; reference_name: string }>;
       for (const row of rows) out.push({ id: row.id, filePath: row.file_path, name: row.reference_name });
     }
     return out;
-  }
-
-  /**
-   * The MATLAB rows, of any status, of a call or a handle (`calls`,
-   * `function_ref`) named one of `names` or parked under one (`T::f`,
-   * `v.f`), as references to judge: by name over `idx_unresolved_name`, by
-   * tail over `idx_unresolved_failed_tail`, and the pending ones (whose tail
-   * is not stored yet) by the tail their name gives.
-   */
-  getMatlabCallRefsUnder(names: Iterable<string>): Array<UnresolvedReference & { filePath: string; language: Language; rowId: number; nameTail?: string }> {
-    const unique = [...new Set(names)];
-    const wanted = new Set(unique);
-    const kinds = `language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`;
-    const byId = new Map<number, UnresolvedRefRow>();
-    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
-      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
-      const marks = chunk.map(() => '?').join(',');
-      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE reference_name IN (${marks}) AND ${kinds}`).all(...chunk) as UnresolvedRefRow[]) byId.set(row.id, row);
-      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE status = 'failed' AND name_tail IN (${marks}) AND ${kinds}`).all(...chunk) as UnresolvedRefRow[]) byId.set(row.id, row);
-    }
-    if (unique.length > 0) {
-      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE status = 'pending' AND ${kinds}`).all() as UnresolvedRefRow[]) {
-        if (wanted.has(referenceNameTail(row.reference_name, row.reference_kind))) byId.set(row.id, row);
-      }
-    }
-    return [...byId.values()].map((row) => ({
-      fromNodeId: row.from_node_id,
-      referenceName: row.reference_name,
-      referenceKind: row.reference_kind as EdgeKind,
-      line: row.line,
-      column: row.col,
-      candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
-      filePath: row.file_path,
-      language: row.language as Language,
-      rowId: row.id,
-      ...(row.status === 'failed' && row.name_tail ? { nameTail: row.name_tail } : {}),
-    }));
   }
 
   /**
@@ -3759,12 +3722,13 @@ export class QueryBuilder {
    * megabytes to say something a count already says. Rows come back in line
    * order, so a cap trims the END of the file, which is at least legible.
    * A MATLAB member read parked for a later sync (PARKED_MATLAB_MEMBER_READ_SQL)
-   * marks nothing leaving the index, and is left out.
+   * marks nothing leaving the index, and is left out, as is a dormant row
+   * (DORMANT_REF_STATUS).
    */
   getUnresolvedReferencesInFile(filePath: string, limit = 5000): UnresolvedReference[] {
     if (!this.stmts.getUnresolvedInFile) {
       this.stmts.getUnresolvedInFile = this.db.prepare(
-        `SELECT * FROM unresolved_refs WHERE file_path = ? AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL} ORDER BY line, col LIMIT ?`
+        `SELECT * FROM unresolved_refs WHERE file_path = ? AND ${this.liveRefSql()} AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL} ORDER BY line, col LIMIT ?`
       );
     }
     const rows = this.stmts.getUnresolvedInFile.all(filePath, limit) as UnresolvedRefRow[];
@@ -3790,12 +3754,13 @@ export class QueryBuilder {
    * index" instead of silently showing a callee list shorter than the body's
    * call sites, which reads as "nothing else happens here". A MATLAB member
    * read parked for a later sync (PARKED_MATLAB_MEMBER_READ_SQL) is none of
-   * those, and is left out, as by {@link getUnresolvedReferencesInFile}.
+   * those, and is left out, as is a dormant row, as by
+   * {@link getUnresolvedReferencesInFile}.
    */
   getUnresolvedReferencesFrom(fromNodeId: string): UnresolvedReference[] {
     if (!this.stmts.getUnresolvedFromNode) {
       this.stmts.getUnresolvedFromNode = this.db.prepare(
-        `SELECT * FROM unresolved_refs WHERE from_node_id = ? AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}`
+        `SELECT * FROM unresolved_refs WHERE from_node_id = ? AND ${this.liveRefSql()} AND NOT ${PARKED_MATLAB_MEMBER_READ_SQL}`
       );
     }
     const rows = this.stmts.getUnresolvedFromNode.all(fromNodeId) as UnresolvedRefRow[];
@@ -4710,7 +4675,7 @@ export class QueryBuilder {
   getUnresolvedByName(name: string): UnresolvedReference[] {
     if (!this.stmts.getUnresolvedByName) {
       this.stmts.getUnresolvedByName = this.db.prepare(
-        'SELECT * FROM unresolved_refs WHERE reference_name = ?'
+        `SELECT * FROM unresolved_refs WHERE reference_name = ? AND ${this.liveRefSql()}`
       );
     }
     const rows = this.stmts.getUnresolvedByName.all(name) as UnresolvedRefRow[];
@@ -4728,10 +4693,10 @@ export class QueryBuilder {
   }
 
   /**
-   * Get all unresolved references
+   * Get all unresolved references, but the dormant ones (DORMANT_REF_STATUS)
    */
   getUnresolvedReferences(): UnresolvedReference[] {
-    const rows = this.db.prepare('SELECT * FROM unresolved_refs').all() as UnresolvedRefRow[];
+    const rows = this.db.prepare(`SELECT * FROM unresolved_refs WHERE ${this.liveRefSql()}`).all() as UnresolvedRefRow[];
     return rows.map((row) => ({
       fromNodeId: row.from_node_id,
       referenceName: row.reference_name,
@@ -5038,11 +5003,12 @@ export class QueryBuilder {
   /**
    * Delete specific resolved references by (fromNodeId, referenceName, referenceKind) tuples.
    * More precise than deleteResolvedReferences — only removes refs that were actually resolved.
+   * A dormant row of the key (DORMANT_REF_STATUS) is no attempt's, and stays.
    */
   deleteSpecificResolvedReferences(refs: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }>): number {
     if (refs.length === 0) return 0;
     const stmt = this.db.prepare(
-      'DELETE FROM unresolved_refs WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ?'
+      `DELETE FROM unresolved_refs WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ? AND ${LIVE_REF_SQL}`
     );
     // Returns rows actually removed (SQLite `changes`, summed): the batched
     // resolution loop's non-progress guard keys on this — zero removals from
@@ -5102,12 +5068,13 @@ export class QueryBuilder {
    * when a changed file introduces a symbol that could satisfy them. name_tail
    * is (re)written here so rows inserted before the v8 migration get their
    * tail the first time they're attempted. A ref's own `nameTail`, when the
-   * resolver gave it one, replaces the tail its name gives.
+   * resolver gave it one, replaces the tail its name gives. A dormant row of
+   * the key stays dormant: no attempt was made of it.
    */
   markReferencesFailed(refs: Array<{ fromNodeId: string; referenceName: string; referenceKind: string; nameTail?: string }>): number {
     if (refs.length === 0) return 0;
     const stmt = this.db.prepare(
-      "UPDATE unresolved_refs SET status = 'failed', name_tail = ? WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ?"
+      `UPDATE unresolved_refs SET status = 'failed', name_tail = ? WHERE from_node_id = ? AND reference_name = ? AND reference_kind = ? AND ${LIVE_REF_SQL}`
     );
     let changed = 0;
     const markMany = this.db.transaction((items: typeof refs) => {
@@ -5139,6 +5106,78 @@ export class QueryBuilder {
       }
     });
     markMany(refs);
+    return changed;
+  }
+
+  /**
+   * Keep refs a completed resolution pass could not resolve, and whose name
+   * no symbol carries, as dormant rows (DORMANT_REF_STATUS; see
+   * ../resolution/matlab-failures), by row id, under the tail a sync that
+   * gives the name a carrier looks them up by. Returns the rows changed.
+   */
+  markReferencesDormantByRowIds(refs: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }>): number {
+    if (refs.length === 0) return 0;
+    const stmt = this.db.prepare(
+      `UPDATE unresolved_refs SET status = '${DORMANT_REF_STATUS}', name_tail = ? WHERE id = ?`
+    );
+    let changed = 0;
+    this.db.transaction((items: typeof refs) => {
+      for (const ref of items) {
+        changed += stmt.run(ref.nameTail ?? referenceNameTail(ref.referenceName, ref.referenceKind), ref.rowId).changes;
+      }
+    })(refs);
+    return changed;
+  }
+
+  /**
+   * The MATLAB rows of a call or a handle (`calls`, `function_ref`) of
+   * `status` (dormant or failed) parked under one of `tails`, as references
+   * to judge. One statement for all the tails: a failed row through
+   * `idx_unresolved_failed_tail`, a dormant one through
+   * `idx_unresolved_status`, whose dormant rows it reads once.
+   */
+  getMatlabCallRefsByTail(tails: Iterable<string>, status: 'failed' | typeof DORMANT_REF_STATUS): Array<UnresolvedReference & { filePath: string; language: Language; rowId: number; nameTail: string }> {
+    const unique = [...new Set(tails)];
+    if (unique.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM unresolved_refs
+          WHERE status = ? AND name_tail IN (SELECT value FROM json_each(?))
+            AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`
+      )
+      .all(status, JSON.stringify(unique)) as UnresolvedRefRow[];
+    return rows.map((row) => ({
+      fromNodeId: row.from_node_id,
+      referenceName: row.reference_name,
+      referenceKind: row.reference_kind as EdgeKind,
+      line: row.line,
+      column: row.col,
+      candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
+      filePath: row.file_path,
+      language: row.language as Language,
+      rowId: row.id,
+      nameTail: row.name_tail,
+    }));
+  }
+
+  /**
+   * Dormant rows back to pending, for the sync's sweep to resolve, with the
+   * empty tail of a row never attempted; and failed rows to dormant (see
+   * DORMANT_REF_STATUS), keeping their tail. By id; returns the rows changed.
+   */
+  setMatlabDormancy(wake: readonly number[], sleep: readonly number[]): number {
+    let changed = 0;
+    this.db.transaction(() => {
+      for (const [ids, sql] of [
+        [wake, `UPDATE unresolved_refs SET status = 'pending', name_tail = '' WHERE status = '${DORMANT_REF_STATUS}' AND id IN`],
+        [sleep, `UPDATE unresolved_refs SET status = '${DORMANT_REF_STATUS}' WHERE status = 'failed' AND id IN`],
+      ] as const) {
+        for (let i = 0; i < ids.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+          const chunk = ids.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+          changed += this.db.prepare(`${sql} (${chunk.map(() => '?').join(',')})`).run(...chunk).changes;
+        }
+      }
+    })();
     return changed;
   }
 

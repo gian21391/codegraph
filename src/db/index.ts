@@ -357,8 +357,10 @@ export class DatabaseConnection {
    * per-batch DELETE maintains all of them — the biggest single main-thread
    * stage on the dubbo profile (deletes 1.2s of a 5.4s resolution phase) —
    * so the batched loop drops them and rebuilds at the end, where the table
-   * holds only the surviving FAILED refs (resolved rows are gone), making
-   * the recreate near-free.
+   * holds only the surviving refs (resolved rows are gone): the FAILED ones,
+   * and a MATLAB project's DORMANT ones, making the recreate cheap. On a
+   * large MATLAB project the dormant rows are about twice the failed ones,
+   * and the recreate still well under a second.
    */
   private static readonly BULK_REF_INDEX_NAMES = [
     'idx_unresolved_from_node',

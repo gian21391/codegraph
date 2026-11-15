@@ -41,11 +41,15 @@ import { MATLAB_CALLABLE_NODES, MATLAB_NODES } from '../resolution/matlab-failur
 import {
   applyMatlabCarrierRows,
   matlabCarrierChanges,
+  matlabDormancyFlips,
   matlabFilesNaming,
+  readMatlabCarrierInputs,
   readMatlabCarrierStep,
-  recalledMatlabRowIds,
+  replayedMatlabCarrierChanges,
   uncarriedMatlabRowIds,
+  writeMatlabCarrierInputs,
   writeMatlabCarrierStep,
+  type MatlabCarrierChange,
   type MatlabCarrierStep,
 } from '../resolution/matlab-builtin-carriers';
 import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
@@ -2188,6 +2192,11 @@ export class ExtractionOrchestrator {
   private scopedMatcher: { key: string; matcher: ScopeIgnore } | null = null;
   /** The MATLAB built-in calls not worth storing (see MatlabInsertFilter). */
   private readonly matlabFilter: MatlabInsertFilter;
+  /**
+   * The files a re-index stored in another language than the one they had
+   * (see storeExtractionResult), since the sync, or the index, began.
+   */
+  private readonly languageChangedPaths = new Set<string>();
 
   constructor(rootDir: string, queries: QueryBuilder) {
     this.rootDir = rootDir;
@@ -2539,19 +2548,11 @@ export class ExtractionOrchestrator {
     // this run stores their files fresh. No-op on a fresh DB.
     this.healZeroNodeRows();
 
-    // A MATLAB carrier step a killed sync left unfinished (see
-    // resolution/matlab-builtin-carriers): its rows go now, and its files are
-    // stored afresh with the rest, as changed ones. Then the record goes.
-    // No-op on a fresh DB.
-    const unfinished = readMatlabCarrierStep(this.queries);
-    if (unfinished) {
-      applyMatlabCarrierRows(this.queries, unfinished);
-      for (const filePath of unfinished.files) {
-        const file = this.queries.getFileByPath(filePath);
-        if (file) this.queries.upsertFile({ ...file, contentHash: '' });
-      }
-      writeMatlabCarrierStep(this.queries, null);
-    }
+    // The MATLAB carrier steps a killed sync left (see
+    // replayKilledMatlabCarrierSteps): their rows change now, and their
+    // files are stored afresh with the rest, as changed ones. No-op on a
+    // fresh DB.
+    await this.replayKilledMatlabCarrierSteps(null);
 
     // Detect frameworks once per indexAll run using the scanned file list.
     // Names are passed to each parse call so framework-specific extractors
@@ -3444,10 +3445,19 @@ export class ExtractionOrchestrator {
     // position when the file defines a name more than once (#2276) — is stable
     // across line shifts; if the symbol was renamed/removed, no pair is found
     // and the edge is re-resolved from its original reference (see below).
+    //
+    // A file stored in another language than it had (a `.m` file of MATLAB
+    // code rewritten as Objective-C, or back) is another file to the ones
+    // calling into it: none of its new nodes replaces an old one, whatever
+    // its name, kind or qualified name, so every edge into it goes back to
+    // its reference, as a delete of the file and an add would have it. The
+    // sync takes its names for changed definitions too (languageChangedPaths).
     const crossFileIncomingEdges = existingFile
       ? this.queries.getCrossFileIncomingEdgesWithTarget(filePath)
       : [];
-    const priorNodes = crossFileIncomingEdges.length > 0
+    const languageChanged = existingFile !== null && existingFile.language !== language;
+    if (languageChanged) this.languageChangedPaths.add(filePath);
+    const priorNodes = crossFileIncomingEdges.length > 0 && !languageChanged
       ? this.queries.getNodeIdentitiesByFile(filePath)
       : [];
 
@@ -3835,18 +3845,31 @@ export class ExtractionOrchestrator {
   /**
    * Runs a MATLAB carrier step (see resolution/matlab-builtin-carriers),
    * recorded first and cleared once done, so that a sync killed in it leaves
-   * the record for the next sync to finish: its rows deleted and put back to
-   * pending, its files extracted again. Returns the files it extracted.
+   * the record for the next sync to finish: its rows deleted, put back to
+   * pending, woken and put to sleep, its files extracted again. Returns the
+   * files it extracted. `fromInputs`: the step was worked out from the
+   * recorded MatlabCarrierInputs, whose record the step's own replaces.
    */
   private async runMatlabCarrierStep(
     step: MatlabCarrierStep,
     onFileChange: ((filePath: string, content?: string) => void) | undefined,
     backpressure: (() => Promise<void> | null) | undefined,
+    fromInputs = false,
   ): Promise<{ extracted: string[]; failed: string[]; nodes: number }> {
-    writeMatlabCarrierStep(this.queries, step);
+    this.queries.runInTransaction(() => {
+      writeMatlabCarrierStep(this.queries, step);
+      if (fromInputs) writeMatlabCarrierInputs(this.queries, null);
+    });
     applyMatlabCarrierRows(this.queries, step);
     const out = { extracted: [] as string[], failed: [] as string[], nodes: 0 };
-    if (step.files.length > 0) await loadGrammarsForLanguages(['matlab']);
+    if (step.files.length > 0) {
+      // The names `.m` files reach are read again, from the files as the
+      // index holds them now: a long-lived process remembers one an earlier
+      // state of a file reached (a `beep.m` since turned to Objective-C or
+      // Octave text), which a fresh index of these files would not keep.
+      this.matlabFilter.forget();
+      await loadGrammarsForLanguages(['matlab']);
+    }
     for (const filePath of step.files) {
       let content: string | undefined;
       try {
@@ -3864,6 +3887,103 @@ export class ExtractionOrchestrator {
     }
     writeMatlabCarrierStep(this.queries, null);
     return out;
+  }
+
+  /**
+   * The carrier step `change` calls for (see resolution/matlab-builtin-carriers):
+   * the built-ins' rows to delete, the dormant and failed rows to wake, put
+   * to sleep and reopen, and the files naming a gained built-in, but
+   * `skip`, to extract again.
+   */
+  private matlabCarrierStepOf(
+    change: MatlabCarrierChange,
+    skip: ReadonlySet<string>,
+    unchangedOnly = false,
+  ): { step: MatlabCarrierStep; flipMs: number; scanMs: number } {
+    const drop = uncarriedMatlabRowIds(this.queries, change);
+    const tFlips = Date.now();
+    const { wake, sleep, reopen } = matlabDormancyFlips(this.queries, change);
+    const flipMs = Date.now() - tFlips;
+    const dropped = new Set(drop);
+    let scanMs = 0;
+    let files: string[] = [];
+    if (change.gained.length > 0) {
+      const tScan = Date.now();
+      files = matlabFilesNaming(this.queries, this.rootDir, change.gained, skip)
+        .filter((f) => !unchangedOnly || this.storedAsOnDisk(f.filePath, f.content))
+        .map((f) => f.filePath);
+      scanMs = Date.now() - tScan;
+    }
+    return { step: { drop, reopen: reopen.filter((id) => !dropped.has(id)), wake, sleep, files }, flipMs, scanMs };
+  }
+
+  /**
+   * Whether the index holds `filePath` as its text is on disk now
+   * (`content`, when already read): false for a file that changed since it
+   * was stored, or went, or was never stored.
+   */
+  private storedAsOnDisk(filePath: string, content?: string): boolean {
+    const tracked = this.queries.getFileByPath(filePath);
+    if (!tracked) return false;
+    try {
+      return tracked.contentHash === hashContent(content ?? fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8'));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The MATLAB carrier steps a killed sync left (see
+   * resolution/matlab-builtin-carriers), done before this sync, or this full
+   * index, changes anything, so that it starts where the killed sync would
+   * have ended: a step it left unfinished (MatlabCarrierStep), then one it
+   * never worked out (MatlabCarrierInputs), worked out now from the record
+   * and what the index holds, which extracts again none of the files the
+   * killed sync stored itself, as that sync would not have. Neither touches
+   * a file that changed since it was stored, or went: that is this run's own
+   * to extract or remove, and extracted here it would read as unchanged to
+   * this run, which then never judges what changed in it. In a sync (`run`),
+   * the step's files are extracted again here and returned; in a full index
+   * (`run` null), its rows change here and its files are marked changed, to
+   * be stored afresh with the rest.
+   */
+  private async replayKilledMatlabCarrierSteps(
+    run: {
+      onFileChange: ((filePath: string, content?: string) => void) | undefined;
+      backpressure: (() => Promise<void> | null) | undefined;
+    } | null,
+  ): Promise<{ extracted: string[]; failed: string[]; nodes: number }> {
+    const out = { extracted: [] as string[], failed: [] as string[], nodes: 0 };
+    const finish = async (step: MatlabCarrierStep, fromInputs: boolean): Promise<void> => {
+      if (run) {
+        const done = await this.runMatlabCarrierStep(step, run.onFileChange, run.backpressure, fromInputs);
+        out.extracted.push(...done.extracted);
+        out.failed.push(...done.failed);
+        out.nodes += done.nodes;
+        return;
+      }
+      applyMatlabCarrierRows(this.queries, step);
+      for (const filePath of step.files) {
+        const file = this.queries.getFileByPath(filePath);
+        if (file) this.queries.upsertFile({ ...file, contentHash: '' });
+      }
+      if (fromInputs) writeMatlabCarrierInputs(this.queries, null);
+      else writeMatlabCarrierStep(this.queries, null);
+    };
+    const unfinished = readMatlabCarrierStep(this.queries);
+    if (unfinished) await finish({ ...unfinished, files: unfinished.files.filter((f) => this.storedAsOnDisk(f)) }, false);
+    const recorded = readMatlabCarrierInputs(this.queries);
+    if (recorded) {
+      const { step } = this.matlabCarrierStepOf(replayedMatlabCarrierChanges(this.queries, recorded), new Set(recorded.files), true);
+      if (ExtractionOrchestrator.hasMatlabCarrierWork(step)) await finish(step, true);
+      else writeMatlabCarrierInputs(this.queries, null);
+    }
+    return out;
+  }
+
+  /** Whether a carrier step changes anything. */
+  private static hasMatlabCarrierWork(step: MatlabCarrierStep): boolean {
+    return step.drop.length > 0 || step.reopen.length > 0 || step.wake.length > 0 || step.sleep.length > 0 || step.files.length > 0;
   }
 
   /**
@@ -3897,6 +4017,7 @@ export class ExtractionOrchestrator {
   ): Promise<SyncResult> {
     await initGrammars(); // Initialize WASM runtime (grammars loaded lazily below)
     const startTime = Date.now();
+    this.languageChangedPaths.clear();
     let filesChecked = 0;
     let filesAdded = 0;
     let filesModified = 0;
@@ -3926,6 +4047,26 @@ export class ExtractionOrchestrator {
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_NODES)) matlabPairsBefore.add(pair);
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_CALLABLE_NODES)) callablePairsBefore.add(pair);
     };
+    // What this sync's carrier step is worked out from, recorded before any
+    // file is replaced or removed (see MatlabCarrierInputs): the files, as
+    // the index holds them (`tracked`, none for a file it adds); the names
+    // their nodes carried (`pairs`, read before; none of a file whose text
+    // was read as no MATLAB code); and which were `.m` files of MATLAB code.
+    // The last is MatlabCarrierInput.reachingBefore too.
+    const carrierInputs = { files: new Set<string>(), names: new Set<string>(), reaching: new Set<string>() };
+    let carrierInputsRecorded = false;
+    const recordCarrierInputs = (files: readonly string[], tracked: (filePath: string) => FileRecord | undefined, pairs: Iterable<string>): void => {
+      if (!trackMatlab || files.length === 0) return;
+      for (const f of files) {
+        carrierInputs.files.add(f);
+        if (tracked(f)?.language === 'matlab' && f.toLowerCase().endsWith('.m') && !unreadBefore.has(f)) carrierInputs.reaching.add(f);
+      }
+      for (const pair of pairs) {
+        if (!unreadBefore.has(pair.slice(0, pair.indexOf('\0')))) carrierInputs.names.add(pair.slice(pair.indexOf('\0') + 1));
+      }
+      writeMatlabCarrierInputs(this.queries, { files: [...carrierInputs.files], names: [...carrierInputs.names], reaching: [...carrierInputs.reaching] });
+      carrierInputsRecorded = true;
+    };
     // Importers' import statements, read once per sync for the files it removes.
     const importReader = createImportReader(this.rootDir);
 
@@ -3938,26 +4079,12 @@ export class ExtractionOrchestrator {
     const filesToIndex: string[] = [];
     const failedFilePaths: string[] = [];
 
-    // A MATLAB carrier step a sync killed in it left unfinished (see
-    // resolution/matlab-builtin-carriers): finished before anything else, so
-    // that this sync starts where that one would have ended. A file of it
-    // that changed since, or went, is this sync's to extract or remove.
-    const unfinished = readMatlabCarrierStep(this.queries);
-    if (unfinished) {
-      const files = unfinished.files.filter((filePath) => {
-        const tracked = this.queries.getFileByPath(filePath);
-        if (!tracked) return false;
-        try {
-          return tracked.contentHash === hashContent(fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8'));
-        } catch {
-          return false;
-        }
-      });
-      const done = await this.runMatlabCarrierStep({ ...unfinished, files }, onFileChange, backpressure);
-      changedFilePaths.push(...done.extracted);
-      failedFilePaths.push(...done.failed);
-      nodesUpdated += done.nodes;
-    }
+    // The MATLAB carrier steps a killed sync left (see
+    // replayKilledMatlabCarrierSteps), done before anything else.
+    const replayed = await this.replayKilledMatlabCarrierSteps({ onFileChange, backpressure });
+    changedFilePaths.push(...replayed.extracted);
+    failedFilePaths.push(...replayed.failed);
+    nodesUpdated += replayed.nodes;
 
     // The MATLAB files whose text was read as no MATLAB code, before this
     // sync replaces or removes any (see MatlabCarrierInput.unreadBefore).
@@ -4076,6 +4203,8 @@ export class ExtractionOrchestrator {
     // fresh index of the tree without these files binds them differently or
     // not at all. Before any of them is deleted, and for all of them at once.
     if (removed.length > 0) {
+      const paths = removed.map((f) => f.path);
+      recordCarrierInputs(paths, (f) => trackedMap.get(f), trackMatlab ? this.queries.getNodeNamePairsByFiles(paths) : []);
       const tImporters = Date.now();
       const reopened = reopenReferencesThroughRemovedFiles(this.queries, importReader, removed);
       if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-removed-module-importers: ${Date.now() - tImporters}ms (${reopened} refs re-opened)`);
@@ -4090,7 +4219,10 @@ export class ExtractionOrchestrator {
     // not in a fresh index's (see MatlabInsertFilter).
     if (removed.some((f) => f.path.toLowerCase().endsWith('.m'))) this.matlabFilter.forget();
 
-    // Adds / modifications.
+    // Adds / modifications. A tracked file found to be no source after all
+    // (below) is removed after the loop, with the others, as the removals
+    // above are.
+    const becameNonSource: FileRecord[] = [];
     for (const filePath of currentFiles) {
       // Same cooperative yield as the removals loop — this is the other O(files)
       // synchronous-stat loop that wedges the main thread on a large repo (#905).
@@ -4137,10 +4269,7 @@ export class ExtractionOrchestrator {
       // Not source after all — an MPEG transport stream named `.ts` (#1910):
       // a new one is ignored, a tracked file that became one is removed.
       if (content === null) {
-        if (tracked) {
-          reopenReferencesThroughRemovedFiles(this.queries, importReader, [tracked]);
-          removeTracked(tracked);
-        }
+        if (tracked) becameNonSource.push(tracked);
         continue;
       }
       const contentHash = hashContent(content);
@@ -4160,13 +4289,22 @@ export class ExtractionOrchestrator {
       }
     }
 
+    if (becameNonSource.length > 0) {
+      const paths = becameNonSource.map((f) => f.path);
+      recordCarrierInputs(paths, (f) => trackedMap.get(f), trackMatlab ? this.queries.getNodeNamePairsByFiles(paths) : []);
+      reopenReferencesThroughRemovedFiles(this.queries, importReader, becameNonSource);
+      for (const tracked of becameNonSource) removeTracked(tracked);
+    }
+
     // Sampled here — after the add/modify classification, before any file is
     // re-extracted — because `storeExtractionResult` deletes a file's nodes
     // before inserting the new ones, so this is the last point the pre-edit
     // definition set is readable (CG-33).
     if (filesToIndex.length > 0) {
-      for (const pair of this.queries.getNodeNamePairsByFiles(filesToIndex)) pairsBefore.add(pair);
+      const pairs = this.queries.getNodeNamePairsByFiles(filesToIndex);
+      for (const pair of pairs) pairsBefore.add(pair);
       sampleMatlabPairs(filesToIndex);
+      recordCarrierInputs(filesToIndex, (f) => trackedMap.get(f), pairs);
     }
     // The `export … from` statements of each file, before the store replaces
     // its import nodes (#2978).
@@ -4210,6 +4348,14 @@ export class ExtractionOrchestrator {
     for (const filePath of indexedFromSkip) {
       if ((this.queries.getFileByPath(filePath)?.nodeCount ?? 0) > 0) addedFilePaths.push(filePath);
     }
+    // So is one stored in another language than it had (see
+    // storeExtractionResult), as a delete of the file and an add would have
+    // it: a failed import of it (`require 'lib/defs.inc'`, the PHP file it is
+    // again) is tried again.
+    if (this.languageChangedPaths.size > 0) {
+      const added = new Set(addedFilePaths);
+      for (const filePath of this.languageChangedPaths) if (!added.has(filePath)) addedFilePaths.push(filePath);
+    }
 
     // Names whose definition set this sync changed: a `file\0name` pair present
     // before but not after (removed/renamed away) or after but not before
@@ -4228,19 +4374,28 @@ export class ExtractionOrchestrator {
     const nameOf = (pair: string) => pair.slice(pair.indexOf('\0') + 1);
     for (const pair of pairsBefore) if (!pairsAfter.has(pair)) deltaNames.add(nameOf(pair));
     for (const pair of pairsAfter) if (!pairsBefore.has(pair)) deltaNames.add(nameOf(pair));
+    // A file stored in another language than it had defines each of its
+    // names anew, before and after, as a removed file and an added one do
+    // (see storeExtractionResult).
+    if (this.languageChangedPaths.size > 0) {
+      for (const pairs of [pairsBefore, pairsAfter]) {
+        for (const pair of pairs) if (this.languageChangedPaths.has(pair.slice(0, pair.indexOf('\0')))) deltaNames.add(nameOf(pair));
+      }
+      this.languageChangedPaths.clear();
+    }
     const definitionDelta = [...deltaNames];
 
     // A built-in's name that gained its first project carrier, or lost its
-    // last, or the name of a `.m` file whose text turned to MATLAB code or
-    // from it, read bare (`c = color;`; see resolution/matlab-builtin-carriers):
-    // the calls of it in files this sync leaves alone were judged by the
-    // carriers they had. A gained one's files are extracted again here, as a
-    // changed file is, and join the changed files for resolution; a lost
-    // one's rows go.
-    // A member's name (`m.Total`, `a.recalib(2)`, `obj@Base(x)`) likewise,
-    // for a carrier of the kind its calls need.
-    // A member's name whose callable carriers changed has its kept rows
-    // resolved again, past the retry's ceiling (MatlabCarrierChange.membersRecalled).
+    // last (see resolution/matlab-builtin-carriers): the calls of it in files
+    // this sync leaves alone were judged by the carriers they had. A gained
+    // one's files are extracted again here, as a changed file is, and join
+    // the changed files for resolution; a lost one's rows go.
+    // Any other MATLAB call's name whose carriers this sync may have changed
+    // (a bare read `c = color;`, a member `m.Total`, `T::size`) has its
+    // dormant and failed rows judged again: a dormant one now answered wakes,
+    // to be resolved by the sweep; a failed one no longer answered sleeps.
+    // A name whose MATLAB definitions changed has its failed rows resolved
+    // again, every one, past the retry's ceiling (MatlabCarrierChange.relinked).
     const watchMatlab = trackMatlab || this.queries.hasFilesOfLanguage('matlab');
     const carriers = matlabCarrierChanges(this.queries, {
       deltaNames, pairsBefore, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
@@ -4249,25 +4404,21 @@ export class ExtractionOrchestrator {
       callablePairsBefore,
       callablePairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_CALLABLE_NODES) : new Set(),
       unreadBefore,
+      reachingBefore: carrierInputs.reaching,
     });
     const tCarriers = Date.now();
-    const drop = uncarriedMatlabRowIds(this.queries, carriers);
-    const reopen = recalledMatlabRowIds(this.queries, carriers, new Set(drop));
-    let scanMs = 0;
-    let again: string[] = [];
-    if (carriers.gained.length > 0 || carriers.membersGained.length > 0) {
-      const tScan = Date.now();
-      again = matlabFilesNaming(this.queries, this.rootDir, carriers.gained, new Set(filesToIndex), carriers.membersGained).map((f) => f.filePath);
-      scanMs = Date.now() - tScan;
-    }
-    if (drop.length > 0 || reopen.length > 0 || again.length > 0) {
-      const done = await this.runMatlabCarrierStep({ drop, reopen, files: again }, onFileChange, backpressure);
+    const { step: carrierStep, flipMs, scanMs } = this.matlabCarrierStepOf(carriers, new Set(filesToIndex));
+    if (ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep)) {
+      const done = await this.runMatlabCarrierStep(carrierStep, onFileChange, backpressure, carrierInputsRecorded);
       changedFilePaths.push(...done.extracted);
       failedFilePaths.push(...done.failed);
       nodesUpdated += done.nodes;
+    } else if (carrierInputsRecorded) {
+      writeMatlabCarrierInputs(this.queries, null);
     }
-    if (process.env.CODEGRAPH_SYNTH_TIMINGS && (carriers.gained.length > 0 || carriers.membersGained.length > 0 || drop.length > 0 || reopen.length > 0)) {
-      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; members ${carriers.membersGained.join(', ')} gained; word scan ${scanMs}ms; ${again.length} files extracted again; ${drop.length} rows dropped; ${reopen.length} rows resolved again)`);
+    if (process.env.CODEGRAPH_SYNTH_TIMINGS && (carriers.gained.length > 0 || carriers.judged.length > 0 || ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep))) {
+      const { drop, reopen, wake, sleep, files } = carrierStep;
+      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; ${carriers.judged.length} names judged in ${flipMs}ms: ${wake.length} rows woken, ${sleep.length} put to sleep, ${reopen.length} resolved again; word scan ${scanMs}ms; ${files.length} files extracted again; ${drop.length} rows dropped)`);
     }
 
     // Modified ES modules whose `export … from` statements changed (#2978): a

@@ -121,6 +121,9 @@ const CFML_CONSTRUCTED_CALL = /^([A-Za-z_$][\w$.-]*)\(\)\.([A-Za-z_$][\w$]*)$/;
  */
 const DEFAULT_READER_SAMPLE_FILES = 8;
 
+/** Rows a persist writes per sub-transaction, with a yield between where the caller yields (#850/#1212). */
+const PERSIST_CHUNK = 1000;
+
 /**
  * Cache size limits. Each per-resolver cache is bounded so memory
  * stays flat on large codebases (20k+ files). Sizes were chosen to
@@ -2296,21 +2299,42 @@ export class ReferenceResolver {
   }
 
   /**
-   * `failures` split into the ones parked as failed and the MATLAB ones to
-   * delete instead, which nothing in the project could ever answer (see
-   * ./matlab-failures), of the ones `matlabFresh` admits (see
-   * MatlabFreshReferences). The deleted ones come back as cleanup
-   * rows for the caller to delete, as it deletes the resolved ones.
+   * `failures` split into the ones parked as failed and the MATLAB ones that
+   * nothing in the project answers now (see ./matlab-failures): a built-in's
+   * call, of the ones `matlabFresh` admits (see MatlabFreshReferences), to
+   * delete instead, and any other, to keep dormant. The deleted ones come
+   * back as cleanup rows for the caller to delete, as it deletes the
+   * resolved ones, and the dormant ones for it to mark (markDormant). A
+   * hand-built reference (no row id) that would go dormant is deleted by
+   * its key, as a built-in's is: no resolution pass of an index or a sync
+   * makes one (each reads its references from the table, with their ids).
    */
   private discardUnanswerableMatlabFailures(failures: UnresolvedRef[], matlabFresh: MatlabFreshReferences | undefined): {
     kept: UnresolvedRef[];
     deleted: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> };
+    dormant: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }>;
   } {
-    const discarded = unanswerableMatlabFailures(failures, matlabFresh, this.knownNames, this.queries);
-    if (discarded.size === 0) return { kept: failures, deleted: { rowIds: [], legacyKeys: [] } };
-    const { kept, deleted } = splitDiscarded(failures, discarded);
+    const { deleted: builtins, dormant } = unanswerableMatlabFailures(failures, matlabFresh, this.knownNames, this.queries);
+    if (builtins.size === 0 && dormant.size === 0) return { kept: failures, deleted: { rowIds: [], legacyKeys: [] }, dormant: [] };
+    const asleep: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }> = [];
+    const discarded = new Set(builtins);
+    for (const ref of dormant) {
+      if (ref.rowId == null) discarded.add(ref);
+      else asleep.push({ rowId: ref.rowId, referenceName: ref.referenceName, referenceKind: ref.referenceKind, nameTail: ref.nameTail });
+    }
+    const { kept, deleted } = splitDiscarded(failures.filter((ref) => ref.rowId == null || !dormant.has(ref)), discarded);
     const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(deleted);
-    return { kept, deleted: { rowIds: byRowId.map((r) => r.rowId), legacyKeys } };
+    return { kept, deleted: { rowIds: byRowId.map((r) => r.rowId), legacyKeys }, dormant: asleep };
+  }
+
+  /** Keeps `dormant` (see discardUnanswerableMatlabFailures) as dormant rows, PERSIST_CHUNK at a time with a yield between. Returns the rows changed. */
+  private async markDormant(dormant: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }>, maybeYield: MaybeYield): Promise<number> {
+    let changed = 0;
+    for (let i = 0; i < dormant.length; i += PERSIST_CHUNK) {
+      changed += this.queries.markReferencesDormantByRowIds(dormant.slice(i, i + PERSIST_CHUNK));
+      await maybeYield();
+    }
+    return changed;
   }
 
   private deferReference(ref: UnresolvedRef, queue: UnresolvedRef[]): void {
@@ -2364,7 +2388,10 @@ export class ReferenceResolver {
     // is still 'pending', so any pending row at rest belongs to an
     // interrupted run and the sweep can key off the pending count.
     if (result.unresolved.length > 0) {
-      const { kept, deleted } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+      const { kept, deleted, dormant } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+      // Dormant first: a key delete leaves a dormant row alone. PERSIST_CHUNK
+      // at a time, as the yielding passes mark them (this one never yields).
+      for (let i = 0; i < dormant.length; i += PERSIST_CHUNK) this.queries.markReferencesDormantByRowIds(dormant.slice(i, i + PERSIST_CHUNK));
       this.queries.deleteReferencesByRowIds(deleted.rowIds);
       this.queries.deleteSpecificResolvedReferences(deleted.legacyKeys);
       const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(kept);
@@ -2398,7 +2425,6 @@ export class ReferenceResolver {
   }
 
   private async persistResolutionResult(result: ResolutionResult, maybeYield: MaybeYield, matlabFresh?: MatlabFreshReferences): Promise<number> {
-    const PERSIST_CHUNK = 1000;
     const edges = this.createEdges(result.resolved);
     for (let i = 0; i < edges.length; i += PERSIST_CHUNK) {
       this.queries.insertEdges(edges.slice(i, i + PERSIST_CHUNK));
@@ -2407,7 +2433,8 @@ export class ReferenceResolver {
 
     await this.deleteInChunks(ReferenceResolver.partitionResolvedCleanup(result.resolved), maybeYield);
 
-    const { kept, deleted } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+    const { kept, deleted, dormant } = this.discardUnanswerableMatlabFailures(this.nonDeferredFailures(result.unresolved), matlabFresh);
+    await this.markDormant(dormant, maybeYield);
     await this.deleteInChunks(deleted, maybeYield);
     const failedCleanup = ReferenceResolver.partitionFailedCleanup(kept);
     for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
@@ -2430,7 +2457,6 @@ export class ReferenceResolver {
     cleanup: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> },
     maybeYield: MaybeYield
   ): Promise<number> {
-    const PERSIST_CHUNK = 1000;
     let removed = 0;
     for (let i = 0; i < cleanup.rowIds.length; i += PERSIST_CHUNK) {
       removed += this.queries.deleteReferencesByRowIds(cleanup.rowIds.slice(i, i + PERSIST_CHUNK));
@@ -3069,7 +3095,6 @@ export class ReferenceResolver {
       // Crash semantics are unchanged (already several transactions): edges
       // land before their refs are deleted, so a kill mid-way re-resolves
       // the remainder idempotently on the next run/sweep (#1187).
-      const PERSIST_CHUNK = 1000;
       const tPersist = Date.now();
 
       // A batch that made `extends`/`implements` edges persists them BEFORE
@@ -3119,7 +3144,11 @@ export class ReferenceResolver {
       tLp = Date.now();
       const nonDeferred = this.nonDeferredFailures(result.unresolved);
       const deferredCount = result.unresolved.length - nonDeferred.length;
-      const { kept: failures, deleted } = this.discardUnanswerableMatlabFailures(nonDeferred, matlabFresh);
+      const { kept: failures, deleted, dormant } = this.discardUnanswerableMatlabFailures(nonDeferred, matlabFresh);
+      // A row kept dormant leaves the pending set as one deleted or parked
+      // does: progress for the guard below. Before the deletes, as a key
+      // delete leaves a dormant row alone.
+      removedThisBatch += await this.markDormant(dormant, maybeYield);
       removedThisBatch += await this.deleteInChunks(deleted, maybeYield);
       const failedCleanup = ReferenceResolver.partitionFailedCleanup(failures);
       for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
@@ -3157,7 +3186,8 @@ export class ReferenceResolver {
       // The count-based guard below catches the true no-progress case.
 
       // Non-progress guard (defense-in-depth). Ordinary attempts must leave
-      // the pending set; a mismatched original reference can make legacy-key
+      // the pending set (resolved, deleted, parked failed or kept dormant);
+      // a mismatched original reference can make legacy-key
       // cleanup a no-op. Keep the guard against that broken persistence even
       // though keyset pagination now advances independently of row cleanup.
       // An abandoned prefetched batch has no side effects until settleBatch.

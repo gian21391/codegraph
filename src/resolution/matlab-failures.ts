@@ -1,8 +1,11 @@
 /**
- * The MATLAB references that failed to resolve and are deleted instead of
- * parked as failed: the calls nothing in the project could ever answer.
- * Kept, each would be one row in every function that makes it, and on a
- * large MATLAB codebase those are most of the database.
+ * The MATLAB references that failed to resolve and are not parked as failed:
+ * the calls nothing in the project answers now. A built-in's call is
+ * deleted: kept, each would be one row in every function that makes it, and
+ * on a large MATLAB codebase those are most of the database. Any other is
+ * kept as a dormant row (DORMANT_REF_STATUS in ../db/queries), which no
+ * reader counts and the sync that gives its name a carrier wakes (see
+ * ./matlab-builtin-carriers).
  *
  *   - A bare call of a built-in's name (`plot(x)`, `set(h, …)`, `@isempty`)
  *     that no project function answered, and no project symbol carries the
@@ -37,16 +40,16 @@
  *     text or `evalin` runs), most often a variable there; such a handle
  *     reference (a callback's) goes the same way.
  *
- * A bare name's failure is judged only where its file was extracted afresh
- * (see MatlabFreshReferences), and what is discarded of it is gone for good:
- * a sync that later adds a symbol of the name links the bare reads in the
- * files it re-indexes, not those in a file it leaves alone, which a full
- * re-index does (pinned in __tests__/matlab-resolution.test.ts). A
- * built-in's name and a member's are the exceptions, and so is the name of
- * a `.m` file whose text a sync turns to MATLAB code or from it: a sync that
- * gives one its first carrier (of the kind the rule asks for) extracts the
- * files naming it again, and one that takes the last away drops the rows the
- * rule no longer keeps (see ./matlab-builtin-carriers).
+ * Every class but the built-ins' is kept dormant, and judged wherever its
+ * file is, fresh or not: the rule reads the project's symbols alone, so a
+ * failure in a file a sync left alone goes dormant as a fresh index's does.
+ * Each dormant row is stored under its tail (the name of a bare read, a
+ * command or a name made at runtime; the member of `v.f` or `T::size`), the
+ * one key its carriers are looked up by. A built-in's call is judged only
+ * where its file was extracted afresh (see MatlabFreshReferences): its rule
+ * asks where the project's `.m` files are as well (see
+ * ../extraction/languages/matlab-builtins), and a sync that gives the name
+ * its first carrier extracts the files naming it again.
  */
 
 import type { NodeFilter, QueryBuilder } from '../db/queries';
@@ -57,14 +60,14 @@ import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { referenceNameTail } from '../db/reference-tail';
 
 /**
- * The references a resolution pass may discard (see the top of this file):
- * the ones it extracted afresh, a member call aside, which is judged
- * wherever it is. Any other failure is a reference of a file a
- * sync left alone — one whose target the sync removed (its edge went back to
- * a reference), or one re-opened for a retry — and is kept, parked as failed,
- * so that the sync that brings its target back links it again, as it would a
- * TypeScript call. A pass given none (a full index) takes every reference
- * for a fresh one.
+ * The references a resolution pass may delete as a built-in's call (see the
+ * top of this file): the ones it extracted afresh. Any other built-in's
+ * failure is a reference of a file a sync left alone — one whose target the
+ * sync removed (its edge went back to a reference), or one re-opened for a
+ * retry — and is kept, parked as failed, so that the sync that brings its
+ * target back links it again, as it would a TypeScript call. A pass given
+ * none (a full index) takes every reference for a fresh one. Every other
+ * class goes dormant wherever it is.
  */
 export interface MatlabFreshReferences {
   /** The files a sync extracted again. */
@@ -173,10 +176,19 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
   return [...names, ...names.flatMap(matlabFileNames)];
 }
 
+/** The failures a resolution pass does not park as failed (see the top of this file). */
+export interface UnanswerableMatlabFailures {
+  /** A built-in's calls, deleted. */
+  deleted: Set<UnresolvedRef>;
+  /** Every other class's, kept dormant. */
+  dormant: Set<UnresolvedRef>;
+}
+
 /**
- * The failures among `failures` to delete (see the top of this file): a
- * member call's wherever it is (one with the `computed` fact never), any
- * other only when fresh. Whether a symbol carries a name is asked of
+ * The failures among `failures` not to park as failed (see the top of this
+ * file): a built-in's call, only when fresh, to delete; any other, wherever
+ * it is, to keep dormant (a member call with the `computed` fact never).
+ * Whether a symbol carries a name is asked of
  * `known`, the names every node carries (read when the pass began, after its
  * definitions were stored), or, when the pass has none (its caches dropped
  * since), of the index; a member's carriers, of MATLAB's symbols alone
@@ -199,8 +211,9 @@ export function unanswerableMatlabFailures(
   fresh: MatlabFreshReferences | undefined,
   known: ReadonlySet<string> | null,
   queries: QueryBuilder,
-): Set<UnresolvedRef> {
-  const discarded = new Set<UnresolvedRef>();
+): UnanswerableMatlabFailures {
+  const deleted = new Set<UnresolvedRef>();
+  const dormant = new Set<UnresolvedRef>();
   const pending: Array<{ ref: UnresolvedRef; keys: string[]; builtin: boolean }> = [];
   const bareMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   const calledMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
@@ -208,17 +221,14 @@ export function unanswerableMatlabFailures(
     if (ref.language !== 'matlab') continue;
     const member = matlabMemberCall(ref);
     if (member) {
-      // Judged in every file, fresh or not: the rule reads the project's
-      // symbols only, and a sync keeps it true where they change (see
-      // ./matlab-builtin-carriers). A computed name is kept.
+      // A computed name is kept (see the top of this file).
       if (matlabRefFacts(ref).computed) continue;
       if (member.bare) bareMembers.push({ ref, keys: matlabNameKeys(member.member) });
       else calledMembers.push({ ref, keys: matlabUnmatchableKeys(ref)! });
       continue;
     }
-    if (!isFreshReference(ref, fresh)) continue;
     if (isMatlabBuiltinCall(ref)) {
-      pending.push({ ref, keys: matlabNameKeys(ref.referenceName), builtin: true });
+      if (isFreshReference(ref, fresh)) pending.push({ ref, keys: matlabNameKeys(ref.referenceName), builtin: true });
     } else {
       const keys = matlabUnmatchableKeys(ref);
       if (keys) pending.push({ ref, keys, builtin: false });
@@ -227,11 +237,11 @@ export function unanswerableMatlabFailures(
   const dropUncarried = (list: Array<{ ref: UnresolvedRef; keys: string[] }>, filter: NodeFilter): void => {
     if (list.length === 0) return;
     const found = queries.getNodeNamesAmong(list.flatMap((p) => p.keys), filter);
-    for (const { ref, keys } of list) if (!keys.some((k) => found.has(k))) discarded.add(ref);
+    for (const { ref, keys } of list) if (!keys.some((k) => found.has(k))) dormant.add(ref);
   };
   dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
   dropUncarried(calledMembers, MATLAB_NODES);
-  if (pending.length === 0) return discarded;
+  if (pending.length === 0) return { deleted, dormant };
   const named = known ?? queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
   // A `.m` file's name, the one a file node carries, is asked again of the
   // carriers (MATLAB_CARRIER_NODES): a file nothing is read from carries none.
@@ -242,9 +252,10 @@ export function unanswerableMatlabFailures(
   for (const { ref, keys, builtin } of pending) {
     if (keys.some(carried)) continue;
     const facts = matlabRefFacts(ref);
-    if (builtin || isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) discarded.add(ref);
+    if (builtin) deleted.add(ref);
+    else if (isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) dormant.add(ref);
   }
-  return discarded;
+  return { deleted, dormant };
 }
 
 /**
