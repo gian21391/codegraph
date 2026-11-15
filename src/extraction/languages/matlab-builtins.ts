@@ -1,6 +1,7 @@
 import type { ExtractionResult, Language } from '../../types';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isJavaImport } from './matlab-java';
+import { matlabUnreadReason } from './matlab-syntax';
 
 /**
  * MATLAB built-in, GUI, graphics and common toolbox functions. A bare call of
@@ -252,21 +253,41 @@ export class MatlabInsertFilter {
   private reachable: Set<string> | null = null;
   private expected: string[] = [];
 
-  /** `storedPaths` lists the paths of the MATLAB files the index holds. */
-  constructor(private readonly storedPaths: () => Iterable<string>) {}
+  /**
+   * `storedPaths` lists the paths of the MATLAB files the index holds whose
+   * text is MATLAB code (no Octave or binary file's: see matlabUnreadReason);
+   * `readSource` reads a project file's text, or gives null.
+   */
+  constructor(
+    private readonly storedPaths: () => Iterable<string>,
+    private readonly readSource: (filePath: string) => string | null,
+  ) {}
 
   /**
    * Files a run will store. A path here has no language yet (an Objective-C
    * `.m` reads as MATLAB only from its content), so every `.m` path's name is
    * taken: it keeps a built-in's call of that name a row until resolution
-   * discards it, never an edge.
+   * discards it, never an edge. But for a file named for a built-in, which is
+   * read now (there are few): one of Octave or binary text answers no call
+   * (Octave's `datestr.m`, MATLAB Compiler's encrypted `pause.m`), and the
+   * resolver would discard the rows its name kept. (A name an earlier
+   * state of such a file made reachable stays so: rows kept, never edges.)
    */
   expect(paths: readonly string[]): void {
     for (const p of paths) {
-      if (!p.toLowerCase().endsWith('.m')) continue;
+      if (!p.toLowerCase().endsWith('.m') || this.answersNoCall(p)) continue;
       if (this.reachable) addMatlabReachableNames([p], this.reachable);
       else this.expected.push(p);
     }
+  }
+
+  /** Whether `p`, a `.m` file named for a built-in, holds Octave or binary text. */
+  private answersNoCall(p: string): boolean {
+    const named = new Set<string>();
+    addMatlabReachableNames([p], named);
+    if (![...named].some((n) => MATLAB_BUILTINS.has(n))) return false;
+    const source = this.readSource(p);
+    return source !== null && matlabUnreadReason(source) !== null;
   }
 
   /** Drops the names read so far: the next filter reads the stored files' again (a sync that removed a `.m` file). */

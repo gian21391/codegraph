@@ -18,6 +18,7 @@ import {
   SearchResult,
 } from '../types';
 import { safeJsonParse } from '../utils';
+import { MATLAB_UNREAD_CODE } from '../extraction/languages/matlab-syntax';
 import { isTestFile, kindBonus, nameMatchBonus, scorePathRelevance } from '../search/query-utils';
 import { parseQuery, boundedEditDistance, type ParsedQuery } from '../search/query-parser';
 import { isGeneratedFile } from '../extraction/generated-detection';
@@ -141,7 +142,16 @@ export const PARKED_MATLAB_MEMBER_READ_SQL = `(language = 'matlab' AND reference
 export interface NodeFilter {
   exceptKinds?: readonly string[];
   language?: string;
+  /**
+   * No node of a MATLAB file nothing is read from — Octave or binary text,
+   * stored with MATLAB_UNREAD_CODE — whose one node, its file's, answers no
+   * call (see ../resolution/matlab-failures).
+   */
+  readable?: boolean;
 }
+
+/** The paths of the MATLAB files stored with MATLAB_UNREAD_CODE: their text was read as no MATLAB code. */
+const UNREAD_MATLAB_FILES_SQL = `SELECT path FROM files WHERE language = 'matlab' AND errors LIKE '%"code":"${MATLAB_UNREAD_CODE}"%'`;
 
 /** A NodeFilter as SQL to append to a `nodes` WHERE clause, with its parameters. */
 function nodeFilterSql(filter: NodeFilter): { sql: string; params: string[] } {
@@ -152,6 +162,7 @@ function nodeFilterSql(filter: NodeFilter): { sql: string; params: string[] } {
     sql += ' AND language = ?';
     params.push(filter.language);
   }
+  if (filter.readable) sql += ` AND file_path NOT IN (${UNREAD_MATLAB_FILES_SQL})`;
   return { sql, params };
 }
 
@@ -1890,6 +1901,12 @@ export class QueryBuilder {
     return this.stmts.getNodesByLowerName.all(name);
   }
 
+  /** The MATLAB files whose text extraction read as no MATLAB code (Octave, a binary): see NodeFilter.readable. */
+  getUnreadMatlabFilePaths(): Set<string> {
+    const rows = this.db.prepare(UNREAD_MATLAB_FILES_SQL).all() as Array<{ path: string }>;
+    return new Set(rows.map((r) => r.path));
+  }
+
   /** The paths of the files of one language. A range of idx_files_language. */
   getFilePathsOfLanguage(language: Language): string[] {
     if (!this.stmts.getFilePathsOfLanguage) {
@@ -3174,6 +3191,43 @@ export class QueryBuilder {
       for (const row of rows) out.push({ id: row.id, filePath: row.file_path, name: row.reference_name });
     }
     return out;
+  }
+
+  /**
+   * The MATLAB rows, of any status, of a call or a handle (`calls`,
+   * `function_ref`) named one of `names` or parked under one (`T::f`,
+   * `v.f`), as references to judge: by name over `idx_unresolved_name`, by
+   * tail over `idx_unresolved_failed_tail`, and the pending ones (whose tail
+   * is not stored yet) by the tail their name gives.
+   */
+  getMatlabCallRefsUnder(names: Iterable<string>): Array<UnresolvedReference & { filePath: string; language: Language; rowId: number; nameTail?: string }> {
+    const unique = [...new Set(names)];
+    const wanted = new Set(unique);
+    const kinds = `language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`;
+    const byId = new Map<number, UnresolvedRefRow>();
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const marks = chunk.map(() => '?').join(',');
+      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE reference_name IN (${marks}) AND ${kinds}`).all(...chunk) as UnresolvedRefRow[]) byId.set(row.id, row);
+      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE status = 'failed' AND name_tail IN (${marks}) AND ${kinds}`).all(...chunk) as UnresolvedRefRow[]) byId.set(row.id, row);
+    }
+    if (unique.length > 0) {
+      for (const row of this.db.prepare(`SELECT * FROM unresolved_refs WHERE status = 'pending' AND ${kinds}`).all() as UnresolvedRefRow[]) {
+        if (wanted.has(referenceNameTail(row.reference_name, row.reference_kind))) byId.set(row.id, row);
+      }
+    }
+    return [...byId.values()].map((row) => ({
+      fromNodeId: row.from_node_id,
+      referenceName: row.reference_name,
+      referenceKind: row.reference_kind as EdgeKind,
+      line: row.line,
+      column: row.col,
+      candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
+      filePath: row.file_path,
+      language: row.language as Language,
+      rowId: row.id,
+      ...(row.status === 'failed' && row.name_tail ? { nameTail: row.name_tail } : {}),
+    }));
   }
 
   /**
@@ -5923,6 +5977,19 @@ export class QueryBuilder {
       .all(filePath, ...kinds, ...targetKinds, filePath) as Array<{ file_path: string }>).map((r) => r.file_path);
   }
 
+  /**
+   * replaceResolutionEdgesWithUnresolvedRefs, returning the ids of the rows
+   * it inserted (an AUTOINCREMENT id only grows: they are the ones above the
+   * largest before).
+   */
+  replaceResolutionEdgesWithUnresolvedRefIds(edgeIds: number[], refs: UnresolvedReference[]): number[] {
+    return this.db.transaction(() => {
+      const { top } = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS top FROM unresolved_refs').get() as { top: number };
+      this.replaceResolutionEdgesWithUnresolvedRefs(edgeIds, refs);
+      return (this.db.prepare('SELECT id FROM unresolved_refs WHERE id > ?').all(top) as Array<{ id: number }>).map((r) => r.id);
+    })();
+  }
+
   replaceResolutionEdgesWithUnresolvedRefs(
     edgeIds: number[],
     refs: UnresolvedReference[]
@@ -6008,6 +6075,11 @@ export class QueryBuilder {
   // ===========================================================================
   // Statistics
   // ===========================================================================
+
+  /** How many nodes the index holds: one count of the nodes table. */
+  getNodeCount(): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM nodes').get() as { n: number }).n;
+  }
 
   /**
    * Lightweight (nodes, edges) count snapshot. Used around an index/sync

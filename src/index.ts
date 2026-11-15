@@ -50,6 +50,7 @@ import { GraphTraverser, GraphQueryManager } from './graph';
 import type { CallSiteRow } from './graph';
 import { findNamedCopybooks, type NamedCopybook } from './graph/cobol-copybooks';
 import { MATLAB_PATH_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from './graph/matlab-search-path';
+import { MATLAB_UNREAD_CODE } from './extraction/languages/matlab-syntax';
 import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock, escapesRoot } from './utils';
 import type { FileWatcher, WatchOptions, PendingFile } from './sync';
@@ -1229,7 +1230,8 @@ export class CodeGraph {
         let refreshSynthesis = this.queries.getMetadata('synthesis_pending') === '1' || pendingAtStart;
         if (refreshSynthesis) this.queries.setMetadata('synthesis_pending', '1');
         // The MATLAB rows an interrupted run left pending (see MatlabFreshReferences.rowIds).
-        const pendingMatlabRows: ReadonlySet<number> = pendingAtStart ? this.queries.getPendingReferenceRowIds('matlab') : new Set();
+        // The scripts pass below adds the rows it turns back from edges.
+        const pendingMatlabRows: Set<number> = pendingAtStart ? this.queries.getPendingReferenceRowIds('matlab') : new Set();
         // The route nodes as they were before this sync replaced or removed a
         // file — read at the first change, so a sync that changes nothing
         // reads nothing, and only where a router binds navigation calls to
@@ -1705,8 +1707,11 @@ export class CodeGraph {
         if (matlabChanged.length > 0) {
           const tScripts = Date.now();
           const reopened = this.resolver.reopenMatlabScriptRuns(matlabChanged, result.changedFilePaths!);
+          // A call into a file that is no script now is judged as a fresh
+          // index's would be: the file may carry no name any more.
+          for (const id of reopened.fromEdges) pendingMatlabRows.add(id);
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
-            console.error(`[phase-timing] sync-matlab-scripts: ${Date.now() - tScripts}ms (${reopened} refs re-opened)`);
+            console.error(`[phase-timing] sync-matlab-scripts: ${Date.now() - tScripts}ms (${reopened.count} refs re-opened)`);
           }
         }
 
@@ -3058,6 +3063,8 @@ export class CodeGraph {
   getIndexHealth(): IndexHealth {
     const needsReindex: string[] = [];
     const parseErrors: string[] = [];
+    const partlyParsed: string[] = [];
+    const notRead: string[] = [];
     for (const file of this.queries.getFilesWithoutNodesOrWithErrors()) {
       const errors = file.errors ?? [];
       if (hasGrammarLoadFailure(errors)) {
@@ -3070,12 +3077,16 @@ export class CodeGraph {
         if (isFileLevelOnlyLanguage(file.language)) continue;
         if (errors.length === 0) needsReindex.push(file.path);
         else if (errors.some((e) => e.severity === 'error' || e.code === 'parse_error')) parseErrors.push(file.path);
+      } else if (errors.some((e) => e.code === MATLAB_UNREAD_CODE)) {
+        // A MATLAB file of Octave or binary text, none of which is read.
+        notRead.push(file.path);
       } else if (errors.some((e) => e.code === 'parse_error')) {
-        // Parsed, but the tree had errors and no symbols survived.
-        parseErrors.push(file.path);
+        // Parsed, but the tree had errors and no symbols survived. A MATLAB
+        // script has none of its own: what parses of it is indexed.
+        (file.language === 'matlab' ? partlyParsed : parseErrors).push(file.path);
       }
     }
-    return { needsReindex, parseErrors };
+    return { needsReindex, parseErrors, partlyParsed, notRead };
   }
 
   /**

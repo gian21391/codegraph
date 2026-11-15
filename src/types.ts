@@ -304,6 +304,13 @@ export interface IndexHealth {
    * they stay this way until the file (or the parser) changes.
    */
   parseErrors: string[];
+  /**
+   * MATLAB files parsed only in part: the parts with a syntax error are left
+   * out of the graph, and the rest of each is indexed.
+   */
+  partlyParsed: string[];
+  /** `.m` files of Octave or binary (encrypted) text: indexed, with none of their code read. */
+  notRead: string[];
 }
 
 // =============================================================================

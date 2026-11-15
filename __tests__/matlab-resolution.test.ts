@@ -1211,6 +1211,7 @@ describe('MATLAB unresolved rows', () => {
       writeTree(root, { 'later.m': 'function later(n)\nend\n', 'edited.m': caller('edited') + '% edited\n' });
       await cg.sync();
       // untouched.m's bare read was dropped when nothing defined `later`, and no row is left to retry.
+      // A known gap (sync != fresh), left for the step that keeps such reads as dormant rows.
       expect(allEdges(cg)).toEqual([
         'edited.m edited -calls-> later @ later.m',
         'edited.m edited -calls-> later @ later.m',

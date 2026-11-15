@@ -34,6 +34,7 @@ import { isMatlabClassFolderFile, matlabClassFolderContainsEdges } from './matla
 import { matlabArgumentEdges } from './matlab-argument-synthesizer';
 import { matlabOverrideEdges } from './matlab-override-synthesizer';
 import { looksLikeMatlab } from '../extraction/grammars';
+import { matlabUnreadReason } from '../extraction/languages/matlab-syntax';
 import { expoRouterReturnEdges } from './expo-router-synthesizer';
 import { nextLinkEdges, nextProxyEdges } from './next-router-synthesizer';
 import { constAliasEdges, hasConstAliasShape } from './const-alias-synthesizer';
@@ -355,8 +356,12 @@ async function closureCollectionEdges(queries: QueryBuilder, ctx: ResolutionCont
   return edges;
 }
 
-/** Phase 2: string-keyed EventEmitter channels (on('e', fn) ↔ emit('e')). */
-async function eventEmitterEdges(ctx: ResolutionContext, onYield: MaybeYield): Promise<Edge[]> {
+/**
+ * Phase 2: string-keyed EventEmitter channels (on('e', fn) ↔ emit('e')).
+ * `unscanned` are the files of a language whose code it cannot pair (MATLAB:
+ * see SYNTH_PASSES), which are never read.
+ */
+async function eventEmitterEdges(ctx: ResolutionContext, onYield: MaybeYield, unscanned: ReadonlySet<string>): Promise<Edge[]> {
   let scannedFiles = 0;
   const emitsByEvent = new Map<string, Set<string>>();          // event → dispatcher node ids
   const handlersByEvent = new Map<string, Map<string, string>>(); // event → handler id → registration site (file:line)
@@ -365,6 +370,7 @@ async function eventEmitterEdges(ctx: ResolutionContext, onYield: MaybeYield): P
   for (const file of ctx.getAllFiles()) {
     if ((++scannedFiles & 15) === 0) await onYield();
     if ((++scanned & 255) === 0) await onYield(); // #1091: yield mid-scan on huge graphs
+    if (unscanned.has(file)) continue;
     const content = ctx.readFile(file);
     if (!content) continue;
     const hasEmit = content.includes('.emit(') || content.includes('.fire(') || content.includes('.dispatchEvent(');
@@ -5311,6 +5317,9 @@ const ALWAYS = (): boolean => true;
 
 /** Conservative input gates for SYNTH_PASSES; keep these in sync when adding a pass. */
 export function hasSynthesisPattern(filePath: string, content: string): boolean {
+  // A MATLAB file of Octave or binary text, of which nothing is read (see
+  // matlabUnreadReason), feeds no pass: no input, as synthesisInputs says.
+  if (/\.m$/i.test(filePath) && matlabUnreadReason(content) !== null && looksLikeMatlab(content)) return false;
   // These passes consume declarations/layouts as well as dispatch sites. A
   // header or markup edit can change a channel whose endpoints live elsewhere.
   if (/\.(?:vue|svelte|dfm|fmx|nix|xml)$/.test(filePath)) return true;
@@ -5373,7 +5382,12 @@ export const SYNTH_PASSES: SynthPassDef[] = [
   // `$this->postJson('api/x')`) onto the route it reaches, so the handler
   // counts as tested.
   { name: 'testRequestEdges', gate: (has) => has('java', 'kotlin', 'php'), run: (_q, c, y) => testRequestEdges(c, y) },
-  { name: 'emitterEdges', gate: ALWAYS, run: (_q, c, y) => eventEmitterEdges(c, y) },
+  // A file stored as MATLAB is never read: a MATLAB event is raised with
+  // `notify` and heard through `addlistener`, neither of which the scan
+  // reads, and a bare name passed to a call (`h.on('done', cb)`) is a call of
+  // `cb` there, never the function, so a pairing made in MATLAB code would be
+  // a wrong edge.
+  { name: 'emitterEdges', gate: ALWAYS, run: (q, c, y) => eventEmitterEdges(c, y, new Set(q.getFilePathsOfLanguage('matlab'))) },
   { name: 'renderEdges', gate: ALWAYS, run: (q, c, y) => reactRenderEdges(q, c, y) },
   { name: 'jsxEdges', gate: (has) => has(...JS_FAMILY), run: (_q, c, y) => reactJsxChildEdges(c, y) },
   { name: 'vueEdges', gate: (has) => has('vue'), run: (_q, c, y) => vueTemplateEdges(c, y) },
@@ -5484,6 +5498,46 @@ function manualMockNodeIds(ctx: ResolutionContext): Set<string> {
   }
   return ids;
 }
+
+/**
+ * Files whose text could feed a pass (inputs that produce NO edges included,
+ * e.g. an over-cap channel: deleting one may make the full pass viable). It
+ * depends only on the files, so with a pool the main thread reads them while
+ * the workers run the passes instead of after. A module a file's own lazy
+ * value loads feeds the JSX that names the value, even with no markup of its
+ * own: a page given its default export, or a barrel rewired, redraws it. So
+ * does every file a tag imported from the project is read through.
+ *
+ * A `.m` file stored as MATLAB is an input whatever it holds (see
+ * hasSynthesisPattern) but for one nothing was read from (Octave or binary
+ * text, stored with its warning: see NodeFilter.readable), and declares no
+ * lazy value or tag either: its stored language and warning answer, and its
+ * text is not read.
+ */
+export async function synthesisInputs(queries: QueryBuilder, ctx: ResolutionContext, onYield: MaybeYield): Promise<string[]> {
+  const found = new Set<string>();
+  const tagModules = new Map<string, Set<string>>();
+  const matlabFiles = new Set(queries.getFilePathsOfLanguage('matlab'));
+  const unread = queries.getUnreadMatlabFilePaths();
+  for (const file of ctx.getAllFiles()) {
+    if (matlabFiles.has(file) && /\.m$/i.test(file)) {
+      if (!unread.has(file)) found.add(file);
+      await onYield();
+      continue;
+    }
+    const content = ctx.readFile(file);
+    if (content !== null && hasSynthesisPattern(file, content)) {
+      found.add(file);
+      if (/\bimport\s*\(/.test(content)) for (const read of lazyValueModules(file, ctx)) found.add(read);
+      if (JSX_INPUT_FILE.test(file) && (content.includes('</') || content.includes('/>'))) {
+        for (const read of importedTagModules(ctx, file, content, tagModules)) found.add(read);
+      }
+    }
+    await onYield();
+  }
+  return [...found];
+}
+
 export async function synthesizeCallbackEdges(
   queries: QueryBuilder,
   ctx: ResolutionContext,
@@ -5627,31 +5681,11 @@ export async function synthesizeCallbackEdges(
   // main-thread retry keeps coverage. Skipping loses only that pass's
   // synthesized edges; the index still completes.
   const MAIN_RETRY_MAX_NODES = 1_500_000;
-  const graphNodes = queries.getNodeAndEdgeCount().nodes;
+  // The node count alone, from the nodes table: counting edges here would
+  // scan every edge row through the synthesis stage's view of them.
+  const graphNodes = queries.getNodeCount();
 
-  // Files whose text could feed a pass (inputs that produce NO edges included,
-  // e.g. an over-cap channel: deleting one may make the full pass viable). It
-  // depends only on the files, so with a pool the main thread reads them while
-  // the workers run the passes instead of after. A module a file's own lazy
-  // value loads feeds the JSX that names the value, even with no markup of its
-  // own: a page given its default export, or a barrel rewired, redraws it. So
-  // does every file a tag imported from the project is read through.
-  const collectInputs = async (): Promise<string[]> => {
-    const found = new Set<string>();
-    const tagModules = new Map<string, Set<string>>();
-    for (const file of ctx.getAllFiles()) {
-      const content = ctx.readFile(file);
-      if (content !== null && hasSynthesisPattern(file, content)) {
-        found.add(file);
-        if (/\bimport\s*\(/.test(content)) for (const read of lazyValueModules(file, ctx)) found.add(read);
-        if (JSX_INPUT_FILE.test(file) && (content.includes('</') || content.includes('/>'))) {
-          for (const read of importedTagModules(ctx, file, content, tagModules)) found.add(read);
-        }
-      }
-      await yieldToLoop();
-    }
-    return [...found];
-  };
+  const collectInputs = (): Promise<string[]> => synthesisInputs(queries, ctx, yieldToLoop);
   let inputs: string[] | null = null;
 
   if (pool && gatedIn.length > 1) {

@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
-import { ToolHandler } from '../src/mcp/tools';
+import { ToolHandler, flowSourceClaimWithout } from '../src/mcp/tools';
 import { getParser } from '../src/extraction/grammars';
 import { clearProjectConfigCache, loadMatlabConfig } from '../src/project-config';
 import { defaultLogger, setLogger, type Logger } from '../src/errors';
@@ -674,6 +674,145 @@ describe('MATLAB path: status, explore and node', () => {
       expect(node).toContain('5 definitions named "getpvx"');
       expect(node).not.toContain('off the MATLAB path');
     } finally {
+      cg.close();
+    }
+  });
+});
+
+describe('MATLAB path: explore renders every named function the path makes visible', () => {
+  /**
+   * physbase's `measbpmresp measrespmat setsp getam`: two names of one copy
+   * each, two of fourteen, and prefix namesakes enough to fill the text
+   * search. The Flow ran measbpmresp → measrespmat → setsp and said their
+   * bodies were below, but only setsp's and getam's were: a bare lowercase
+   * name of one copy was not seeded, and fell under the floor the seeded
+   * names raised.
+   */
+  function measurement(): Record<string, string> {
+    const files: Record<string, string> = {
+      'startup.m': "addpath('mml');\n",
+      'mml/measbpmresp.m': 'function R = measbpmresp(Family)\n% MEASBPMRESP - measures the BPM response matrix\nR = measrespmat(Family, 1);\nend\n',
+      'mml/measrespmat.m': 'function R = measrespmat(Family, Kick)\n% MEASRESPMAT - kicks each corrector and reads the orbit\nfor k = 1:Kick\n  setsp(Family, k);\n  R(k) = getam(Family);\nend\nend\n',
+    };
+    for (let i = 1; i <= 14; i++) {
+      const dir = i === 1 ? 'mml' : `old${i}`;
+      files[`${dir}/setsp.m`] = `function setsp(Family, v)\n% SETSP in ${dir}\ndisp(v);\nend\n`;
+      files[`${dir}/getam.m`] = `function v = getam(Family)\n% GETAM in ${dir}\nv = 1;\nend\n`;
+    }
+    for (const name of ['measbpmresp', 'measrespmat', 'setsp', 'getam']) {
+      for (let i = 1; i <= 4; i++) files[`var/${name}_v${i}.m`] = `function ${name}_v${i}()\n% ${name} variant ${i}\nend\n`;
+    }
+    return files;
+  }
+  const sourcedFiles = (text: string): string[] => [...text.matchAll(/^\*\*`(.+?)`\*\* —/gm)].map((m) => m[1]!);
+
+  it('a bag of names mixing one-copy and many-copy names renders every Flow hop\'s body', async () => {
+    const cg = await CodeGraph.init(project(measurement()), { index: true });
+    try {
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'measbpmresp measrespmat setsp getam' })).content[0]!.text;
+      const hops = [...text.slice(0, text.indexOf('**Exploration')).matchAll(/^\d+\. (\w+) \((.+?):\d+\)$/gm)].map((m) => m[2]!);
+      expect(hops).toEqual(['mml/measbpmresp.m', 'mml/measrespmat.m', 'mml/setsp.m']);
+      const sourced = sourcedFiles(text);
+      for (const hop of hops) expect(sourced).toContain(hop);
+      expect(sourced).toContain('mml/getam.m');
+      expect(sourced.filter((f) => f.startsWith('old'))).toEqual([]);
+      expect(text).toContain('Full source for these symbols is below');
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('with no search path in force, a bag of names renders the body of each name of one definition', async () => {
+    const files = measurement();
+    delete files['startup.m'];
+    const cg = await CodeGraph.init(project(files), { index: true });
+    try {
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'measbpmresp measrespmat setsp getam' })).content[0]!.text;
+      const sourced = sourcedFiles(text);
+      // Its one definition is the copy MATLAB runs: as good as named.
+      expect(sourced).toContain('mml/measbpmresp.m');
+      expect(sourced).toContain('mml/measrespmat.m');
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('a bag of names of one definition each still renders the unnamed callee the output has room for', async () => {
+    // DeepLearnToolbox's `saesetup saetrain nntrain`: `nnff`, the forward pass
+    // `nntrain` calls, is named by nobody, and the budget has room for it.
+    const cg = await CodeGraph.init(project({
+      'SAE/saesetup.m': 'function sae = saesetup(size)\n  sae.size = size;\nend\n',
+      'SAE/saetrain.m': 'function sae = saetrain(sae, x, opts)\n  sae.ae{1} = nntrain(sae.ae{1}, x, x, opts);\nend\n',
+      'NN/nntrain.m': 'function nn = nntrain(nn, x, y, opts)\n  for i = 1 : opts.numepochs\n    nn = nnff(nn, x, y);\n  end\nend\n',
+      'NN/nnff.m': 'function nn = nnff(nn, x, y)\n  % NNFF the forward pass\n  nn.a{1} = x;\n  nn.e = y - nn.a{1};\nend\n',
+    }), { index: true });
+    try {
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'saesetup saetrain nntrain' })).content[0]!.text;
+      const sourced = sourcedFiles(text);
+      // The named bodies first, then the callee.
+      expect(sourced.slice(0, 3).sort()).toEqual(['NN/nntrain.m', 'SAE/saesetup.m', 'SAE/saetrain.m']);
+      expect(sourced).toContain('NN/nnff.m');
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('a Flow longer than the output budget\'s file count says which hops\' bodies did not fit, and how to get them', async () => {
+    const files: Record<string, string> = { 'startup.m': "addpath('p');\n" };
+    for (let i = 1; i <= 7; i++) {
+      files[`p/stage${i}.m`] = `function stage${i}(x)\n% STAGE${i} of the pipeline\n${i < 7 ? `stage${i + 1}(x);` : 'disp(x);'}\nend\n`;
+    }
+    const cg = await CodeGraph.init(project(files), { index: true });
+    try {
+      const query = 'stage1 stage2 stage3 stage4 stage5 stage6 stage7';
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query })).content[0]!.text;
+      const hops = [...text.matchAll(/^\d+\. (stage\d) \(/gm)].map((m) => m[1]!);
+      expect(hops).toHaveLength(7);
+      const sourced = new Set(sourcedFiles(text));
+      const left = hops.filter((h) => !sourced.has(`p/${h}.m`));
+      // Seven files do not fit a small project's budget: the Flow no longer says all are below.
+      expect(left.length).toBeGreaterThan(0);
+      expect(text).not.toContain('Full source for these symbols is below');
+      const claim = text.split('\n').find((l) => l.startsWith('> Source for these symbols is below'))!;
+      for (const h of left) expect(claim).toContain(`\`${h}\` (p/${h}.m:1)`);
+      expect(claim).toContain(`codegraph_explore \`${left.join(' ')}\``);
+      expect(claim).not.toMatch(/\bRead\b/);
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('names a left-out method hop by its qualified name in the query it suggests', () => {
+    const claim = flowSourceClaimWithout([
+      { name: 'sync', qualifiedName: 'ExtractionOrchestrator::sync', kind: 'method', filePath: 'src/extraction/index.ts', startLine: 3910 },
+      { name: 'stage1', qualifiedName: 'stage1', kind: 'function', filePath: 'p/stage1.m', startLine: 1 },
+    ]);
+    expect(claim).toContain('but for `sync` (src/extraction/index.ts:3910), `stage1` (p/stage1.m:1), which did not fit');
+    expect(claim).toContain('codegraph_explore `ExtractionOrchestrator.sync stage1` returns them');
+  });
+
+  it.each([['a search path', true], ['no search path', false]])('a question in prose seeds no project function named after one of its words, with %s', async (_label, withPath) => {
+    const files: Record<string, string> = {
+      ...(withPath ? { 'startup.m': "addpath('mml');\n" } : {}),
+      'mml/run.m': 'function run(task)\n% RUN - runs a task\ndisp(task);\nend\n',
+      'mml/check.m': 'function check(x)\n% CHECK - checks a value\ndisp(x);\nend\n',
+      'mml/setorbit.m': 'function setorbit(Goal)\n% SETORBIT - applies the orbit correction\nR = getrespmat(Goal);\nsetsp(Goal, R);\nend\n',
+      'mml/getrespmat.m': 'function R = getrespmat(Goal)\n% GETRESPMAT - the orbit response matrix\nR = Goal;\nend\n',
+      'mml/setsp.m': 'function setsp(Family, v)\ndisp(v);\nend\n',
+    };
+    const root = project(files);
+    const cg = await CodeGraph.init(root, { index: true });
+    // The explore diagnostic says which files hold a symbol seeded as named (its `named` flag).
+    const sidecar = path.join(root, 'explore-debug.jsonl');
+    const previous = process.env.CODEGRAPH_EXPLORE_DEBUG;
+    process.env.CODEGRAPH_EXPLORE_DEBUG = sidecar;
+    try {
+      await new ToolHandler(cg).execute('codegraph_explore', { query: 'how does the orbit correction run and check the setpoint' });
+      const report = JSON.parse(fs.readFileSync(sidecar, 'utf-8').trim().split('\n').pop()!) as { files: Array<{ path: string; named: boolean }> };
+      expect(report.files.filter((f) => f.named).map((f) => f.path)).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.CODEGRAPH_EXPLORE_DEBUG;
+      else process.env.CODEGRAPH_EXPLORE_DEBUG = previous;
       cg.close();
     }
   });

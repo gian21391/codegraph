@@ -77,6 +77,7 @@ import { buildTypeHierarchy, canHaveHierarchy, MAX_DESCENDANTS, MAX_DESCENDANT_D
 import { isTestCode } from '../graph/test-code';
 import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
+import { MATLAB_UNREAD_CODE } from '../extraction/languages/matlab-syntax';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -448,7 +449,8 @@ type IndexResult = {
  */
 function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexResult, projectPath?: string): void {
   const hasErrors = result.filesErrored > 0;
-  const parseWarnings = result.errors.filter((e) => e.code === 'parse_error' && e.severity === 'warning');
+  // A MATLAB file of Octave or binary text is indexed with nothing read from it: said here too.
+  const parseWarnings = result.errors.filter((e) => (e.code === 'parse_error' || e.code === MATLAB_UNREAD_CODE) && e.severity === 'warning');
 
   // Surface non-file-level failures (e.g. lock-acquisition failure
   // when another indexer is running) before the file-count branches.
@@ -1157,6 +1159,31 @@ function describeFilesMissingSymbols(health: { needsReindex: string[]; parseErro
 }
 
 /**
+ * The `status` notes for files indexed in part, in the words their indexing
+ * warned with (see ../extraction/languages/matlab-syntax): the index holds
+ * all it can of them, so they leave it up to date.
+ */
+function describeFilesIndexedInPart(health: { partlyParsed: string[]; notRead: string[] }): string[] {
+  const dash = getGlyphs().dash;
+  const lines: string[] = [];
+  const partly = health.partlyParsed.length;
+  if (partly > 0) {
+    lines.push(
+      `${formatNumber(partly)} ${partly === 1 ? 'file' : 'files'} could be parsed only in part ${dash} the parts that could not are left out of the graph, ` +
+      `and the rest of ${partly === 1 ? 'it is' : 'each is'} indexed: ${samplePaths(health.partlyParsed)} ${dash} "codegraph files --json" shows the errors`
+    );
+  }
+  const unread = health.notRead.length;
+  if (unread > 0) {
+    lines.push(
+      `${formatNumber(unread)} .m ${unread === 1 ? 'file is' : 'files are'} Octave, binary or encrypted and ${unread === 1 ? 'was' : 'were'} not read ${dash} ` +
+      `${unread === 1 ? 'it is' : 'they are'} indexed, but none of ${unread === 1 ? 'its' : 'their'} code is in the graph: ${samplePaths(health.notRead)}`
+    );
+  }
+  return lines;
+}
+
+/**
  * codegraph status [path]
  */
 program
@@ -1314,6 +1341,10 @@ program
             // Files with a recorded parse error and no symbols from it
             // (#2336); unchanged until the file or the parser changes.
             filesWithParseErrors: health.parseErrors.length,
+            // MATLAB files parsed in part (the rest of each indexed), and
+            // `.m` files of Octave or binary text, none of whose code is read.
+            filesPartlyParsed: health.partlyParsed.length,
+            filesNotRead: health.notRead.length,
           },
         }));
         cg.destroy();
@@ -1450,6 +1481,7 @@ program
       }
       const missingSymbols = describeFilesMissingSymbols(health);
       for (const line of missingSymbols) warn(line);
+      for (const line of describeFilesIndexedInPart(health)) info(line);
       if (totalChanges === 0 && missingSymbols.length === 0) {
         success('Index is up to date');
       }

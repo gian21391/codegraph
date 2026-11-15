@@ -34,6 +34,7 @@ import { SvelteExtractor } from './svelte-extractor';
 import { AstroExtractor } from './astro-extractor';
 import { DfmExtractor } from './dfm-extractor';
 import { PASCAL_SYSTEM_NAMES } from './languages/pascal-system';
+import { matlabFileWarning } from './languages/matlab-syntax';
 import { VueExtractor } from './vue-extractor';
 import { MyBatisExtractor } from './mybatis-extractor';
 import { CfmlExtractor } from './cfml-extractor';
@@ -1086,7 +1087,12 @@ export class TreeSitterExtractor {
       // (A re-export's import of its module is none: a barrel whose other lines
       // failed to parse has lost what it passes on.)
       const symbolCount = this.nodes.filter((n) => n.kind !== 'file').length - this.reExportImports;
-      if (this.tree?.rootNode.hasError && symbolCount === 0) {
+      if (this.language === 'matlab') {
+        // A MATLAB script has no symbol of its own, and what parses of it is
+        // indexed; a file of Octave or binary text is read not at all.
+        const warning = matlabFileWarning(this.filePath, this.source, this.tree?.rootNode.hasError ?? false, symbolCount);
+        if (warning) this.errors.push({ ...warning, severity: 'warning' });
+      } else if (this.tree?.rootNode.hasError && symbolCount === 0) {
         this.errors.push({
           message:
             `${this.filePath}: parse produced no symbols (tree has errors) — ` +

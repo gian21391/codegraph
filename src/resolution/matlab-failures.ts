@@ -42,10 +42,11 @@
  * a sync that later adds a symbol of the name links the bare reads in the
  * files it re-indexes, not those in a file it leaves alone, which a full
  * re-index does (pinned in __tests__/matlab-resolution.test.ts). A
- * built-in's name and a member's are the exceptions: a sync that gives one
- * its first carrier (of the kind the rule asks for) extracts the files
- * naming it again, and one that takes the last away drops the rows the rule
- * no longer keeps (see ./matlab-builtin-carriers).
+ * built-in's name and a member's are the exceptions, and so is the name of
+ * a `.m` file whose text a sync turns to MATLAB code or from it: a sync that
+ * gives one its first carrier (of the kind the rule asks for) extracts the
+ * files naming it again, and one that takes the last away drops the rows the
+ * rule no longer keeps (see ./matlab-builtin-carriers).
  */
 
 import type { NodeFilter, QueryBuilder } from '../db/queries';
@@ -75,7 +76,9 @@ export interface MatlabFreshReferences {
    * an edge it took back to a reference) leaves those pending too, and they
    * count: one whose target is gone is deleted, not parked, so a target that
    * comes back later does not relink it. That is what a full index of that
-   * state holds, which is all a sync has to match.
+   * state holds, which is all a sync has to match. And the rows the sync's
+   * scripts pass turns back from calls into a file that is no script now
+   * (see reopenMatlabScriptRuns in ./matlab-sync).
    */
   rowIds: ReadonlySet<number>;
 }
@@ -100,10 +103,18 @@ function isDottedMatlabName(name: string): boolean {
  */
 export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'enum_member', 'field'];
 
+/**
+ * The nodes that carry a name for a MATLAB call: any but the file node of a
+ * `.m` file whose text extraction read as no MATLAB code (Octave source, an
+ * encrypted MATLAB Compiler file: see matlabUnreadReason), which answers no
+ * call. A file of comments only (the help of a MEX function) and a script
+ * carry their names.
+ */
+export const MATLAB_CARRIER_NODES: NodeFilter = { readable: true };
 /** The MATLAB nodes that carry a member's name for a call written with arguments. */
-export const MATLAB_NODES: NodeFilter = { language: 'matlab' };
+export const MATLAB_NODES: NodeFilter = { language: 'matlab', readable: true };
 /** The MATLAB nodes that carry a member's name for one written without: the callable ones. */
-export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS };
+export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS, readable: true };
 
 /**
  * A MATLAB member or qualified call, the rule's subject (see the top of this
@@ -172,6 +183,10 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
  * (MATLAB_NODES for a call with arguments, MATLAB_CALLABLE_NODES for one
  * without).
  *
+ * No node of a `.m` file whose text was read as no MATLAB code carries a
+ * name (MATLAB_CARRIER_NODES): Octave's `datestr.m`, MATLAB Compiler's
+ * encrypted `pause.m` answer no call, and their names keep no row.
+ *
  * A built-in's name that a project symbol carries is kept too, with a MATLAB
  * search path in force or not: the call failed because of where the
  * project's definition is (off the path, or behind a nearer case variant),
@@ -217,9 +232,15 @@ export function unanswerableMatlabFailures(
   dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
   dropUncarried(calledMembers, MATLAB_NODES);
   if (pending.length === 0) return discarded;
-  const carried = known ?? queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
+  const named = known ?? queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
+  // A `.m` file's name, the one a file node carries, is asked again of the
+  // carriers (MATLAB_CARRIER_NODES): a file nothing is read from carries none.
+  const fileKeys = new Set<string>();
+  for (const { keys } of pending) for (const k of keys) if (named.has(k) && /\.[mM]$/.test(k)) fileKeys.add(k);
+  const carriedFiles = fileKeys.size > 0 ? queries.getNodeNamesAmong(fileKeys, MATLAB_CARRIER_NODES) : fileKeys;
+  const carried = (k: string): boolean => named.has(k) && (!fileKeys.has(k) || carriedFiles.has(k));
   for (const { ref, keys, builtin } of pending) {
-    if (keys.some((k) => carried.has(k))) continue;
+    if (keys.some(carried)) continue;
     const facts = matlabRefFacts(ref);
     if (builtin || isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) discarded.add(ref);
   }

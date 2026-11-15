@@ -2192,7 +2192,19 @@ export class ExtractionOrchestrator {
   constructor(rootDir: string, queries: QueryBuilder) {
     this.rootDir = rootDir;
     this.queries = queries;
-    this.matlabFilter = new MatlabInsertFilter(() => queries.getFilePathsOfLanguage('matlab'));
+    this.matlabFilter = new MatlabInsertFilter(
+      () => {
+        const unread = queries.getUnreadMatlabFilePaths();
+        return queries.getFilePathsOfLanguage('matlab').filter((p) => !unread.has(p));
+      },
+      (filePath) => {
+        try {
+          return fs.readFileSync(path.join(rootDir, filePath), 'utf-8');
+        } catch {
+          return null;
+        }
+      },
+    );
   }
 
   /**
@@ -3947,6 +3959,10 @@ export class ExtractionOrchestrator {
       nodesUpdated += done.nodes;
     }
 
+    // The MATLAB files whose text was read as no MATLAB code, before this
+    // sync replaces or removes any (see MatlabCarrierInput.unreadBefore).
+    const unreadBefore = trackMatlab ? this.queries.getUnreadMatlabFilePaths() : new Set<string>();
+
     // === Filesystem reconcile (git-independent) ===
     // The source of truth for "what changed" is the filesystem vs the indexed
     // state — never git. We enumerate the current source files and reconcile
@@ -4215,10 +4231,12 @@ export class ExtractionOrchestrator {
     const definitionDelta = [...deltaNames];
 
     // A built-in's name that gained its first project carrier, or lost its
-    // last (see resolution/matlab-builtin-carriers): the calls of it in files
-    // this sync leaves alone were judged by the carriers they had. A gained
-    // one's files are extracted again here, as a changed file is, and join
-    // the changed files for resolution; a lost one's rows go.
+    // last, or the name of a `.m` file whose text turned to MATLAB code or
+    // from it, read bare (`c = color;`; see resolution/matlab-builtin-carriers):
+    // the calls of it in files this sync leaves alone were judged by the
+    // carriers they had. A gained one's files are extracted again here, as a
+    // changed file is, and join the changed files for resolution; a lost
+    // one's rows go.
     // A member's name (`m.Total`, `a.recalib(2)`, `obj@Base(x)`) likewise,
     // for a carrier of the kind its calls need.
     // A member's name whose callable carriers changed has its kept rows
@@ -4230,6 +4248,7 @@ export class ExtractionOrchestrator {
       matlabPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_NODES) : new Set(),
       callablePairsBefore,
       callablePairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_CALLABLE_NODES) : new Set(),
+      unreadBefore,
     });
     const tCarriers = Date.now();
     const drop = uncarriedMatlabRowIds(this.queries, carriers);

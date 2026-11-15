@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
-import { allEdges, syncedAndFresh, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
+import { allEdges, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -270,6 +270,129 @@ describe('MATLAB lookup order through a sync', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('MATLAB files of Octave or binary text carry no built-in\'s name', () => {
+  // physbase keeps Octave's `datestr.m` off the path and MATLAB Compiler's
+  // encrypted `pause.m` in a deployed tree. Neither answers a call, so the
+  // built-in calls of their names keep no row; the help text of a MEX
+  // function (`input.m`, comments only) and a script (`now.m`) still do.
+  const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\nfunction s = datestr(t)\n  s = t;\nendfunction\n';
+  const MATLAB = 'function s = datestr(t)\n  s = sprintf(\'%d\', t);\nend\n';
+  const BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1) encrypted\n';
+  const USER = "function user()\n  s = datestr(1);\n  pause(1);\n  x = input('go');\n  t = now();\nend\n";
+  const FILES = {
+    'user.m': USER,
+    'EPICS/datestr.m': OCTAVE,
+    'deploy/pause.m': BLOB,
+    'help/input.m': '% INPUT  help for a MEX function of that name\n',
+    'scripts/now.m': 't = clock;\n',
+  };
+  const names = (rows: string[]): string[] => rows.map((r) => r.slice(r.indexOf(':', r.indexOf(' ')) + 1)).sort();
+
+  it('a fresh index keeps no row for a call of an Octave or a binary file\'s name, and keeps the stub\'s and the script\'s', async () => {
+    const root = tempDir('cg-matlab-unread-');
+    try {
+      writeTree(root, FILES);
+      const cg = await CodeGraph.init(root, { index: true });
+      cg.close();
+      expect(names(unresolvedRows(root))).toEqual(['input', 'now']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a sync ends where a fresh index ends: Octave to MATLAB and back, a binary added and removed, a script and a stub turned and deleted', async () => {
+    const sequences: Array<Array<Record<string, string | null>>> = [
+      [{ 'EPICS/datestr.m': MATLAB }, { 'EPICS/datestr.m': OCTAVE }],
+      [{ 'deploy/pause.m': null }, { 'deploy/pause.m': BLOB }],
+      [{ 'scripts/now.m': '# Octave\nt = clock;\n' }, { 'scripts/now.m': 't = clock;\n' }, { 'scripts/now.m': null }],
+      [{ 'help/input.m': null }, { 'help/input.m': BLOB }, { 'help/input.m': '% INPUT  help again\n' }],
+    ];
+    const runs = [];
+    for (const steps of sequences) {
+      const run = await syncedAndFreshEachStep(FILES, ...steps);
+      run.forEach((step, i) => {
+        expect(step.synced, `${JSON.stringify(steps[i])} edges`).toEqual(step.fresh);
+        expect(step.syncedRows, `${JSON.stringify(steps[i])} rows`).toEqual(step.freshRows);
+      });
+      runs.push(run);
+    }
+    // The rule bites: MATLAB's datestr.m answers the call, Octave's does not.
+    const [matlab, octave] = runs[0]!;
+    expect(matlab!.synced).toContain('user.m user -calls-> datestr @ EPICS/datestr.m');
+    expect(names(octave!.syncedRows)).toEqual(['input', 'now']);
+  }, 180_000);
+
+  // A bare read (`c = color;`) and a call dispatched under a built-in's name
+  // (`datestr(d, …)` on what `EPICS2MatlabTime` returns, `T::datestr`) keep a
+  // row only while a symbol carries the name: a file whose text turns to
+  // MATLAB code or from it gives the name its only carrier, or takes it, as
+  // adding or deleting it does, and the files a sync leaves alone follow.
+  const CARRIED = {
+    'EPICS2MatlabTime.m': 'function t = EPICS2MatlabTime(x)\n  t = x;\nend\n',
+    'user.m': 'function user()\n  d = EPICS2MatlabTime(1);\n  s = datestr(d, "yyyy");\n  c = color;\nend\n',
+  };
+  const COLOR = 'function c = color()\n  c = [1 0 0];\nend\n';
+  const COLOR_BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000K\u00ca^\n\u00c6}R';
+  const expectEachStepFresh = (run: Awaited<ReturnType<typeof syncedAndFreshEachStep>>, steps: Array<Record<string, string | null>>): void => {
+    run.forEach((step, i) => {
+      expect(step.synced, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} edges`).toEqual(step.fresh);
+      expect(step.syncedRows, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} rows`).toEqual(step.freshRows);
+    });
+  };
+
+  it('a sync ends where a fresh index ends when the only carrier of a bare read or of a dispatched built-in\'s name turns to MATLAB code or from it', async () => {
+    const steps: Array<Record<string, string | null>> = [
+      { 'blob/color.m': COLOR },
+      { 'blob/color.m': COLOR_BLOB },
+      { 'EPICS/datestr.m': MATLAB },
+      { 'EPICS/datestr.m': OCTAVE },
+      { 'blob/color.m': null },
+      { 'blob/color.m': COLOR_BLOB },
+    ];
+    const run = await syncedAndFreshEachStep({ ...CARRIED, 'EPICS/datestr.m': OCTAVE, 'blob/color.m': COLOR_BLOB }, ...steps);
+    expectEachStepFresh(run, steps);
+    // The rule bites: the function links the untouched caller's bare read,
+    // and the Octave file keeps no row of the dispatched call.
+    expect(run[0]!.synced).toContain('user.m user -calls-> color @ blob/color.m');
+    expect(run[3]!.syncedRows).toEqual([]);
+  }, 180_000);
+
+  it('a sync ends where a fresh index ends when a script run by name turns to Octave or binary text and back', async () => {
+    const SHADE = '% SHADE a script\ny = 1;\n';
+    const steps: Array<Record<string, string | null>> = [
+      { 'lib/shade.m': COLOR_BLOB },
+      { 'lib/shade.m': SHADE },
+      { 'lib/shade.m': '## Copyright (C) 2000 Paul Kienzle\n## SHADE\n1;\n' },
+      { 'lib/shade.m': SHADE },
+    ];
+    const run = await syncedAndFreshEachStep({ 'user.m': 'function user()\n  shade\n  x = 2;\nend\n', 'lib/shade.m': SHADE }, ...steps);
+    expectEachStepFresh(run, steps);
+    // The rule bites: the script answers the call, the binary keeps no row of it.
+    expect(run[1]!.synced).toEqual(['user.m user -calls-> lib/shade.m @ lib/shade.m']);
+    expect(run[0]!.syncedRows).toEqual([]);
+  }, 180_000);
+
+  // Added or deleted, the same carrier is not followed for a bare read or a
+  // dispatched call: a known gap (sync != fresh), left for the step that
+  // keeps such reads as dormant rows. A built-in's own call is followed.
+  it('a sync that adds or deletes the only carrier of a bare read or of a dispatched built-in\'s name leaves the untouched caller as it was', async () => {
+    const steps: Array<Record<string, string | null>> = [
+      { 'blob/color.m': COLOR },
+      { 'blob/color.m': null },
+      { 'EPICS/datestr.m': MATLAB },
+      { 'EPICS/datestr.m': null },
+    ];
+    const run = await syncedAndFreshEachStep(CARRIED, ...steps);
+    expectEachStepFresh([run[1]!, run[2]!], [steps[1]!, steps[2]!]);
+    expect(run[2]!.synced).toContain('user.m user -calls-> datestr @ EPICS/datestr.m');
+    expect(run[0]!.fresh).toEqual([...run[0]!.synced, 'user.m user -calls-> color @ blob/color.m'].sort());
+    expect(run[0]!.syncedRows).toEqual(run[0]!.freshRows);
+    expect(run[3]!.synced).toEqual(run[3]!.fresh);
+    expect(run[3]!.freshRows).toEqual([]);
+    expect(run[3]!.syncedRows).toEqual(['user.m:3 calls:EPICS2MatlabTime::datestr']);
+  }, 180_000);
 });
 
 describe('MATLAB recovery from an interrupted index', () => {

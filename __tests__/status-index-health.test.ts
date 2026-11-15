@@ -123,6 +123,24 @@ describe('status reports files indexed without their symbols (#2336, #2335)', ()
     expect(files.find((f: any) => f.path === 'src/constants/index.ts').errors).toEqual([]);
   });
 
+  it('a MATLAB script parsed in part and an Octave file are said as their indexing warned, and leave the index up to date', async () => {
+    fs.writeFileSync(path.join(dir, 'myscript.m'), 'setup_paths\nx = [1 2\ny = getpv(1);\n');
+    fs.writeFileSync(path.join(dir, 'getpv.m'), 'function v = getpv(n)\n  v = n;\nend\n');
+    fs.writeFileSync(path.join(dir, 'datestr.m'), '## Copyright (C) 2000 Paul Kienzle\nfunction s = datestr(t)\n  s = t;\nendfunction\n');
+    const init = run(dir, ['init', '.']);
+    expect(init.out).toContain('myscript.m: parts of the file could not be parsed — they are left out of the graph, and the rest of it is indexed');
+
+    const human = run(dir, ['status']);
+    expect(human.status, human.out).toBe(0);
+    expect(human.out).toContain('1 file could be parsed only in part — the parts that could not are left out of the graph, and the rest of it is indexed: myscript.m');
+    expect(human.out).toContain('1 .m file is Octave, binary or encrypted and was not read — it is indexed, but none of its code is in the graph: datestr.m');
+    expect(human.out).not.toContain('symbols are missing');
+    expect(human.out).toContain('Index is up to date');
+
+    const json = runJson(dir, ['status', '--json']);
+    expect(json.index).toMatchObject({ filesWithParseErrors: 0, filesPartlyParsed: 1, filesNotRead: 1, filesNeedingReindex: 0 });
+  });
+
   it('rows stored without their symbols ask for a sync, and the sync repairs them', async () => {
     await index();
 

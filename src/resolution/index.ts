@@ -3558,7 +3558,7 @@ export class ReferenceResolver {
   }
 
   /** See ./matlab-sync's reopenMatlabScriptRuns. */
-  reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): number {
+  reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): { count: number; fromEdges: number[] } {
     return reopenMatlabScriptRuns(this.queries, this.context, matlabFilePaths, changedFilePaths);
   }
 

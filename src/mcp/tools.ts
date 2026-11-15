@@ -772,6 +772,12 @@ export interface ExploreAllocationCandidate {
    * share stands, bounded only by the pool.
    */
   named?: boolean;
+  /**
+   * The part of `score` the cliff does not measure the top file by: what a
+   * named seed's score adds to a MATLAB name seeded only as the copy MATLAB
+   * would run (see the score floor in ToolHandler, which leaves it out too).
+   */
+  lift?: number;
 }
 
 export interface ExploreAllocation {
@@ -837,7 +843,10 @@ export function allocateExploreBudget(
 
   // Cliff over the WHOLE candidate list, before `maxFiles` — otherwise the file
   // cap fills with cliff-bound files and the slot they free is never handed on.
-  const cliffAt = Math.min(topWeight * A.CLIFF_FRACTION, A.CLIFF_MAX);
+  const cliffTop = candidates.some((c) => (c.lift ?? 0) > 0)
+    ? Math.max(...candidates.map((c) => (c.pinned ? weights.get(c.path)! : weightOf({ ...c, score: c.score - (c.lift ?? 0) }))))
+    : topWeight;
+  const cliffAt = Math.min(cliffTop * A.CLIFF_FRACTION, A.CLIFF_MAX);
   const cliffed: string[] = [];
   let admitted: ExploreAllocationCandidate[] = [];
   for (const c of candidates) {
@@ -1058,6 +1067,39 @@ export function symbolsNotInRanges(
 }
 
 const BARE_GAP_MARKER = '\n\n... (gap) ...\n\n';
+
+/** The Flow section's last line: the source of its hops follows. */
+const FLOW_SOURCE_CLAIM = '> Full source for these symbols is below — the call flow among them, followed by their bodies.';
+
+/**
+ * The Flow's last line when the output budget left some hops' bodies out:
+ * which ones, and the explore query that returns them (never Read).
+ */
+export function flowSourceClaimWithout(left: readonly Pick<Node, 'name' | 'qualifiedName' | 'kind' | 'filePath' | 'startLine'>[]): string {
+  const names = left.map((n) => `\`${n.name}\` (${n.filePath}:${n.startLine})`).join(', ');
+  // A method by its qualified name (`ExtractionOrchestrator.sync`), which
+  // names that one; another hop by its own.
+  const asQueried = (n: Pick<Node, 'name' | 'qualifiedName' | 'kind'>): string =>
+    n.kind === 'method' && n.qualifiedName && n.qualifiedName !== n.name ? n.qualifiedName.replace(/::/g, '.') : n.name;
+  const query = [...new Set(left.map(asQueried))].join(' ');
+  return `> Source for these symbols is below — the call flow among them, followed by their bodies — but for ${names}, which did not fit: codegraph_explore \`${query}\` returns ${left.length === 1 ? 'it' : 'them'}.`;
+}
+
+/**
+ * The file section `text` ends inside, and the last source line of it the
+ * text holds: what a cut at a line, not at a section's end, left of it.
+ */
+function lastSectionCut(text: string): { filePath: string; lastLine: number } | null {
+  const header = text.lastIndexOf('\n' + FILE_SECTION_PREFIX);
+  if (header < 0) return null;
+  const start = header + 1 + FILE_SECTION_PREFIX.length;
+  const filePath = text.slice(start, text.indexOf('`', start));
+  const numbered = /^(\d+)\t/gm;
+  numbered.lastIndex = header;
+  let lastLine = 0;
+  for (let m = numbered.exec(text); m !== null; m = numbered.exec(text)) lastLine = Number(m[1]);
+  return { filePath, lastLine };
+}
 
 /**
  * Gap marker between two non-contiguous slices of one file.
@@ -3958,7 +4000,7 @@ export class ToolHandler {
       }
       if (boundaryText) out.push(boundaryText);
       if (polyText) out.push(polyText);
-      out.push('> Full source for these symbols is below — the call flow among them, followed by their bodies.', '');
+      out.push(FLOW_SOURCE_CLAIM, '');
       // namedNodeIds = every callable the agent explicitly named (a superset of
       // the spine). A file holding one is something the agent asked to SEE, so it
       // must keep full source even if it's an off-spine polymorphic sibling — the
@@ -4735,6 +4777,16 @@ export class ToolHandler {
       return owned;
     };
 
+    // Compute the flow spine once — used both to prepend the Flow section (below)
+    // and to gate adaptive source sizing: files on the spine get full source,
+    // off-spine peers skeletonize. Before the named-symbol seeding, which
+    // seeds a MATLAB function the Flow lists as a hop (see the NL-stopword
+    // guard there).
+    // The Flow section labels each hop with its branch conditions; that read
+    // is synchronous, so the grammars it needs are loaded here, once.
+    await warmBranchGuardGrammars();
+    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
+
     const namedSeedIds = new Set<string>();
     // The subset of named seeds that earns the named-FIRST sort tier. We still
     // SEED every ≤3-def name (so RWR / flow ranking is unchanged), but only the
@@ -4743,6 +4795,12 @@ export class ToolHandler {
     // and crowd out the real answer file (grpc's `dialoptions.go`). Corroborated
     // overloads (the query also named the type) all earn it. (#1064)
     const tierSeedIds = new Set<string>();
+    // The named seeds that are seeded only as the copy of a bare MATLAB name
+    // MATLAB would run (see the NL-stopword guard below). Each is worth a
+    // named seed's score to its file, but the score floor is measured as if
+    // it were what the gather made of it: lifting the floor to a named
+    // seed's would cut the unnamed callees the output has room for.
+    const visibleOnlySeedIds = new Set<string>();
     // Files declaring a TYPE the query named by name — the counter-case guard
     // for the declaration-only penalty (CG-28). Populated in the token loop.
     const namedTypeFiles = new Set<string>();
@@ -4831,19 +4889,33 @@ export class ToolHandler {
         }
         return false;
       };
+      // Enumerate ALL defs of a bare token via the direct index, not FTS — a
+      // 50+-overload name (tokio `poll`) ranks the wanted def (`Harness::poll`)
+      // below the FTS cut, so findAllSymbols would never see it and the
+      // type-token bias below couldn't pick the harness.rs one. (Same fix as
+      // codegraph_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
+      const isQualToken = (t: string) => /[.\/]|::/.test(t);
+      const rawByToken = new Map(tokens.map((t) => [t, isQualToken(t) ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t)]));
+      // A MATLAB query of two or more tokens each of which names a definition
+      // (or a script) is a bag of names, not a question: a question's own
+      // words (`how`, `does`, `the`) name nothing. In one, the copy of a bare
+      // name MATLAB would run is as good as named (see the guard below).
+      const bagOfNames = matlab !== null && tokens.length >= 2 &&
+        tokens.every((t) => rawByToken.get(t)!.length > 0 || (!isQualToken(t) && (matlab?.scriptsNamed(t).length ?? 0) > 0));
       for (const t of tokens) {
-        // Enumerate ALL defs of a bare token via the direct index, not FTS — a
-        // 50+-overload name (tokio `poll`) ranks the wanted def (`Harness::poll`)
-        // below the FTS cut, so findAllSymbols would never see it and the
-        // type-token bias below couldn't pick the harness.rs one. (Same fix as
-        // codegraph_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
-        const isQual = /[.\/]|::/.test(t);
-        let raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        const isQual = isQualToken(t);
+        let raw = rawByToken.get(t)!;
         // The copy the path selects among several is as good as named: the
         // path, not a co-named word, says it is the one.
         const pathChosen = new Set<string>();
+        // The copy of a bare MATLAB name MATLAB would run: the one the path
+        // makes visible, of one copy or many; with no path in force, the
+        // name's one definition.
+        let visible: Node | undefined;
+        if (!matlabPath && matlab && !isQual && raw.length === 1 && raw[0]!.language === 'matlab') visible = raw[0];
         if (matlabPath && !isQual) {
           const copies = this.matlabCopies(cg, matlabPath, t);
+          visible = copies.onPath[0];
           if (copies.offPath.length > 0 || copies.otherCase.length > 0) {
             const offPathShown = copies.onPath.length > 0 ? 0 : 1;
             const kept = new Set(keepMatlabCopies(raw, copies, offPathShown).map((n) => n.id));
@@ -4916,11 +4988,24 @@ export class ToolHandler {
         // query token is named beside it. Only that edge — a capitalised first
         // word ("Trace how …") must not corroborate a Go method another file
         // of its package declares the receiver of.
+        // The MATLAB function MATLAB would run (the one the search path makes
+        // visible, however many copies its name has, or with no path the
+        // name's one definition) is as good as named, where the query is a bag
+        // of names, or where the Flow above lists it as a hop: the Flow says
+        // its body is below, and the agent Reads it when it is not. Not in
+        // prose of any other kind, where "… the orbit correction run" must
+        // not seed a project's `run.m`.
         if (!isPreciseToken(t)) {
           const unnamed = cands.filter((n) => !coNamedInFile(t, n.filePath));
           const unnamedIds = new Set(unnamed.map((n) => n.id));
           const corroborated = matlab?.corroborated(unnamed, t, lcTypeTokens, lcTokens);
-          cands = cands.filter((n) => !unnamedIds.has(n.id) || corroborated?.has(n.id) || pathChosen.has(n.id));
+          const pathNamed = (n: Node) => n.id === visible?.id && (bagOfNames || flow.pathNodeIds.has(n.id));
+          cands = cands.filter((n) => {
+            if (!unnamedIds.has(n.id) || corroborated?.has(n.id) || pathChosen.has(n.id)) return true;
+            if (!pathNamed(n)) return false;
+            visibleOnlySeedIds.add(n.id);
+            return true;
+          });
         }
         // A specific name (<=3 defs) injects all its defs. An overloaded name
         // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
@@ -4978,13 +5063,6 @@ export class ToolHandler {
       }
     }
 
-    // Compute the flow spine once — used both to prepend the Flow section (below)
-    // and to gate adaptive source sizing: files on the spine get full source,
-    // off-spine peers skeletonize.
-    // The Flow section labels each hop with its branch conditions; that read
-    // is synchronous, so the grammars it needs are loaded here, once.
-    await warmBranchGuardGrammars();
-    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
     // A MATLAB script on the flow, or named: its file node is the hop, and the
     // file's code its body, which the gather (symbols, not files) never
     // reaches. One the agent named is seeded as its own. One it only passes
@@ -5028,7 +5106,7 @@ export class ToolHandler {
     // Step 2: Group nodes by file, score by relevance
     // `peripheral` accumulates separately so it can be capped — see
     // PERIPHERAL_SCORE_CAP; it is folded into `score` once the loop is done.
-    const fileGroups = new Map<string, { nodes: Node[]; score: number; peripheral: number }>();
+    const fileGroups = new Map<string, { nodes: Node[]; score: number; peripheral: number; lift: number }>();
     const entryNodeIds = new Set([...subgraph.roots, ...namedSeedIds]);
 
     // Build a set of nodes directly connected to entry points (depth 1). A
@@ -5157,7 +5235,7 @@ export class ToolHandler {
       // unbidden. The key still appears in the flow/symbol listing above.
       if (isConfigLeafNode(node)) continue;
 
-      const group = fileGroups.get(node.filePath) || { nodes: [], score: 0, peripheral: 0 };
+      const group = fileGroups.get(node.filePath) || { nodes: [], score: 0, peripheral: 0, lift: 0 };
       group.nodes.push(node);
       // Score: a NAMED-SEED node (a symbol the agent named that FTS missed, now
       // injected) is worth far more than a mere reference — its file is where the
@@ -5172,6 +5250,11 @@ export class ToolHandler {
       // constant is a name collision, not an answer (#1500).
       if (namedSeedIds.has(node.id)) {
         group.score += 50 * relevanceWeight(node, true);
+        if (visibleOnlySeedIds.has(node.id)) {
+          const gathered = subgraph.roots.includes(node.id) ? 10 * relevanceWeight(node, true)
+            : connectedToEntry.has(node.id) ? 3 * relevanceWeight(node, false) : 0;
+          group.lift += 50 * relevanceWeight(node, true) - gathered;
+        }
       } else if (entryNodeIds.has(node.id)) {
         group.score += 10 * relevanceWeight(node, true);
       } else if (connectedToEntry.has(node.id)) {
@@ -5230,8 +5313,9 @@ export class ToolHandler {
       * (isLowValue(filePath) ? LOW_VALUE_RANK_PENALTY : 1);
 
     for (const [filePath, group] of fileGroups) {
-      group.score = (group.score + Math.min(PERIPHERAL_SCORE_CAP, group.peripheral))
-        * rankPenalty(filePath);
+      const penalty = rankPenalty(filePath);
+      group.score = (group.score + Math.min(PERIPHERAL_SCORE_CAP, group.peripheral)) * penalty;
+      group.lift *= penalty;
     }
 
     // Hard-exclude test/spec files (ALL tiers — the per-tier `excludeLowValueFiles`
@@ -5263,7 +5347,9 @@ export class ToolHandler {
 
     // Relative score floor — see SCORE_FLOOR_* for why it is a fraction of the
     // best file's score and why that fraction is clamped at both ends.
-    const topScore = Math.max(0, ...candidateFiles.map(([, g]) => g.score));
+    // (A seed visibleOnlySeedIds holds counts here as what the gather made of
+    // it, as it does for the allocation's cliff.)
+    const topScore = Math.max(0, ...candidateFiles.map(([, g]) => g.score - g.lift));
     const scoreFloor = Math.max(
       SCORE_FLOOR_ABSOLUTE,
       Math.min(SCORE_FLOOR_MAX, topScore * SCORE_FLOOR_FRACTION_OF_TOP),
@@ -5398,7 +5484,7 @@ export class ToolHandler {
       changeSurfaceFiles.add(fp);
       if (!subgraph.nodes.has(t.id)) subgraph.nodes.set(t.id, t);
       let group = fileGroups.get(fp);
-      if (!group) { group = { nodes: [], score: 0, peripheral: 0 }; fileGroups.set(fp, group); }
+      if (!group) { group = { nodes: [], score: 0, peripheral: 0, lift: 0 }; fileGroups.set(fp, group); }
       if (!group.nodes.some((n) => n.id === t.id)) group.nodes.push(t);
       group.score = Math.max(group.score, 45);
       if (!relevantFiles.some(([f]) => f === fp)) relevantFiles.push([fp, group]);
@@ -5679,6 +5765,7 @@ export class ToolHandler {
           || anchorSpans.has(fp),
         pinned: pinnedSet.has(fp),
         named: namedSeedFiles.has(fp),
+        ...(group.lift > 0 ? { lift: group.lift } : {}),
       })),
       budget,
       maxFiles,
@@ -8079,6 +8166,9 @@ export class ToolHandler {
     const EPILOGUE_CUT_NOTE = EXPLORE_FALLBACK_NOTES.cut[
       epilogueOnlyCut !== null && trimmedIn(epilogueOnlyCut) ? 'trimmed' : 'complete'];
 
+    // A file section the line cut below ends inside: its source past the cut
+    // was never delivered.
+    let cutInside: { filePath: string; lastLine: number } | null = null;
     if (output.length > hardCeiling
         && epilogueOnlyCut !== null
         && epilogueOnlyCut.length + EPILOGUE_CUT_NOTE.length <= hardCeiling) {
@@ -8094,6 +8184,7 @@ export class ToolHandler {
       const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
       const boundary = lastSection > hardCeiling * 0.5 ? lastSection : cut.lastIndexOf('\n');
       const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
+      if (boundary !== lastSection) cutInside = lastSectionCut(safe);
       finalText = safe + EXPLORE_FALLBACK_NOTES.truncated[trimmedIn(safe) ? 'trimmed' : 'complete'];
     } else {
       finalText = output;
@@ -8130,6 +8221,22 @@ export class ToolHandler {
     }
     summaryLine += setAsideNote;
     finalText = finalText.replace(SUMMARY_SENTINEL, summaryLine);
+
+    // The Flow says each hop's body is below. Where the output budget left
+    // one out, it says which, and how to get it.
+    if (flow.pathNodeIds.size > 0 && finalText.includes(FLOW_SOURCE_CLAIM)) {
+      const shown = new Set(survivors);
+      const hops = cg.getNodesByIds([...flow.pathNodeIds]);
+      const left: Node[] = [];
+      for (const id of flow.pathNodeIds) {
+        const n = hops.get(id);
+        if (!n) continue;
+        const ranges = shown.has(n.filePath) ? emittedByFile.get(n.filePath)?.ranges ?? [] : [];
+        const end = cutInside?.filePath === n.filePath ? cutInside.lastLine : Infinity;
+        if (!ranges.some((r) => r.start <= n.startLine && n.startLine <= Math.min(r.end, end))) left.push(n);
+      }
+      if (left.length > 0) finalText = finalText.replace(FLOW_SOURCE_CLAIM, flowSourceClaimWithout(left));
+    }
 
     // Emit the allocation diagnostic from the FINAL text, so per-file bytes and
     // shares account for the hard-ceiling truncation above (CG-4).

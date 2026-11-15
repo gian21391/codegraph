@@ -219,6 +219,74 @@ describe('Octave files (unsupported)', () => {
   });
 });
 
+describe('MATLAB text the parser cannot read', () => {
+  // physbase's shapes: an optics table (`2660 W20  81.15 …` reads as the
+  // number 2660, a comma the parser put in, and the command `W20`), a
+  // readme, and a logbook line (`5) @4:48, kicker off`).
+  const TABLE = '     1 START         0.00     0.00    11.19\n  2660 W20          81.15     0.02    11.22\n  2661 W20          81.17     0.02    11.22\n  2662 U5           81.19     0.01    11.22\n';
+  const README = 'FMINUIT  -  A binding to MINUIT for Matlab & Scilab.\n=======\n\nIt minimizes any function, either implemented as a .m(.sci) script file or as\na compiled dll, provided that it returns a real scalar and it depends on one\nparameters only (see the examples).\n';
+  const LOGBOOK = "kick1000-5mA-00.jpeg, kick1000-5mA-a-00.jpeg\n5) @4:48, kicker off\nsetpv('HCM', 1);\ndrawnow\n";
+
+  it('reads no command or bare name from a line that does not parse: a data table\'s, a readme\'s, a logbook\'s', () => {
+    expect(allRefs('Optics.m', TABLE)).toEqual([]);
+    // The readme's first lines hold the error (`It` breaks the parse); the
+    // ones after it parse whole, as commands (`a compiled dll, provided
+    // that …`), and read as any command does.
+    expect(allRefs('readme.m', README)).toEqual(['calls:a <- readme.m', 'calls:provided <- readme.m', 'calls:parameters <- readme.m']);
+    // The lines that parse whole keep their calls.
+    expect(allRefs('logbook.m', LOGBOOK)).toEqual(['calls:setpv <- logbook.m', 'calls:drawnow <- logbook.m']);
+  });
+
+  it('keeps the calls written with arguments, the handles and the dotted calls of a broken function file', () => {
+    const code = "function plotit(x)\n  figure(1);\n  5) @4:48, kicker off\n  setpv('HCM', x);\n  h = @getpv;\n  Lattice.refresh(2);\n  drawnow\n  y = [1 2 3\nend\n";
+    expect(allRefs('plotit.m', code)).toEqual([
+      'calls:figure <- plotit',
+      'calls:setpv <- plotit',
+      'function_ref:getpv <- plotit',
+      'calls:Lattice::refresh <- plotit',
+      'calls:drawnow <- plotit',
+    ]);
+    // In an ERROR node (an unclosed `while` makes the root one), a call
+    // written with its arguments stays, a dotted call too, and so does a
+    // command on a line that parses whole.
+    const swallowed = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  cleanupAll\n  while getpv(k)<0.1\n';
+    expect(getParser('matlab')!.parse(swallowed)!.rootNode.type).toBe('ERROR');
+    expect(allRefs('f.m', swallowed)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:cleanupAll <- f.m', 'calls:getpv <- f.m']);
+    // A bare name read in a condition the parser could not close goes: the
+    // `if` its line starts with is a token of the error's own.
+    expect(allRefs('g.m', 'function r = g(x)\n  y = (x +;\n  if isReady && getpv(x) > 1\n    q = [1 2\n  end\nend\n')).toEqual(['calls:getpv <- g.m']);
+  });
+
+  it('keeps a command or a bare read on a line that parses whole, under an error an unclosed bracket runs to the end of the file', () => {
+    // `x = [1 2` never closes: the parser reads the rest of the file, the
+    // next function too, as rows of that matrix inside one `ERROR`. A line
+    // that parses whole in it is code (`soundtada;`); one with a token of the
+    // error's own is not (`t1 = gettime;`, its `=` an error of the matrix's;
+    // `soundtada;` after `end`, split into `s` and `oundtada`).
+    const code = 'function plotit(v)\ncheckforao;\nt0 = gettime;\nif v\n  x = [1 2\nend\nsoundtada;\nend\nfunction other()\nsoundtada;\nt1 = gettime;\nend\n';
+    const refs = extractFromSource('plotit.m', code, 'matlab').unresolvedReferences.map((u) => `${u.line} ${u.referenceName}`);
+    expect(refs).toEqual(['2 checkforao', '3 gettime', '8 end', '10 soundtada']);
+  });
+
+  it('warns in terms that are true for MATLAB, and as before for other languages', () => {
+    const warnings = (file: string, code: string, language: Parameters<typeof extractFromSource>[2] = 'matlab') =>
+      extractFromSource(file, code, language).errors.map((e) => `${e.code} ${e.message}`);
+    // A script has no symbol of its own: what parses of it is indexed.
+    expect(warnings('logbook.m', LOGBOOK)).toEqual([
+      'parse_error logbook.m: parts of the file could not be parsed — they are left out of the graph, and the rest of it is indexed',
+    ]);
+    // A function file with an error and its symbols, as before: no warning.
+    expect(warnings('f.m', 'function r = f(x)\n r = g(x;\nend\n')).toEqual([]);
+    expect(warnings('stamp.m', '## Copyright (C) 2000 A. Author\nfunction t = stamp\n  t = 1;\nendfunction\n')).toEqual([
+      'source_not_read stamp.m: Octave source, which is not read as MATLAB — the file is indexed, but none of its code is in the graph',
+    ]);
+    expect(warnings('pause.m', 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1)\n')).toEqual([
+      'source_not_read pause.m: not MATLAB text (a binary or encrypted file) — the file is indexed, but none of its code is in the graph',
+    ]);
+    expect(warnings('broken.py', 'def (:\n', 'python')[0]).toContain('parse produced no symbols (tree has errors)');
+  });
+});
+
 describe('MATLAB symbols and references', () => {
   it('extracts a function file: primary, local and nested functions with signatures and help', () => {
     const code = `function [out, n] = process(data, opts)

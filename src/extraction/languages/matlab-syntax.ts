@@ -134,3 +134,41 @@ export function isOctave(source: string): boolean {
   if (!OCTAVE_HINT.test(source)) return false;
   return OCTAVE_LINE.test(maskMatlabBlockComments(source));
 }
+
+/**
+ * Why a `.m` file read as MATLAB holds no MATLAB code to read, or null when it
+ * may: Octave source (see isOctave), whose functions MATLAB does not run as
+ * written, or no text at all — a NUL among its first 8000 characters, as git
+ * tells a binary file: MATLAB Compiler's encrypted `.m` files
+ * (`V1MCC4000MEC…`) in a deployed runtime tree, an archive saved as `.m`. (A
+ * stray control byte further in, `'…FREQ\0'` in a string, is MATLAB's to
+ * read past.) Nothing is read from such a file, and it answers no call: its
+ * name carries no built-in's or member's (see ../../resolution/matlab-failures).
+ */
+export function matlabUnreadReason(source: string): 'octave' | 'binary' | null {
+  const nul = source.indexOf('\0');
+  if (nul >= 0 && nul < 8000) return 'binary';
+  return isOctave(source) ? 'octave' : null;
+}
+
+/**
+ * The code of the warning a MATLAB file matlabUnreadReason names is stored
+ * with: what tells such a file in the index, at a sync after its text has
+ * changed too (see ../../resolution/matlab-failures).
+ */
+export const MATLAB_UNREAD_CODE = 'source_not_read';
+
+/**
+ * The warning a MATLAB file's extraction records, or null: a file nothing is
+ * read from (matlabUnreadReason), or a script — which has no symbol of its
+ * own — whose parse has errors: what parses of it is still indexed.
+ */
+export function matlabFileWarning(filePath: string, source: string, hasError: boolean, symbolCount: number): { message: string; code: string } | null {
+  const unread = matlabUnreadReason(source);
+  if (unread !== null) {
+    const what = unread === 'octave' ? 'Octave source, which is not read as MATLAB' : 'not MATLAB text (a binary or encrypted file)';
+    return { message: `${filePath}: ${what} — the file is indexed, but none of its code is in the graph`, code: MATLAB_UNREAD_CODE };
+  }
+  if (!hasError || symbolCount > 0) return null;
+  return { message: `${filePath}: parts of the file could not be parsed — they are left out of the graph, and the rest of it is indexed`, code: 'parse_error' };
+}

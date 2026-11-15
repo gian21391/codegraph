@@ -4,7 +4,7 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { getParser } from '../grammars';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
-import { isOctave } from './matlab-syntax';
+import { matlabUnreadReason } from './matlab-syntax';
 import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
 import { COMPUTED_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
@@ -954,6 +954,71 @@ function inUnreadStatement(node: SyntaxNode): boolean {
   return false;
 }
 
+/**
+ * Whether a command (`hold on`) or a bare name (`setup_paths`, `t = cfg;`)
+ * stands on a line that holds text the parser could not read as MATLAB: a
+ * missing node, or a token of an `ERROR` node of its own, outside the
+ * statements the parser still read whole inside it. The text of a data
+ * table, a readme or a pasted console session reads as commands and names:
+ * `2660 W20  81.15 …` is the number 2660, a comma the parser put in, and the
+ * command `W20`; `5) @4:48, kicker off` a broken range and the command
+ * `kicker`. But an `ERROR` that an unclosed bracket opens can run to the end
+ * of the file, through lines that parse as statements of their own
+ * (`soundtada;`, `t0 = gettime;`): those are code, and their line holds no
+ * text of the error's own. A call written with its arguments (`f(x)`), a
+ * handle (`@f`) and a dotted call stay wherever they are: code in a broken
+ * file is still code.
+ */
+function inUnreadText(node: SyntaxNode, source: string): boolean {
+  return parseErrorRows(node.tree, source).has(node.startPosition.row);
+}
+
+/** Per parse tree, the lines that hold parse-error text (see inUnreadText): read once, pruned to the subtrees that hold an error. */
+const PARSE_ERROR_ROWS = new WeakMap<Tree, Set<number>>();
+
+/** Tokens an `ERROR` holds that are no text of the error's own: statement and entry separators, comments. */
+const ERROR_SEPARATORS = new Set([';', ',', '\n', 'comment', 'line_continuation']);
+
+function parseErrorRows(tree: Tree, source: string): Set<number> {
+  const memo = PARSE_ERROR_ROWS.get(tree);
+  if (memo) return memo;
+  const rows = new Set<number>();
+  const mark = (n: SyntaxNode): void => {
+    for (let r = n.startPosition.row; r <= n.endPosition.row; r++) rows.add(r);
+  };
+  // The characters of an `ERROR` that none of its children covers, the ones
+  // it skipped (`data rates` in `correctors data rates (monrates)`): the
+  // lines of those that are neither blank nor a separator (`soundtada;`).
+  const skipped = (from: number, to: number, row: number): void => {
+    for (let i = from; i < to; i++) {
+      const c = source.charCodeAt(i);
+      if (c === 10) row++;
+      else if (c !== 32 && c !== 9 && c !== 13 && c !== 59 && c !== 44) rows.add(row);
+    }
+  };
+  const walk = (n: SyntaxNode): void => {
+    if (n.isMissing) return mark(n);
+    const own = n.type === 'ERROR';
+    if (own && n.childCount === 0) return mark(n);
+    let at = n.startIndex;
+    let row = n.startPosition.row;
+    for (let i = 0; i < n.childCount; i++) {
+      const c = n.child(i);
+      if (!c) continue;
+      if (own) skipped(at, c.startIndex, row);
+      // An `ERROR` without children (a skipped character) counts no error of its own, by tree-sitter's count.
+      if (c.hasError || c.type === 'ERROR' || c.isMissing) walk(c);
+      else if (own && c.childCount === 0 && !ERROR_SEPARATORS.has(c.type)) mark(c);
+      at = c.endIndex;
+      row = c.endPosition.row;
+    }
+    if (own) skipped(at, n.endIndex, row);
+  };
+  if (tree.rootNode.hasError) walk(tree.rootNode);
+  PARSE_ERROR_ROWS.set(tree, rows);
+  return rows;
+}
+
 /** `@f` / `@pkg.f` / `@obj.m` (`@(x) …` is a lambda node, not this). */
 function handleRef(node: SyntaxNode, source: string): MemberRef | null {
   const names = dottedName(node, source);
@@ -1716,7 +1781,7 @@ export function matlabParamSinks<T>(
   functions: ReadonlySet<string>,
   use: (sinks: readonly MatlabParamSink[], codeRefs: (sink: MatlabParamSink, code: string) => UnresolvedReference[]) => T,
 ): T {
-  if (isOctave(source)) return use([], () => []);
+  if (matlabUnreadReason(source) !== null) return use([], () => []);
   return inFile(root, source, filePath, () => {
     // `source` may hold only the functions asked for: the file's others are named by the caller.
     fileFunctions = new Set([...fileFunctions, ...functions]);
@@ -2069,9 +2134,10 @@ export const matlabExtractor: LanguageExtractor = {
     const source = ctx.source;
     // The file's root — `source_file`, or `ERROR` when the parse failed at the
     // top (as an Octave file with a `##` header often does). Octave is
-    // unsupported: its file node, nothing read from it.
+    // unsupported, and a binary (an encrypted MATLAB Compiler file) no code:
+    // its file node, nothing read from it.
     if (!node.parent) {
-      if (!isOctave(source)) extractFile(node, ctx);
+      if (matlabUnreadReason(source) === null) extractFile(node, ctx);
       return true;
     }
     switch (node.type) {
@@ -2182,7 +2248,7 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=');
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name) && !javaImported.has(name)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
+        if (!isLocal(frame(), name) && !javaImported.has(name) && !inUnreadText(node, source)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
         return false;
       }
 
@@ -2191,7 +2257,7 @@ export const matlabExtractor: LanguageExtractor = {
         if (!cmd) return true;
         const name = getNodeText(cmd, source);
         if (name === 'import') extractImport(node, ctx);
-        else if (!isLocal(frame(), name)) {
+        else if (!isLocal(frame(), name) && !inUnreadText(node, source)) {
           // `setup_paths`: a statement of its own; `hold on` takes arguments.
           // (`setup_paths ;` reads with an empty argument, which is none.)
           const statement = !namedChildren(node).some((c) => c.type === 'command_argument' && getNodeText(c, source).trim() !== '');

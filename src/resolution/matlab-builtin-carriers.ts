@@ -11,11 +11,29 @@
  * file of that name, or the first symbol of it anywhere — leaves the calls a
  * fresh index would now keep in files the sync never touched: they were
  * dropped while nothing answered them. And a sync that takes the last carrier
- * away leaves rows a fresh index would not keep. Here is what such a sync
- * must do so as to end where a fresh index ends: extract again the MATLAB
- * files that name a built-in which gained a carrier, and delete the rows of
- * one that lost it. These are rare: a project rarely names a file or a
- * function after a built-in.
+ * away leaves rows a fresh index would not keep. (A `.m` file of Octave or
+ * binary text carries no name: one whose text turns to MATLAB code, or from
+ * it, gives its name a carrier, or takes one, as one added or removed does.)
+ * Here is what such a sync must do so as to end where a fresh index ends:
+ * extract again the MATLAB files that name a built-in which gained a
+ * carrier, and delete the rows of one that lost it. A project seldom names
+ * a file or a function after a built-in, so this seldom runs.
+ *
+ * Any other call whose row is kept only while a symbol carries its name
+ * (see matlabUnmatchableKeys in ./matlab-failures) — a bare read
+ * (`c = color;`, a command `setup_paths`), a name code run at runtime
+ * makes, `T::datestr` dispatched under a built-in's name — goes the same
+ * way only when its name's carrier is a `.m` file whose text the sync
+ * turned to MATLAB code or from it: the files naming it are extracted
+ * again, in the same word scan, or the rows of it, and under it, that the
+ * resolver would not keep are deleted, judged by the resolver's own rule.
+ * Such a name that a sync gives its first carrier or takes the last from by
+ * adding, deleting or renaming a file, or by a new symbol, is not followed:
+ * the bare reads of it in the files the sync leaves alone keep what they
+ * had (pinned in __tests__/matlab-resolution.test.ts). A name of that kind
+ * is written in comments, strings and variables of a great many files, and
+ * reading them all again on every such sync would cost minutes on a large
+ * project.
  *
  * A member call's row (`v.f(x)`, `m.Total`, `obj@Base(x)`; see
  * matlabMemberCall in ./matlab-failures) is kept while its member's name has
@@ -45,7 +63,7 @@ import * as path from 'path';
 import type { QueryBuilder } from '../db/queries';
 import { MATLAB_BUILTINS, addMatlabReachableNames } from '../extraction/languages/matlab-builtins';
 import { isJavaImport } from '../extraction/languages/matlab-java';
-import { MATLAB_CALLABLE_NODES, MATLAB_NODES, matlabMemberCall, matlabNameKeys } from './matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_CARRIER_NODES, MATLAB_NODES, matlabMemberCall, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 
 
@@ -67,13 +85,30 @@ export interface MatlabCarrierInput {
   callablePairsBefore: ReadonlySet<string>;
   /** The same of the files the sync extracted, read after. */
   callablePairsAfter: ReadonlySet<string>;
+  /**
+   * Of the files the sync replaced or removed, the ones whose text had been
+   * read as no MATLAB code (Octave, a binary: see MATLAB_CARRIER_NODES), read
+   * before it did. None of their nodes carried a name then, and no name is
+   * reached through them.
+   */
+  unreadBefore: ReadonlySet<string>;
 }
 
 export interface MatlabCarrierChange {
-  /** The built-ins' names a MATLAB call of which a fresh index keeps now and did not before: the files naming them are extracted again. */
+  /**
+   * The names a MATLAB call's row is kept for now and was not before (a
+   * built-in's, or the name of a file that turned to MATLAB code, read bare:
+   * `c = color;`): the files naming them are extracted again.
+   */
   gained: string[];
-  /** The ones no symbol carries any more: every row of a call of the name goes. */
+  /** The built-ins' names no symbol carries any more: every row of a call of the name goes. */
   lost: string[];
+  /**
+   * The names whose last carrier was a `.m` file the sync turned to Octave
+   * or binary text: every row of them, and under them (`T::datestr`), that
+   * the resolver would not keep goes.
+   */
+  turnedLost: string[];
   /** The ones still carried that no `.m` file is named for any more: a row goes unless its file imports, or defines the name. */
   unreached: string[];
   /** Members' names that gained their first carrier, or first callable one: the files writing them as a member are extracted again. */
@@ -86,7 +121,7 @@ export interface MatlabCarrierChange {
   membersRecalled: string[];
 }
 
-const noChange = (): MatlabCarrierChange => ({ gained: [], lost: [], unreached: [], membersGained: [], membersLost: [], membersUncallable: [], membersRecalled: [] });
+const noChange = (): MatlabCarrierChange => ({ gained: [], lost: [], turnedLost: [], unreached: [], membersGained: [], membersLost: [], membersUncallable: [], membersRecalled: [] });
 
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
 
@@ -97,7 +132,7 @@ function builtinOf(name: string): string | null {
   return stem !== undefined && MATLAB_BUILTINS.has(stem) ? stem : null;
 }
 
-/** Which built-in and member names a sync gave a first carrier, or took the last one from (see the top of this file). */
+/** Which built-in, member and other carried names a sync gave a first carrier, or took the last one from (see the top of this file). */
 export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrierInput): MatlabCarrierChange {
   const candidates = new Set<string>();
   const nameOf = (pair: string): string => pair.slice(pair.indexOf('\0') + 1);
@@ -126,10 +161,30 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
     if (b !== null) candidates.add(b);
   }
   const mPath = (p: string): boolean => p.toLowerCase().endsWith('.m');
+  // A `.m` file whose text turned to MATLAB code, or from it (an Octave
+  // `datestr.m` rewritten), carries its name, or stops: its name changes as
+  // one added or removed does.
+  const removed = new Set(input.removedPaths);
+  let unreadNowRead: Set<string> | null = null;
+  const unreadNow = (): Set<string> => (unreadNowRead ??= queries.getUnreadMatlabFilePaths());
+  const unreadAt = (p: string): boolean => (input.extracted.has(p) || removed.has(p) ? input.unreadBefore.has(p) : unreadNow().has(p));
+  const extractedM = [...input.extracted].filter((p) => mPath(p) && !removed.has(p));
+  const turned = extractedM.length > 0 ? extractedM.filter((p) => input.unreadBefore.has(p) !== unreadNow().has(p)) : [];
   const reachedByChange = new Set<string>();
-  addMatlabReachableNames([...input.addedPaths, ...input.removedPaths].filter(mPath), reachedByChange);
+  addMatlabReachableNames([...input.addedPaths, ...input.removedPaths, ...turned].filter(mPath), reachedByChange);
   for (const name of reachedByChange) if (MATLAB_BUILTINS.has(name)) candidates.add(name);
-  if ((candidates.size === 0 && members.size === 0) || !queries.hasFilesOfLanguage('matlab')) return noChange();
+  // Any other name whose rows are kept only while a symbol carries it (see
+  // matlabUnmatchableKeys in ./matlab-failures): a bare read (`c = color;`),
+  // a name code made at runtime, `T::name` dispatched under a built-in's
+  // name. Only the name of a file that turned, and only here: see the top
+  // of this file.
+  const turnedStems = new Set<string>();
+  for (const p of turned) {
+    const stem = stemOf(path.basename(p));
+    if (stem !== null) turnedStems.add(stem);
+  }
+  const bare = new Set([...turnedStems].filter((s) => !MATLAB_BUILTINS.has(s)));
+  if ((candidates.size === 0 && members.size === 0 && bare.size === 0) || !queries.hasFilesOfLanguage('matlab')) return noChange();
 
   const change = noChange();
   change.membersRecalled = [...recalled];
@@ -162,17 +217,26 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
     }
   }
 
+  if (candidates.size === 0 && bare.size === 0) return change;
+  // Carried: some node is named for it (a function, a class, a script's
+  // `.m`), none of a file whose text is no MATLAB code.
+  const before = new Set<string>();
+  for (const pair of input.pairsBefore) if (!input.unreadBefore.has(pair.slice(0, pair.indexOf('\0')))) before.add(nameOf(pair));
+  const carriers = queries.getFilesCarryingNames([...candidates, ...bare].flatMap(matlabNameKeys), MATLAB_CARRIER_NODES);
+  for (const b of bare) {
+    const cb = carriedBefore(matlabNameKeys(b), before, carriers);
+    const cn = carriedNow(matlabNameKeys(b), carriers);
+    if (!cb && cn) change.gained.push(b);
+    else if (cb && !cn) change.turnedLost.push(b);
+  }
   if (candidates.size === 0) return change;
-  // Carried: some node is named for it (a function, a class, a script's `.m`).
-  const before = namesOf(input.pairsBefore);
-  const carriers = queries.getFilesCarryingNames([...candidates].flatMap(matlabNameKeys));
-  // Reached: a `.m` file is named for it, which keeps its calls at extraction.
+  // Reached: a `.m` file of MATLAB code is named for it, which keeps its calls at extraction.
   const now = queries.getAllFilePaths().filter(mPath);
   const added = new Set(input.addedPaths);
   const reachedNow = new Set<string>();
-  addMatlabReachableNames(now, reachedNow);
+  addMatlabReachableNames(now.filter((p) => !unreadNow().has(p)), reachedNow);
   const reachedBefore = new Set<string>();
-  addMatlabReachableNames([...now.filter((p) => !added.has(p)), ...input.removedPaths.filter(mPath)], reachedBefore);
+  addMatlabReachableNames([...now.filter((p) => !added.has(p)), ...input.removedPaths.filter(mPath)].filter((p) => !unreadAt(p)), reachedBefore);
 
   for (const b of candidates) {
     const cb = carriedBefore(matlabNameKeys(b), before, carriers);
@@ -180,7 +244,10 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
     const kb = cb && reachedBefore.has(b);
     const kn = cn && reachedNow.has(b);
     if ((!cb && cn) || (!kb && kn)) change.gained.push(b);
-    else if (cb && !cn) change.lost.push(b);
+    else if (cb && !cn) {
+      change.lost.push(b);
+      if (turnedStems.has(b)) change.turnedLost.push(b);
+    }
     else if (kb && !kn) change.unreached.push(b);
   }
   return change;
@@ -265,6 +332,11 @@ export function matlabFilesNaming(
 export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarrierChange): number[] {
   const ids: number[] = [];
   if (change.lost.length > 0) for (const row of queries.getMatlabCallRowsNamed(change.lost)) ids.push(row.id);
+  // A name a turned file took the last carrier from: its rows, judged as the
+  // resolver judges a fresh one, of the name and under it (`T::datestr`, `v.f`).
+  if (change.turnedLost.length > 0) {
+    for (const ref of unanswerableMatlabFailures(queries.getMatlabCallRefsUnder(change.turnedLost), undefined, null, queries)) ids.push(ref.rowId!);
+  }
   if (change.unreached.length > 0) {
     const rows = queries.getMatlabCallRowsNamed(change.unreached);
     const keeps = new Map<string, (name: string) => boolean>();
@@ -289,7 +361,7 @@ export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarri
       if (call && !matlabRefFacts(ref).computed && (lost.has(call.member) || (call.bare && uncallable.has(call.member)))) ids.push(row.id);
     }
   }
-  return ids;
+  return [...new Set(ids)];
 }
 
 /** The failed member-call rows of the members whose callable carriers changed (MatlabCarrierChange.membersRecalled), but `except`, by id. */

@@ -10,7 +10,7 @@
  * defines no function, method or class, with code in it: a file of comments
  * only is the help text of a MEX function of that name (`lcaPut.m` beside
  * `lcaPut.mexa64`), which is what MATLAB runs, and an Octave file (whose
- * functions go unread) is no script either; nor is a file of control bytes,
+ * functions go unread) is no script either; nor is a binary (matlabUnreadReason),
  * MATLAB Compiler's encrypted `.m` files (`V1MCC4000MEC…`) in a deployed
  * runtime tree.
  */
@@ -19,7 +19,7 @@ import { readFileSync } from 'fs';
 import type { Node } from '../types';
 import { validatePathWithinRoot } from '../utils';
 import { matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
-import { isOctave, maskMatlabBlockComments } from '../extraction/languages/matlab-syntax';
+import { maskMatlabBlockComments, matlabUnreadReason } from '../extraction/languages/matlab-syntax';
 
 /** What the rule reads: satisfied by the resolver's context, and by a `CodeGraph` plus the project's files. */
 export interface MatlabScriptLookup {
@@ -79,6 +79,6 @@ export function isMatlabScriptFile(file: Node, lookup: MatlabScriptLookup): bool
 
 /** Whether MATLAB source holds a statement: a line that is no comment, outside every `%{ … %}` block. */
 function runsCode(source: string | null): boolean {
-  if (source === null || isOctave(source) || /[\x00-\x08\x0E-\x19\x1B-\x1F]/.test(source)) return false;
+  if (source === null || matlabUnreadReason(source) !== null) return false;
   return maskMatlabBlockComments(source).split(/\r?\n/).some((line) => !/^\s*(?:%.*)?$/.test(line));
 }

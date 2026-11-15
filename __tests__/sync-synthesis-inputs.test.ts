@@ -17,6 +17,8 @@ import CodeGraph from '../src/index';
 import { DatabaseConnection } from '../src/db';
 import { QueryBuilder } from '../src/db/queries';
 import { SynthesisStage } from '../src/db/synthesis-stage';
+import { SYNTH_PASSES, hasSynthesisPattern, synthesisInputs } from '../src/resolution/callback-synthesizer';
+import type { ResolutionContext } from '../src/resolution/types';
 
 type Files = Record<string, string>;
 
@@ -121,4 +123,104 @@ describe('recording synthesis inputs', () => {
     } finally { stage.close(); }
     expect(recorded()).toEqual(['src/App.tsx']);
   });
+});
+
+describe('what every synthesis reads, and which passes it runs', () => {
+  const BUS: Files = {
+    'package.json': JSON.stringify({ name: 'app' }),
+    'src/bus.js': "const { EventEmitter } = require('events');\nconst bus = new EventEmitter();\nmodule.exports = { bus };\n",
+    'src/handlers.js': "const { bus } = require('./bus');\nfunction onSaved(doc) { return doc; }\nbus.on('saved', onSaved);\nmodule.exports = { onSaved };\n",
+    'src/service.js': "const { bus } = require('./bus');\nfunction save(doc) { bus.emit('saved', doc); return doc; }\nmodule.exports = { save };\n",
+  };
+
+  // MATLAB code that reads like an emitter's (`bus.emit('saved')`,
+  // `bus.on('saved', onSaved)`): in MATLAB a bare name passed to a call is a
+  // call of it, so a pairing made from it would be a wrong edge.
+  const MATLAB_BUS: Files = {
+    'tools/notify_all.m': "function notify_all(bus)\n  bus.emit('saved');\nend\n",
+    'tools/listen.m': "function listen(bus)\n  bus.on('saved', onSaved);\nend\n",
+    'tools/onSaved.m': 'function onSaved(doc)\n  disp(doc);\nend\n',
+  };
+
+  /** What the emitter pass reads of `tree`, indexed, and the pairs it makes. */
+  async function emitterRun(tree: Files): Promise<{ reads: string[]; pairs: string[] }> {
+    const { root, graph } = await indexed(tree);
+    graph.close();
+    graphs = graphs.filter((g) => g !== graph);
+    const connection = DatabaseConnection.open(path.join(root, '.codegraph', 'codegraph.db'));
+    try {
+      const queries = new QueryBuilder(connection.getDb());
+      const files = queries.getAllFilePaths();
+      const reads: string[] = [];
+      const ctx = {
+        getAllFiles: () => files,
+        readFile: (file: string) => {
+          reads.push(file);
+          return fs.readFileSync(path.join(root, file), 'utf-8');
+        },
+        getNodesInFile: (file: string) => queries.getNodesByFiles([file]),
+        getNodesByName: (name: string) => queries.getNodesByName(name),
+      } as unknown as ResolutionContext;
+      const edges = await SYNTH_PASSES.find((p) => p.name === 'emitterEdges')!.run(queries, ctx, async () => {});
+      const name = (id: string) => queries.getNodeById(id)!.name;
+      return { reads, pairs: edges.map((e) => `${name(e.source)}->${name(e.target)}`) };
+    } finally {
+      connection.close();
+    }
+  }
+
+  it('pairs an emitter\'s event with its handler in JavaScript, and reads no file of a MATLAB-only project', async () => {
+    const { graph } = await indexed(BUS);
+    const save = graph.getNodesByName('save').find((n) => n.kind === 'function')!;
+    const synthesized = graph.getOutgoingEdges(save.id).filter((e) => e.metadata?.synthesizedBy === 'event-emitter');
+    expect(synthesized.map((e) => graph.getNode(e.target)!.name)).toEqual(['onSaved']);
+
+    expect(await emitterRun(MATLAB_BUS)).toEqual({ reads: [], pairs: [] });
+  }, 120_000);
+
+  it('reads no MATLAB file for emitters in a project of MATLAB and JavaScript, and still pairs the JavaScript', async () => {
+    const { reads, pairs } = await emitterRun({ ...BUS, ...MATLAB_BUS });
+    expect(reads.filter((f) => f.endsWith('.m'))).toEqual([]);
+    expect(pairs).toEqual(['save->onSaved']);
+  }, 120_000);
+
+  it('takes a stored MATLAB file for an input without reading it, but not one of Octave or binary text, and reads every other file', async () => {
+    const OCTAVE = '## Copyright (C) 2000 A. Author\nfunction t = stamp\n  t = 1;\nendfunction\n';
+    const BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1)\n';
+    const { root, graph } = await indexed({
+      'run_all.m': 'x = 1;\n',
+      'lib/solve.m': 'function y = solve(x)\n  y = x;\nend\n',
+      'notes.m': '% help text only\n',
+      'octave/stamp.m': OCTAVE,
+      'deploy/pause.m': BLOB,
+      'src/app.ts': 'export function render() { return 1; }\n',
+      'src/plain.ts': 'export const answer = 42;\n',
+    });
+    graph.close();
+    graphs = graphs.filter((g) => g !== graph);
+    const connection = DatabaseConnection.open(path.join(root, '.codegraph', 'codegraph.db'));
+    try {
+      const queries = new QueryBuilder(connection.getDb());
+      const files = queries.getAllFilePaths();
+      const reads: string[] = [];
+      const ctx = {
+        getAllFiles: () => files,
+        readFile: (file: string) => {
+          reads.push(file);
+          return fs.readFileSync(path.join(root, file), 'utf-8');
+        },
+      } as unknown as ResolutionContext;
+      const inputs = await synthesisInputs(queries, ctx, async () => {});
+      expect(reads.sort()).toEqual(['src/app.ts', 'src/plain.ts']);
+      expect(inputs.sort()).toEqual(['lib/solve.m', 'notes.m', 'run_all.m', 'src/app.ts']);
+      // An edit that leaves such a file Octave or binary text feeds no pass either.
+      expect(hasSynthesisPattern('octave/stamp.m', OCTAVE)).toBe(false);
+      expect(hasSynthesisPattern('deploy/pause.m', BLOB)).toBe(false);
+      expect(hasSynthesisPattern('lib/solve.m', 'function y = solve(x)\n  y = x;\nend\n')).toBe(true);
+      // The pass's node count, without counting edges.
+      expect(queries.getNodeCount()).toBe(queries.getNodeAndEdgeCount().nodes);
+    } finally {
+      connection.close();
+    }
+  }, 120_000);
 });

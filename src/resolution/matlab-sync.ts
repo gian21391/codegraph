@@ -43,14 +43,18 @@ export function matlabScriptCandidates(queries: QueryBuilder, changedFilePaths: 
  * (`setup_paths` for `setup_paths.m`) are retried. Calls in `changedFilePaths`
  * are left alone: the sync resolved them already. `matlabFilePaths` are the
  * ones matlabScriptCandidates picks out of them. Returns the number of
- * references put back.
+ * references put back, and the rows of the ones that were calls into a file
+ * that is no script now: the sync judges those as a fresh index judges its
+ * rows (see MatlabFreshReferences), since such a file can be one whose text
+ * turned to Octave or binary, which carries no name (a fresh index keeps no
+ * row of a call of it).
  */
 export function reopenMatlabScriptRuns(
   queries: QueryBuilder,
   context: ResolutionContext,
   matlabFilePaths: readonly string[],
   changedFilePaths: readonly string[],
-): number {
+): { count: number; fromEdges: number[] } {
   const fresh = new Set(changedFilePaths);
   const edgeIds: number[] = [];
   const refs: UnresolvedReference[] = [];
@@ -71,10 +75,10 @@ export function reopenMatlabScriptRuns(
       refs.push(ref);
     }
   }
-  if (edgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefs(edgeIds, refs);
+  const fromEdges = edgeIds.length > 0 ? queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs) : [];
   const rowIds = stems.size === 0 ? [] : queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
     ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
-  return refs.length + queries.reopenFailedReferences(rowIds);
+  return { count: refs.length + queries.reopenFailedReferences(rowIds), fromEdges };
 }
 
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];
