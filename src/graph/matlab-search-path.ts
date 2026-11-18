@@ -64,6 +64,12 @@ export interface MatlabPathRecord {
   root?: string;
   /** The path, in order: project-relative folders ('' is the root). */
   folders?: string[];
+  /**
+   * How many of `folders` come before MATLAB's own folders: the rest were put
+   * after them (`addpath(…, '-end')`), where a function of MATLAB's own of
+   * the same name runs instead. Absent: all of them.
+   */
+  beforeMatlab?: number;
   /** The current folder when the startup code ended, project-relative ('' is the root); null when it could not be known. */
   cwd?: string | null;
   /** What the evaluation could not know, or did not follow (the first 200). */
@@ -125,13 +131,17 @@ function privateOwnerFolder(filePath: string): string | null {
 /** The path in force: the record's folders and current folder, with what visibility asks of them. */
 export class MatlabSearchPath {
   private readonly rank = new Map<string, number>();
+  /** Ranks from here on are after MATLAB's own folders. */
+  private readonly matlabRank: number;
 
   constructor(record: MatlabPathRecord) {
-    // The current folder comes before the path.
+    // The current folder comes before the path, and before MATLAB's own folders.
     if (record.cwd != null) this.rank.set(record.cwd, 0);
-    (record.folders ?? []).forEach((f, i) => {
+    const folders = record.folders ?? [];
+    folders.forEach((f, i) => {
       if (!this.rank.has(f)) this.rank.set(f, i + 1);
     });
+    this.matlabRank = Math.min(record.beforeMatlab ?? folders.length, folders.length) + 1;
   }
 
   /** The path of a record, or null when it sets none. */
@@ -146,6 +156,17 @@ export class MatlabSearchPath {
   rankOf(filePath: string): number | undefined {
     const folder = matlabLookupFolder(filePath);
     return folder === null ? undefined : this.rank.get(folder);
+  }
+
+  /**
+   * Whether a file is found by name before MATLAB's own functions: it is in
+   * the current folder, or in a folder of the path ahead of MATLAB's own
+   * folders. A file after them (`addpath(…, '-end')`) is reached only by a
+   * name MATLAB does not define itself.
+   */
+  isBeforeMatlab(filePath: string): boolean {
+    const r = this.rankOf(filePath);
+    return r !== undefined && r < this.matlabRank;
   }
 
   /** Whether a file is visible from the path (see rankOf). */

@@ -199,6 +199,26 @@ describe('MATLAB path: built-ins', () => {
     expect(evaluate(FOLDERS, "addpath('a', 'b', '-begin')").folders).toEqual(['a', 'b']);
   });
 
+  it('keeps where MATLAB\'s own folders are: -end puts a folder after them, -begin and the default before', () => {
+    const r = evaluate(FOLDERS, "addpath('a'); addpath('b', '-end'); addpath('c'); addpath('d', '-end')");
+    expect(r.folders).toEqual(['c', 'a', 'b', 'd']);
+    expect(r.beforeMatlab).toBe(2);
+    // A folder moved from after them to the front comes before them.
+    expect(evaluate(FOLDERS, "addpath('a', '-end'); addpath('a')").beforeMatlab).toBe(1);
+    // rmpath of a folder before them, restoredefaultpath.
+    expect(evaluate(FOLDERS, "addpath('a', 'b'); addpath('c', '-end'); rmpath('a')").beforeMatlab).toBe(1);
+    expect(evaluate(FOLDERS, "addpath('a'); restoredefaultpath; addpath('b', '-end')").beforeMatlab).toBe(0);
+  });
+
+  it('path(path, d) puts d after MATLAB\'s own folders, path(d, path) before; a text without them leaves all before', () => {
+    const after = evaluate(FOLDERS, "addpath('a'); path(path, fullfile(pwd, 'd'))");
+    expect([after.folders, after.beforeMatlab]).toEqual([['a', 'd'], 1]);
+    const before = evaluate(FOLDERS, "addpath('a'); path(fullfile(pwd, 'd'), path)");
+    expect([before.folders, before.beforeMatlab]).toEqual([['d', 'a'], 2]);
+    const replaced = evaluate(FOLDERS, "addpath('a', '-end'); path([fullfile(pwd, 'b') pathsep fullfile(pwd, 'c')])");
+    expect([replaced.folders, replaced.beforeMatlab]).toEqual([['b', 'c'], 2]);
+  });
+
   it('a folder already on the path moves; ./ .. and a trailing separator are read away', () => {
     expect(evaluate(FOLDERS, "addpath('a'); addpath('b'); addpath('a/./b/../')").folders).toEqual(['a', 'b']);
   });
@@ -381,6 +401,69 @@ describe('MATLAB path: resolution', () => {
   });
 });
 
+describe('MATLAB path: MATLAB\'s own functions come before a folder put after them', () => {
+  // physbase: aoinit.m puts matlab/chris/commands on the path with '-end', and
+  // its sound.m and split.m never run (MATLAB's own do); downloads/minpack's
+  // optimset.m is on no path, and an off-path caller runs MATLAB's (a name
+  // only a toolbox defines, such as lsqcurvefit, is no built-in here).
+  const FILES: Record<string, string> = {
+    'codegraph.json': config({ startup: "addpath('lib'); addpath('extra', '-end')" }),
+    'lib/caller.m': 'function caller()\nsound(1);\nsplit(1);\ntool(1);\noptimset(1);\nend\n',
+    'lib/optimset.m': 'function optimset(x)\nend\n',
+    'extra/sound.m': 'function sound(x)\nend\n',
+    'extra/split.m': 'function split(x)\nend\n',
+    'extra/tool.m': 'function tool(x)\nend\n',
+    'dl/override/contains.m': 'function contains(x)\nend\n',
+    'dl/override/helper2.m': 'function helper2(x)\nend\n',
+    'old/script1.m': 'function script1()\ncontains(1);\nhelper2(1);\nsound(1);\noptimset(1);\nend\n',
+    'mine/fit.m': 'function fit()\noptimset(1);\nend\n',
+    'mine/optimset.m': 'function optimset(x)\nend\n',
+  };
+
+  it('an on-path caller links a built-in\'s name only to a copy ahead of MATLAB\'s own folders; any other name to a copy after them too', async () => {
+    const root = project(FILES);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const record = cg.getMatlabPathRecord()!;
+      expect([record.folders, record.beforeMatlab]).toEqual([['lib', 'extra'], 1]);
+      expect(edgesFrom(cg, 'lib/caller.m', 'caller')).toEqual([
+        'caller -calls-> optimset @ lib/optimset.m',
+        'caller -calls-> tool @ extra/tool.m',
+      ]);
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('an off-path caller links a built-in\'s name to its own folder\'s copy, never to one elsewhere off the path', async () => {
+    const root = project(FILES);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      // contains: only off the path (MATLAB's own runs); sound: after MATLAB's own folders;
+      // optimset: lib's copy, ahead of them; helper2: no built-in, the nearest copy.
+      expect(edgesFrom(cg, 'old/script1.m', 'script1')).toEqual([
+        'script1 -calls-> helper2 @ dl/override/helper2.m',
+        'script1 -calls-> optimset @ lib/optimset.m',
+      ]);
+      expect(edgesFrom(cg, 'mine/fit.m', 'fit')).toEqual(['fit -calls-> optimset @ mine/optimset.m']);
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('with no path, a built-in\'s name links the nearest copy, as before', async () => {
+    const files = { ...FILES };
+    delete files['codegraph.json'];
+    const root = project(files);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(edgesFrom(cg, 'lib/caller.m', 'caller')).toEqual(expect.arrayContaining(['caller -calls-> sound @ extra/sound.m']));
+    } finally {
+      cg.close();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 4. Zero-config: a root startup.m
 // ---------------------------------------------------------------------------
@@ -471,6 +554,19 @@ describe('MATLAB path: sync converges on a fresh index', () => {
       { 'codegraph.json': config({ startup: "addpath('lib1')" }) },
     );
     expect(r.steps.map((s) => s.filter((e) => e.startsWith('lib1/caller.m caller -calls-> util')))).toEqual([[TO_LIB1], [TO_LIB2], [TO_LIB1]]);
+    expect(r.synced).toEqual(r.fresh);
+    expect(r.syncedRows).toEqual(r.freshRows);
+  });
+
+  it('after a folder moves from after MATLAB\'s own folders to before them, and back', async () => {
+    const initial = { ...BASE, 'extra/sound.m': 'function sound()\nend\n', 'lib1/beeper.m': 'function beeper()\nsound();\nend\n', 'codegraph.json': config({ startup: "addpath('lib1'); addpath('extra', '-end')" }) };
+    const r = await syncedAndFresh(
+      initial,
+      // The same folders in the same order: only where MATLAB's own folders are moves.
+      { 'codegraph.json': config({ startup: "addpath('extra'); addpath('lib1')" }) },
+      { 'codegraph.json': config({ startup: "addpath('lib1'); addpath('extra', '-end')" }) },
+    );
+    expect(r.steps.map((s) => s.filter((e) => e.includes('-calls-> sound')))).toEqual([[], ['lib1/beeper.m beeper -calls-> sound @ extra/sound.m'], []]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
   });

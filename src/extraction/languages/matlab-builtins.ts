@@ -68,7 +68,7 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'filesep', 'pathsep', 'fileattrib', 'imread', 'imwrite', 'wavread', 'urlread', 'sendmail', 'computer', 'ispc',
   'isunix', 'ismac', 'getenv', 'setenv', 'system', 'unix', 'dos', 'matlabroot', 'version', 'ver', 'verLessThan',
   'isdeployed', 'mexext', 'mex', 'javaaddpath', 'javaclasspath', 'javaObject', 'javaMethod', 'usejava',
-  'isjava', 'diary', 'echo', 'format', 'beep', 'clc', 'clear', 'whos', 'who', 'pack', 'help', 'edit', 'open',
+  'isjava', 'diary', 'echo', 'format', 'beep', 'sound', 'clc', 'clear', 'whos', 'who', 'pack', 'help', 'edit', 'open',
   'keyboard', 'inputname', 'assignin', 'evalin', 'evalc', 'eval', 'builtin', 'dbstack', 'lasterr', 'lasterror',
   'lastwarn', 'MException', 'getReport', 'onCleanup', 'inputParser', 'nargchk', 'exit', 'isdir', 'instrfind',
   'tcpip', 'jsondecode', 'jsonencode', 'web', 'profile',

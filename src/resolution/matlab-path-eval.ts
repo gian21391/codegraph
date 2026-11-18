@@ -34,6 +34,13 @@
  * caller's local functions, its `private/` folder, the current folder, the
  * path built so far, then the folder the startup code started in.
  *
+ * MATLAB's own folders (its toolboxes) are on the path too, at one place:
+ * `addpath(…)` and `addpath(…, '-begin')` put a folder before them,
+ * `addpath(…, '-end')` after them, where a function of MATLAB's own of the same
+ * name comes first (`sound`, `split`). The path keeps where they are
+ * (`matlabAt`), and the text `path` returns holds MATLAB_OWN_FOLDERS in their
+ * place, so `path(path, d)` and `path(d, path)` put `d` after or before them.
+ *
  * Never throws: whatever goes wrong becomes a note, and the path built until
  * then is kept, except code it runs for its path effect that does not parse
  * cleanly: then no path is set (`failed`), since what error recovery leaves of
@@ -119,6 +126,8 @@ export interface MatlabPathSettings {
 interface MatlabPathResult {
   /** The path, in order, project-relative ('' is the root). */
   folders: string[];
+  /** How many of `folders` come before MATLAB's own folders. */
+  beforeMatlab: number;
   /** The current folder at the end, project-relative; null when it is not known or not in the project. */
   cwd: string | null;
   /** The first notes (see MAX_NOTES). */
@@ -137,6 +146,13 @@ const MAX_LOOP_ROUNDS = 10_000;
 /** The most elements an array the evaluation builds may hold (`zeros`, `cell`, an indexed assignment): past it, its value is unknown. */
 const MAX_ELEMENTS = 10_000;
 const MAX_NOTES = 200;
+
+/**
+ * What stands for MATLAB's own folders in the text `path` returns (see the top
+ * of this file): no folder of the project, and passed over by `addpath` and
+ * `path` as one of theirs.
+ */
+const MATLAB_OWN_FOLDERS = '<matlabroot>/toolbox';
 /** The longest text the evaluation builds (`blanks`), and a tenth of the longest code it parses. */
 const MAX_EVAL_TEXT = 100_000;
 
@@ -398,6 +414,8 @@ class PathEvaluation {
 
   /** The path, absolute folders in order. */
   private path: string[] = [];
+  /** How many of `path` come before MATLAB's own folders (see the top of this file). */
+  private matlabAt = 0;
   /** The current folder (see Cwd). */
   private cwd: Cwd;
   /** Where the code running now would land, were it to leave early (see Frame), innermost last. */
@@ -461,12 +479,16 @@ class PathEvaluation {
       }
     }
     const folders: string[] = [];
-    for (const a of this.path) {
+    let beforeMatlab = 0;
+    this.path.forEach((a, i) => {
       const r = this.rel(a);
-      if (r !== null) folders.push(r);
-    }
+      if (r === null) return;
+      folders.push(r);
+      if (i < this.matlabAt) beforeMatlab++;
+    });
     return {
       folders: this.failed === null ? folders : [],
+      beforeMatlab: this.failed === null ? beforeMatlab : 0,
       cwd: this.here === null ? null : this.rel(this.here),
       notes: this.notes,
       noteCount: this.noteCount,
@@ -508,6 +530,13 @@ class PathEvaluation {
   /** A path as the code would see it: the computer's separator. */
   private out(abs: string): string {
     return this.pc ? abs.replace(/\//g, '\\') : abs;
+  }
+
+  /** The path as `path` returns it: MATLAB_OWN_FOLDERS where MATLAB's own folders are. */
+  private pathText(): Val {
+    const parts = this.path.map((p) => this.out(p));
+    parts.splice(this.matlabAt, 0, MATLAB_OWN_FOLDERS);
+    return ch(parts.join(this.pathsep));
   }
 
   /**
@@ -1853,20 +1882,28 @@ class PathEvaluation {
       case 'rmpath': {
         for (const folder of this.pathArgs(args, sc, node, 'rmpath')) {
           const i = this.path.indexOf(folder);
-          if (i >= 0) this.path.splice(i, 1);
+          if (i < 0) continue;
+          this.path.splice(i, 1);
+          if (i < this.matlabAt) this.matlabAt--;
         }
         return [];
       }
       case 'path': {
-        const current = ch(this.path.map((p) => this.out(p)).join(this.pathsep));
+        const current = this.pathText();
         if (args.length === 0) return [current];
-        const folders = this.pathArgs(args, sc, node, 'path');
+        const marks: number[] = [];
+        const folders = this.pathArgs(args, sc, node, 'path', marks);
         if (args.some((v) => !isText(v))) return [current];
-        this.path = [...new Set(folders)];
+        // A text with no MATLAB_OWN_FOLDERS in it leaves MATLAB's own folders
+        // off the path: none of its functions is found before a project's.
+        const unique = [...new Set(folders)];
+        this.matlabAt = marks.length === 0 ? unique.length : new Set(folders.slice(0, marks[0])).size;
+        this.path = unique;
         return [current];
       }
       case 'restoredefaultpath':
         this.path = [];
+        this.matlabAt = 0;
         return [];
       case 'savepath': case 'pathtool': case 'rehash':
         return [];
@@ -2501,7 +2538,8 @@ class PathEvaluation {
     }
   }
 
-  private pathArgs(args: Val[], sc: Scope, node: SyntaxNode, what: string): string[] {
+  /** The folders `args` name, absolute; where MATLAB_OWN_FOLDERS stood among them goes into `marks` (as a count of folders before it). */
+  private pathArgs(args: Val[], sc: Scope, node: SyntaxNode, what: string, marks?: number[]): string[] {
     const out: string[] = [];
     for (const v of args) {
       if (v.t === 'unk' || !isText(v)) {
@@ -2511,6 +2549,10 @@ class PathEvaluation {
       if (v.s.startsWith('-') && !v.s.includes(this.pathsep)) continue;
       for (const part of v.s.split(this.pathsep)) {
         if (part.trim() === '') continue;
+        if (part.trim() === MATLAB_OWN_FOLDERS) {
+          marks?.push(out.length);
+          continue;
+        }
         const abs = this.toAbs(part.trim());
         if (abs === null) {
           this.note(sc.file, `${what} ${part}: the current folder is not known, passed over`, node);
@@ -2532,7 +2574,7 @@ class PathEvaluation {
   }
 
   private addpath(args: Val[], sc: Scope, node: SyntaxNode): Val[] {
-    const before = ch(this.path.map((p) => this.out(p)).join(this.pathsep));
+    const before = this.pathText();
     let atEnd = false;
     const folders: Val[] = [];
     for (const v of args) {
@@ -2550,7 +2592,9 @@ class PathEvaluation {
     }
     const added = [...new Set(this.pathArgs(folders, sc, node, 'addpath'))];
     const rest = this.path.filter((p) => !added.includes(p));
+    const ahead = this.path.slice(0, this.matlabAt).filter((p) => !added.includes(p)).length;
     this.path = atEnd ? [...rest, ...added] : [...added, ...rest];
+    this.matlabAt = atEnd ? ahead : added.length + ahead;
     return [before];
   }
 

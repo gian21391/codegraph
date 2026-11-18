@@ -69,6 +69,7 @@ import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { MATLAB_BUILTINS } from '../extraction/languages/matlab-builtins';
 import { isMatlabScriptFile } from '../graph/matlab-scripts';
 import { dirOf, matlabLookupFolder, type MatlabSearchPath } from '../graph/matlab-search-path';
 
@@ -298,15 +299,25 @@ function firstOnPath(searchPath: MatlabSearchPath, candidates: Node[], callerFil
  * caller the path runs, the first visible one in path order, or none; for
  * any other, a copy in the folder it runs from, then the first visible one,
  * then the nearest.
+ *
+ * `builtin`: MATLAB defines the name itself (MATLAB_BUILTINS), and with a
+ * search path its own function runs unless a copy comes first: one in the
+ * folder the caller runs from, or on the path ahead of MATLAB's own folders.
+ * A copy put after them (`addpath(…, '-end')`, physbase's
+ * `matlab/chris/commands/sound.m`), and for a caller off the path a copy in
+ * some other folder off it (`downloads/minpack/override/optimset.m`), is
+ * never reached: none.
  */
-function choose(candidates: Node[], callerFile: string, context: ResolutionContext): Node | undefined {
+function choose(candidates: Node[], callerFile: string, context: ResolutionContext, builtin = false): Node | undefined {
   const searchPath = searchPathOf(context);
   if (!searchPath || candidates.length === 0) return nearest(candidates, callerFile);
-  if (searchPath.isCallerOnPath(callerFile)) return firstOnPath(searchPath, candidates, callerFile);
+  const reached = builtin ? candidates.filter((n) => searchPath.isBeforeMatlab(n.filePath)) : candidates;
+  if (searchPath.isCallerOnPath(callerFile)) return firstOnPath(searchPath, reached, callerFile);
   const home = callerFolder(callerFile);
   const own = candidates.filter((n) => matlabLookupFolder(n.filePath) === home);
   if (own.length > 0) return nearest(own, callerFile);
-  return firstOnPath(searchPath, candidates, callerFile) ?? nearest(candidates, callerFile);
+  const visible = firstOnPath(searchPath, reached, callerFile);
+  return visible ?? (builtin ? undefined : nearest(candidates, callerFile));
 }
 
 /** `candidates` a caller the path runs can see; all of them for any other caller, or with no path. */
@@ -539,11 +550,12 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
   if (searchPathOf(context)) {
     // A class folder's class on the path comes before any function; one the
     // caller cannot see leaves the functions and scripts it can.
-    target = folderClasses.length > 0 ? choose(folderClasses, from, context) : undefined;
+    const builtin = MATLAB_BUILTINS.has(name);
+    target = folderClasses.length > 0 ? choose(folderClasses, from, context, builtin) : undefined;
     if (!target) {
       const rest = onPath.filter((n) => !folderClasses.includes(n));
       const scripts = scriptsHere();
-      target = choose(scripts.length > 0 ? [...rest, ...scripts] : rest, from, context);
+      target = choose(scripts.length > 0 ? [...rest, ...scripts] : rest, from, context, builtin);
     }
   } else if (folderClasses.length > 0) target = nearest(folderClasses, from);
   else {

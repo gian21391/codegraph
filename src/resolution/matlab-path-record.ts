@@ -24,7 +24,7 @@ import { DEFAULT_MATLAB_COMPUTER, DEFAULT_MATLAB_RELEASE, evaluateMatlabPath, fi
 import { MatlabPathRecorder, MatlabProjectView, digest, firstMovedAnswer } from './matlab-path-access';
 
 /** Bumped when the evaluation's semantics change, so a sync after an upgrade works the path out again. */
-const EVALUATOR_VERSION = 2;
+const EVALUATOR_VERSION = 3;
 
 /** The most notes a record keeps (`noteCount` says how many there were). */
 const MAX_RECORD_NOTES = 200;
@@ -139,6 +139,7 @@ export async function computeMatlabPathRecord(projectRoot: string, files: readon
       config: configDigest,
       root: projectRoot,
       folders: result.folders,
+      beforeMatlab: result.beforeMatlab,
       cwd: result.cwd,
       notes: notes.slice(0, MAX_RECORD_NOTES),
       noteCount,
@@ -161,12 +162,14 @@ export function matlabPathInputsMoved(record: MatlabPathRecord, projectRoot: str
   return firstMovedAnswer(record.answers, matlabProjectView(projectRoot, files)) !== null;
 }
 
-/** Whether two records set the same path: the same folders in order and the same current folder (or neither sets one). */
+/** Whether two records set the same path: the same folders in order, as many of them before MATLAB's own folders, and the same current folder (or neither sets one). */
 export function sameMatlabPath(a: MatlabPathRecord | null, b: MatlabPathRecord | null): boolean {
   const pa = a && a.source !== null ? a : null;
   const pb = b && b.source !== null ? b : null;
   if (!pa || !pb) return pa === pb;
   const fa = pa.folders ?? [];
   const fb = pb.folders ?? [];
-  return (pa.cwd ?? null) === (pb.cwd ?? null) && fa.length === fb.length && fa.every((f, i) => f === fb[i]);
+  // Where MATLAB's own folders are is part of the path: a folder moved past them changes what a built-in's name reaches.
+  const before = (r: MatlabPathRecord, f: readonly string[]): number => Math.min(r.beforeMatlab ?? f.length, f.length);
+  return (pa.cwd ?? null) === (pb.cwd ?? null) && fa.length === fb.length && fa.every((f, i) => f === fb[i]) && before(pa, fa) === before(pb, fb);
 }
