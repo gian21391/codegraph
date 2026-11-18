@@ -178,6 +178,28 @@ export function loadedNames(items: readonly (string | null)[]): string[] {
   return rest.slice(1).filter((s): s is string => s !== null && /^[A-Za-z]\w*$/.test(s));
 }
 
+/**
+ * The variables a `clear` / `clearvars` statement (`name`) removes, from its
+ * arguments as text (null for one that is not literal): the names it lists,
+ * none for an item type that removes no variable (`clear functions`, `mex`,
+ * `import`), and null when it may remove more than it names — none listed
+ * (`clear`, `clearvars`), an item type that removes variables (`all`,
+ * `variables`, `global`, `classes`, `java`, in any case), an option
+ * (`-regexp`, `-except`, `-global`), a wildcard, or anything else that is no
+ * plain name. For a script's made names (see matlab.ts's scanScope); the
+ * interpreter's own reading of `clear` (sideEffects) forgets more.
+ */
+export function matlabClearedNames(name: string, items: readonly (string | null)[]): string[] | null {
+  if (items.length === 0) return null;
+  if (name === 'clear' && items.every((t) => t !== null && /^(?:functions|mex|import)$/.test(t))) return [];
+  const names: string[] = [];
+  for (const t of items) {
+    if (t === null || !/^[A-Za-z]\w*$/.test(t) || (name === 'clear' && /^(?:all|variables|global|classes|java)$/i.test(t))) return null;
+    names.push(t);
+  }
+  return names;
+}
+
 /** Code given as text, parsed, with a host that reads it. */
 export interface ParsedCode {
   readonly root: SyntaxNode;

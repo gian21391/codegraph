@@ -506,6 +506,24 @@ const DOMINANT_FILE_BATCH = 20;
 /**
  * Query builder for the knowledge graph database
  */
+/** A MATLAB call row as the MATLAB passes read it: the reference, where it is, its id and stored tail. */
+type MatlabCallRow = UnresolvedReference & { filePath: string; language: Language; rowId: number; nameTail: string };
+
+function matlabCallRow(row: UnresolvedRefRow): MatlabCallRow {
+  return {
+    fromNodeId: row.from_node_id,
+    referenceName: row.reference_name,
+    referenceKind: row.reference_kind as EdgeKind,
+    line: row.line,
+    column: row.col,
+    candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
+    filePath: row.file_path,
+    language: row.language as Language,
+    rowId: row.id,
+    nameTail: row.name_tail,
+  };
+}
+
 export class QueryBuilder {
   private db: SqliteDatabase;
 
@@ -5196,7 +5214,7 @@ export class QueryBuilder {
    * `idx_unresolved_failed_tail`, a dormant one through
    * `idx_unresolved_status`, whose dormant rows it reads once.
    */
-  getMatlabCallRefsByTail(tails: Iterable<string>, status: 'failed' | typeof DORMANT_REF_STATUS): Array<UnresolvedReference & { filePath: string; language: Language; rowId: number; nameTail: string }> {
+  getMatlabCallRefsByTail(tails: Iterable<string>, status: 'failed' | typeof DORMANT_REF_STATUS): MatlabCallRow[] {
     const unique = [...new Set(tails)];
     if (unique.length === 0) return [];
     const rows = this.db
@@ -5206,18 +5224,7 @@ export class QueryBuilder {
             AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`
       )
       .all(status, JSON.stringify(unique)) as UnresolvedRefRow[];
-    return rows.map((row) => ({
-      fromNodeId: row.from_node_id,
-      referenceName: row.reference_name,
-      referenceKind: row.reference_kind as EdgeKind,
-      line: row.line,
-      column: row.col,
-      candidates: row.candidates ? safeJsonParse(row.candidates, undefined) : undefined,
-      filePath: row.file_path,
-      language: row.language as Language,
-      rowId: row.id,
-      nameTail: row.name_tail,
-    }));
+    return rows.map(matlabCallRow);
   }
 
   /**
@@ -5239,6 +5246,64 @@ export class QueryBuilder {
       }
     })();
     return changed;
+  }
+
+  /**
+   * Every call resolution linked to a MATLAB file node (a script run: see
+   * ../graph/matlab-scripts), with where it is: its scope (the caller's node:
+   * a function's, or `file:<path>` for a script's top level), the file it
+   * runs and that file's stored content hash, the call's line and column, and
+   * the facts its reference carried (`metadata.refCandidates`, see
+   * ../extraction/languages/matlab-ref-facts). No synthesized edge
+   * (RESOLUTION_EDGE_SQL). The MATLAB file nodes through idx_nodes_kind,
+   * each one's calls in through idx_edges_target_kind.
+   */
+  getMatlabFileCallEdges(): Array<{ source: string; target: string; targetPath: string; targetHash: string | null; line: number; col: number; candidates?: string[] }> {
+    const rows = this.db
+      .prepare(
+        `SELECT e.source AS source, e.target AS target, t.file_path AS targetPath, f.content_hash AS targetHash,
+                e.line AS line, e.col AS col, e.metadata AS metadata
+           FROM edges e JOIN nodes t ON t.id = e.target LEFT JOIN files f ON f.path = t.file_path
+          WHERE e.target >= 'file:' AND e.target < 'file;' AND e.kind = 'calls'
+            AND t.kind = 'file' AND t.language = 'matlab' AND ${RESOLUTION_EDGE_SQL}`
+      )
+      .all() as Array<{ source: string; target: string; targetPath: string; targetHash: string | null; line: number | null; col: number | null; metadata: string | null }>;
+    return rows.map(({ metadata, ...r }) => {
+      const listed = metadata ? (safeJsonParse(metadata, undefined) as { refCandidates?: unknown } | undefined)?.refCandidates : undefined;
+      const candidates = Array.isArray(listed) ? listed.filter((c): c is string => typeof c === 'string') : undefined;
+      return { ...r, line: r.line ?? 0, col: r.col ?? 0, ...(candidates ? { candidates } : {}) };
+    });
+  }
+
+  /**
+   * The MATLAB `calls` rows of a bare name (no `.`, no `::`) of `status`:
+   * the dormant ones written with arguments and none of the `runtime`,
+   * `dispatch` or `computed` facts (all of them: no other kind of dormant row
+   * has that shape), or the failed ones whose scope is one of `fromNodeIds`.
+   * The candidates for isMatlabPlainCall (../resolution/matlab-failures),
+   * which judges each again.
+   */
+  getMatlabBareNameCallRows(
+    status: 'failed' | typeof DORMANT_REF_STATUS,
+    fromNodeIds: readonly string[] | null,
+  ): MatlabCallRow[] {
+    const base = `SELECT * FROM unresolved_refs
+       WHERE status = ? AND language = 'matlab' AND reference_kind = 'calls'
+         AND instr(reference_name, '.') = 0 AND instr(reference_name, ':') = 0`;
+    let rows: UnresolvedRefRow[] = [];
+    if (fromNodeIds === null) {
+      rows = this.db
+        .prepare(
+          `${base} AND (candidates IS NULL OR (candidates NOT LIKE '%"bare"%' AND candidates NOT LIKE '%"statement"%'
+             AND candidates NOT LIKE '%"runtime"%' AND candidates NOT LIKE '%"computed"%' AND candidates NOT LIKE '%"dispatch:%'))`
+        )
+        .all(status) as UnresolvedRefRow[];
+    } else if (fromNodeIds.length > 0) {
+      rows = this.db
+        .prepare(`${base} AND from_node_id IN (SELECT value FROM json_each(?))`)
+        .all(status, JSON.stringify(fromNodeIds)) as UnresolvedRefRow[];
+    }
+    return rows.map(matlabCallRow);
   }
 
   /**

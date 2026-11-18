@@ -17,6 +17,8 @@ import { buildFileCode } from '../src/ui-server/api/filecode';
 import { buildNode } from '../src/ui-server/api/node';
 import { buildSteps } from '../src/ui-server/api/steps';
 import { ExtractionOrchestrator } from '../src/extraction';
+import { ReferenceResolver } from '../src/resolution';
+import { MATLAB_SCRIPT_MAX_BYTES, MATLAB_SCRIPT_RUN_DEPTH, MatlabScriptMemo, settleMatlabScriptWorkspaces } from '../src/resolution/matlab-script-workspace';
 import { MATLAB_CARRIER_INPUTS_KEY, MATLAB_CARRIER_STEP_KEY } from '../src/resolution/matlab-builtin-carriers';
 import {
   allEdges, dormantRows, indexOfProject, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree, type SyncedStep,
@@ -710,4 +712,511 @@ describe('MATLAB dormant rows: no reader counts them', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+/** Every MATLAB row in `root`'s unresolved_refs, whole: `file:line:col kind:name status tail [candidates]`, sorted. */
+function matlabRows(root: string): string[] {
+  const db = DatabaseConnection.open(getDatabasePath(root));
+  try {
+    const rows = db.getDb().prepare(
+      "SELECT file_path AS f, line, col, reference_kind AS k, reference_name AS n, status AS s, name_tail AS t, candidates AS c FROM unresolved_refs WHERE language = 'matlab'"
+    ).all() as Array<{ f: string; line: number; col: number; k: string; n: string; s: string; t: string; c: string | null }>;
+    return rows.map((r) => `${r.f}:${r.line}:${r.col} ${r.k}:${r.n} ${r.s} ${r.t} ${r.c ?? ''}`).sort();
+  } finally {
+    db.close();
+  }
+}
+
+/** `file:line name` of the MATLAB rows of `status`, sorted. */
+function rowsOf(rows: readonly string[], status: string): string[] {
+  return rows.filter((r) => r.split(' ')[2] === status).map((r) => {
+    const [where, kindName] = r.split(' ');
+    return `${where!.split(':').slice(0, 2).join(':')} ${kindName!.slice(kindName!.indexOf(':') + 1)}`;
+  }).sort();
+}
+
+/** Runs `body` with the script-workspace pass made a no-op (`fail`: one that throws). */
+async function withPass<T>(mode: 'off' | 'fail', body: () => Promise<T>): Promise<T> {
+  const proto = ReferenceResolver.prototype as unknown as { settleMatlabScriptWorkspaces: () => Promise<unknown> };
+  const orig = proto.settleMatlabScriptWorkspaces;
+  proto.settleMatlabScriptWorkspaces = mode === 'off'
+    ? async () => null
+    : async () => { throw new Error('simulated kill before the script-workspace pass'); };
+  try {
+    return await body();
+  } finally {
+    proto.settleMatlabScriptWorkspaces = orig;
+  }
+}
+
+/**
+ * Indexes `files` with the script-workspace pass and without it: the edges
+ * must be the same (the pass changes statuses only), and the rows the same
+ * but for the statuses. The failed and dormant rows with it.
+ */
+async function judgedRows(files: Record<string, string>): Promise<{ failed: string[]; dormant: string[]; edges: string[] }> {
+  const index = async (): Promise<{ edges: string[]; rows: string[] }> => {
+    const root = tempDir('cg-matlab-scripts-');
+    try {
+      writeTree(root, files);
+      const cg = await CodeGraph.init(root, { index: true });
+      let edges: string[];
+      try {
+        edges = allEdges(cg);
+      } finally {
+        cg.close();
+      }
+      return { edges, rows: matlabRows(root) };
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const on = await index();
+  const off = await withPass('off', index);
+  expect(on.edges).toEqual(off.edges);
+  const strip = (rows: string[]): string[] => rows.map((r) => r.split(' ').filter((_, i) => i !== 2).join(' ')).sort();
+  expect(strip(on.rows)).toEqual(strip(off.rows));
+  return { failed: rowsOf(on.rows, 'failed'), dormant: rowsOf(on.rows, 'dormant'), edges: on.edges };
+}
+
+/** A function that runs `script` (when given) at its first line, then indexes `use`, each on a line of its own. */
+const runner = (name: string, script: string | null, ...uses: string[]): string =>
+  [`function ${name}()`, ...(script ? [script] : []), ...uses.map((u, i) => `x${i} = ${u};`), 'end', ''].join('\n');
+
+describe('MATLAB script workspaces: a name a script its scope ran makes is a variable, kept dormant', () => {
+  it('a global the script declares, indexed after the run', async () => {
+    const r = await judgedRows({ 'f.m': runner('f', 'globs', 'G(3)'), 'globs.m': '% the globals\nglobal G\n' });
+    expect(r.dormant).toEqual(['f.m:3 G']);
+    expect(r.failed).toEqual([]);
+    expect(r.edges).toEqual(['f.m f -calls-> globs.m @ globs.m']);
+  });
+
+  it('every form a script makes a name in: an assignment, several outputs, an indexed assignment, a loop, a load list', async () => {
+    const forms = ['G = zeros(5);', '[G, H] = deal(1, 2);', 'G(2) = 1;', 'for G = 1:3\nend', 'load data.mat G'];
+    for (const form of forms) {
+      const r = await judgedRows({ 'f.m': runner('f', 'mk', 'G(3)'), 'mk.m': `${form}\n` });
+      expect(r.dormant, form).toEqual(['f.m:3 G']);
+      expect(r.failed, form).toEqual([]);
+    }
+    // Both outputs, and a catch variable. A `persistent` makes none: MATLAB refuses it outside a function.
+    const both = await judgedRows({ 'f.m': runner('f', 'mk', 'G(3)', 'H(1)', 'E(1)', 'P(1)'), 'mk.m': '[G, H] = deal(1, 2);\ntry\n  x = 1;\ncatch E\nend\npersistent P\n' });
+    expect(both.dormant).toEqual(['f.m:3 G', 'f.m:4 H', 'f.m:5 E']);
+    expect(both.failed).toEqual(['f.m:6 P']);
+  });
+
+  it('through the scripts the script runs, transitively', async () => {
+    const r = await judgedRows({
+      'f.m': runner('f', 's1', 'G(3)', 'A(1)'),
+      's1.m': 's2\nA = 1;\n',
+      's2.m': 'global G\n',
+    });
+    expect(r.dormant).toEqual(['f.m:3 G', 'f.m:4 A']);
+    expect(r.failed).toEqual([]);
+  });
+
+  it('a script\'s top level that runs another script, then uses the name', async () => {
+    const r = await judgedRows({ 'top.m': 'globs\nk = G(1);\n', 'globs.m': 'global G\n' });
+    expect(r.dormant).toEqual(['top.m:2 G']);
+    expect(r.failed).toEqual([]);
+  });
+
+  it('a cycle of scripts ends, with the names of both', async () => {
+    const r = await judgedRows({
+      'f.m': runner('f', 's1', 'A(1)', 'B(1)', 'C(1)'),
+      's1.m': 's2\nA = 1;\n',
+      's2.m': 's1\nB = 1;\n',
+    });
+    expect(r.dormant).toEqual(['f.m:3 A', 'f.m:4 B']);
+    expect(r.failed).toEqual(['f.m:5 C']);
+  });
+
+  it(`follows a chain of scripts to ${MATLAB_SCRIPT_RUN_DEPTH} deep, and no further`, async () => {
+    const files: Record<string, string> = { 'f.m': runner('f', 's1', 'V1(1)', `V${MATLAB_SCRIPT_RUN_DEPTH}(1)`, `V${MATLAB_SCRIPT_RUN_DEPTH + 1}(1)`) };
+    for (let i = 1; i <= MATLAB_SCRIPT_RUN_DEPTH + 1; i++) files[`s${i}.m`] = `V${i} = ${i};\n${i <= MATLAB_SCRIPT_RUN_DEPTH ? `s${i + 1}\n` : ''}`;
+    const r = await judgedRows(files);
+    expect(r.dormant).toEqual(['f.m:3 V1', `f.m:4 V${MATLAB_SCRIPT_RUN_DEPTH}`]);
+    expect(r.failed).toEqual([`f.m:5 V${MATLAB_SCRIPT_RUN_DEPTH + 1}`]);
+  });
+});
+
+describe('MATLAB script workspaces: when in doubt the call stays failed', () => {
+  it('the script runs only after the use: a later line, or later on the same line', async () => {
+    const r = await judgedRows({
+      'f.m': 'function f()\nx = G(3);\nglobs\nend\n',
+      'g.m': 'function g()\nx = G(3); globs\ny = G(4);\nend\n',
+      'h.m': 'function h()\nglobs; x = G(3);\nend\n',
+      'globs.m': 'global G\n',
+    });
+    expect(r.failed).toEqual(['f.m:2 G', 'g.m:2 G']);
+    expect(r.dormant).toEqual(['g.m:3 G', 'h.m:2 G']);
+  });
+
+  it('no script run at all, and a script that makes another name', async () => {
+    const r = await judgedRows({
+      'f.m': runner('f', null, 'G(3)'),
+      'g.m': runner('g', 'globs', 'G(3)', 'H(1)'),
+      'globs.m': 'global H\n',
+    });
+    expect(r.failed).toEqual(['f.m:2 G', 'g.m:3 G']);
+    expect(r.dormant).toEqual(['g.m:4 H']);
+  });
+
+  it('a nested function does not inherit its parent\'s runs', async () => {
+    const r = await judgedRows({
+      'f.m': 'function f()\nglobs\nx = G(1);\n  function inner()\n    y = G(2);\n  end\nend\n',
+      'globs.m': 'global G\n',
+    });
+    expect(r.dormant).toEqual(['f.m:3 G']);
+    expect(r.failed).toEqual(['f.m:5 G']);
+  });
+
+  it('a script whose text does not parse cleanly, or is Octave, makes no name', async () => {
+    const r = await judgedRows({
+      'f.m': runner('f', 'broken', 'G(3)'),
+      'g.m': runner('g', 'octave', 'G(3)'),
+      'broken.m': 'global G\nx = [1 2;\ny = )(;\n',
+      'octave.m': '# an Octave comment\nglobal G\n',
+    });
+    expect(r.dormant.filter((d) => d.endsWith(' G'))).toEqual([]);
+    expect(r.failed).toEqual(['f.m:3 G', 'g.m:3 G']);
+  });
+
+  it('a run in another workspace makes no name here: evalin into the base or the caller\'s, not eval', async () => {
+    const r = await judgedRows({
+      'f_base.m': "function f_base\nevalin('base', 'globs');\ny = G(3);\nend\n",
+      'f_caller.m': "function f_caller\nevalin('caller', 'globs');\ny = G(3);\nend\n",
+      'f_eval.m': "function f_eval\neval('globs');\ny = G(3);\nend\n",
+      'globs.m': 'global G\n',
+    });
+    // evalin's run is still a call into the script: only its status reading changed.
+    expect(r.edges.filter((e) => e.includes('-calls-> globs.m'))).toHaveLength(3);
+    expect(r.failed).toEqual(['f_base.m:3 G', 'f_caller.m:3 G']);
+    expect(r.dormant).toEqual(['f_eval.m:3 G']);
+  });
+
+  it('a name a `clear` removes is not made; a `clear` that may remove more leaves only what is made after it', async () => {
+    const cases: Array<[string, 'failed' | 'dormant']> = [
+      ['X = 1;\nclear X', 'failed'],
+      ["X = 1;\nclear('X');", 'failed'],
+      ['X = 1;\nclearvars X', 'failed'],
+      ['clear\nX = 1;', 'dormant'],
+      ['X = 1;\nclear', 'failed'],
+      ['X = 1;\nclear all', 'failed'],
+      ['X = 1;\nclear variables', 'failed'],
+      ['global X\nclear global', 'failed'],
+      ['X = 1;\nclear classes', 'failed'],
+      ['X = 1;\nclearvars', 'failed'],
+      ['X = 1;\nclearvars -except X', 'failed'],
+      ['X = 1;\nclear -regexp ^Y', 'failed'],
+      ['X = 1;\nclear(name)', 'failed'],
+      ['X = 1;\nclear functions', 'dormant'],
+      ['X = 1;\nclear mex', 'dormant'],
+      ['X = 1;\nclear Y', 'dormant'],
+      ['X = 1;\nclear all\nX = 2;', 'dormant'],
+      ['X = 1;\nif k\n  clear\nend', 'failed'],
+    ];
+    const files: Record<string, string> = {};
+    cases.forEach(([body], i) => {
+      files[`f${i}.m`] = runner(`f${i}`, `s${i}`, 'X(3)');
+      files[`s${i}.m`] = `${body}\n`;
+    });
+    const r = await judgedRows(files);
+    cases.forEach(([body, want], i) => {
+      expect(r[want], body).toContain(`f${i}.m:3 X`);
+    });
+    // A script run through another counts its own clears the same way.
+    const t = await judgedRows({ 'f.m': runner('f', 's1', 'X(3)', 'Y(1)'), 's1.m': 's2\nY = 1;\n', 's2.m': 'X = 1;\nclear\n' });
+    expect(t.failed).toEqual(['f.m:3 X']);
+    expect(t.dormant).toEqual(['f.m:4 Y']);
+  });
+
+  it(`a script larger than ${MATLAB_SCRIPT_MAX_BYTES} bytes makes no name`, async () => {
+    const fill = (bytes: number): string => {
+      let out = '';
+      for (let i = 0; out.length < bytes; i++) out += `L${i} = [${i} ${i + 1}];\n`;
+      return out;
+    };
+    const small = `global G\n${fill(MATLAB_SCRIPT_MAX_BYTES - 1024)}`;
+    const large = `global G\n${fill(MATLAB_SCRIPT_MAX_BYTES + 1)}`;
+    expect(Buffer.byteLength(small)).toBeLessThanOrEqual(MATLAB_SCRIPT_MAX_BYTES);
+    expect(Buffer.byteLength(large)).toBeGreaterThan(MATLAB_SCRIPT_MAX_BYTES);
+    const r = await judgedRows({ 'f.m': runner('f', 'small', 'G(3)'), 'g.m': runner('g', 'large', 'G(3)'), 'small.m': small, 'large.m': large });
+    expect(r.dormant).toEqual(['f.m:3 G']);
+    expect(r.failed).toEqual(['g.m:3 G']);
+  }, 60_000);
+
+  it('a call with a carrier links as before, and is left alone', async () => {
+    const r = await judgedRows({ 'f.m': runner('f', 'globs', 'G(3)'), 'globs.m': 'global G\n', 'G.m': 'function r = G(x)\nr = x;\nend\n' });
+    expect(r.edges).toEqual(['f.m f -calls-> G @ G.m', 'f.m f -calls-> globs.m @ globs.m']);
+    expect(r.failed).toEqual([]);
+    expect(r.dormant).toEqual([]);
+  });
+});
+
+describe('MATLAB script workspaces: a sync ends where a fresh index ends', () => {
+  const START = { 'f.m': runner('f', 'globs', 'G(3)'), 'globs.m': 'global G\n' };
+  const G_FN = 'function r = G(x)\nr = x;\nend\n';
+
+  it('a carrier added wakes the row and links it; deleted, the row is dormant again', async () => {
+    const steps = [{ 'G.m': G_FN }, { 'G.m': null }];
+    const run = await expectSyncsFresh(START, steps);
+    expect(run[0]!.synced).toContain('f.m f -calls-> G @ G.m');
+    expect(run[0]!.syncedDormant).toEqual([]);
+    expect(run[1]!.syncedDormant).toEqual(['f.m:3 calls:G']);
+  }, 120_000);
+
+  it('the global line removed and back, the run removed and back, the script turned to a function and back, renamed and deleted', async () => {
+    const steps: Files[] = [
+      { 'globs.m': '% nothing\nx = 1;\n' },
+      { 'globs.m': 'global G\n' },
+      { 'f.m': runner('f', null, 'G(3)') },
+      { 'f.m': START['f.m'] },
+      { 'globs.m': 'function globs()\nglobal G\nend\n' },
+      { 'globs.m': 'global G\n' },
+      { 'globs.m': null, 'globs2.m': 'global G\n' },
+      { 'globs.m': 'global G\n', 'globs2.m': null },
+      { 'globs.m': null },
+    ];
+    const run = await expectSyncsFresh(START, steps);
+    expect(run.map((s) => s.syncedDormant.includes('f.m:3 calls:G'))).toEqual([false, true, false, true, false, true, false, true, false]);
+  }, 240_000);
+
+  it('a script deleted and added back with other text makes its new names, in one long-lived graph', async () => {
+    const start = { 'f.m': runner('f', 'globs', 'G(3)', 'H(1)'), 'globs.m': 'global G\n' };
+    const steps: Files[] = [{ 'globs.m': null }, { 'globs.m': 'global H\n' }, { 'globs.m': 'global G\n' }];
+    const run = await expectSyncsFresh(start, steps);
+    expect(run.map((s) => s.syncedDormant.filter((r) => / calls:[GH]$/.test(r)))).toEqual([[], ['f.m:4 calls:H'], ['f.m:3 calls:G']]);
+  }, 120_000);
+
+  it('a seeded random sequence of edits to functions and scripts', async () => {
+    let seed = 0x5eed;
+    const rand = (n: number): number => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) % n);
+    };
+    const state = {
+      s1Global: true, // s1 declares G1
+      s1RunsS2: true,
+      s1Function: false, // s1.m turned to a function file
+      s1Name: 's1' as 's1' | 's1b', // renamed
+      s2: true, // s2.m exists
+      s2Assigns: true, // s2 assigns G2
+      s2RunsS1: false, // a cycle
+      fRun: 'before' as 'before' | 'after' | 'none',
+      gRunsS2: true,
+      carrier: false, // G1.m
+    };
+    const render = (): Record<string, string | null> => {
+      const fRun = state.fRun === 'none' ? [] : ['s1'];
+      const f = state.fRun === 'after'
+        ? 'function f()\nx = G1(1);\ny = G2(2);\nz = H(3);\ns1\nend\n'
+        : ['function f()', ...fRun, 'x = G1(1);', 'y = G2(2);', 'z = H(3);', 'end', ''].join('\n');
+      const s1Body = [...(state.s1Global ? ['global G1'] : ['% no globals']), ...(state.s1RunsS2 ? ['s2'] : []), 'H = 1;'].join('\n') + '\n';
+      const s1 = state.s1Function ? `function ${state.s1Name}()\n${s1Body}end\n` : s1Body;
+      const files: Record<string, string | null> = {
+        'f.m': f,
+        'g.m': `function g()\n${state.gRunsS2 ? 's2\n' : ''}y = G2(1);\nq = G1(1);\nend\n`,
+        's1.m': state.s1Name === 's1' ? s1 : null,
+        's1b.m': state.s1Name === 's1b' ? s1 : null,
+        's2.m': state.s2 ? `${state.s2RunsS1 ? 's1\n' : ''}${state.s2Assigns ? 'G2 = 2;' : 'k = 0;'}\n` : null,
+        'G1.m': state.carrier ? G_FN.replace(/G\b/g, 'G1') : null,
+      };
+      return files;
+    };
+    const flips: Array<() => void> = [
+      () => { state.s1Global = !state.s1Global; },
+      () => { state.s1RunsS2 = !state.s1RunsS2; },
+      () => { state.s1Function = !state.s1Function; },
+      () => { state.s1Name = state.s1Name === 's1' ? 's1b' : 's1'; },
+      () => { state.s2 = !state.s2; },
+      () => { state.s2Assigns = !state.s2Assigns; },
+      () => { state.s2RunsS1 = !state.s2RunsS1; },
+      () => { state.fRun = (['before', 'after', 'none'] as const)[rand(3)]!; },
+      () => { state.gRunsS2 = !state.gRunsS2; },
+      () => { state.carrier = !state.carrier; },
+    ];
+    const initial = Object.fromEntries(Object.entries(render()).filter(([, c]) => c !== null)) as Record<string, string>;
+    const root = tempDir('cg-matlab-scripts-random-');
+    const current: Files = { ...initial };
+    let slept = 0;
+    let woke = 0;
+    try {
+      writeTree(root, initial);
+      const cg = await CodeGraph.init(root, { index: true });
+      let lastAsleep = new Set(rowsOf(matlabRows(root), 'dormant').filter((r) => / G[12]$/.test(r)));
+      try {
+        for (let i = 0; i < 32; i++) {
+          flips[rand(flips.length)]!();
+          const next = render();
+          const step: Files = {};
+          for (const [p, c] of Object.entries(next)) if ((current[p] ?? null) !== c) step[p] = c;
+          writeTree(root, step);
+          Object.assign(current, step);
+          await cg.sync();
+          const freshRoot = tempDir('cg-matlab-scripts-random-fresh-');
+          try {
+            writeTree(freshRoot, Object.fromEntries(Object.entries(current).filter(([, c]) => c !== null)) as Record<string, string>);
+            const fresh = await CodeGraph.init(freshRoot, { index: true });
+            try {
+              expect(allEdges(cg), `step ${i} ${JSON.stringify(state)}: edges`).toEqual(allEdges(fresh));
+            } finally {
+              fresh.close();
+            }
+            const rows = matlabRows(root);
+            expect(rows, `step ${i} ${JSON.stringify(state)}: rows`).toEqual(matlabRows(freshRoot));
+            const asleep = new Set(rowsOf(rows, 'dormant').filter((r) => / G[12]$/.test(r)));
+            for (const r of asleep) if (!lastAsleep.has(r)) slept++;
+            for (const r of lastAsleep) if (!asleep.has(r)) woke++;
+            lastAsleep = asleep;
+          } finally {
+            fs.rmSync(freshRoot, { recursive: true, force: true });
+          }
+        }
+      } finally {
+        cg.close();
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    // The sequence put rows to sleep and woke them, both ways, several times.
+    expect(slept).toBeGreaterThanOrEqual(3);
+    expect(woke).toBeGreaterThanOrEqual(3);
+  }, 300_000);
+
+  it('a sync killed after resolution, before the pass: the next plain sync ends where a fresh index ends', async () => {
+    const root = tempDir('cg-matlab-scripts-kill-');
+    try {
+      writeTree(root, { ...START, 'globs.m': 'x = 1;\n' });
+      let cg = await CodeGraph.init(root, { index: true });
+      try {
+        expect(rowsOf(matlabRows(root), 'failed')).toEqual(['f.m:3 G']);
+        writeTree(root, { 'globs.m': 'global G\n' });
+        await withPass('fail', () => expect(cg.sync()).rejects.toThrow('simulated kill'));
+      } finally {
+        cg.close();
+      }
+      // Killed: the row is still failed.
+      expect(rowsOf(matlabRows(root), 'failed')).toEqual(['f.m:3 G']);
+      cg = await CodeGraph.open(root);
+      try {
+        await cg.sync();
+      } finally {
+        cg.close();
+      }
+      const freshRoot = tempDir('cg-matlab-scripts-kill-fresh-');
+      try {
+        writeTree(freshRoot, START);
+        (await CodeGraph.init(freshRoot, { index: true })).close();
+        expect(matlabRows(root)).toEqual(matlabRows(freshRoot));
+        expect(rowsOf(matlabRows(root), 'dormant')).toEqual(['f.m:3 G']);
+      } finally {
+        fs.rmSync(freshRoot, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('an index an earlier build left, with these rows failed: the next sync, or the next full index, ends where a fresh one ends', async () => {
+    for (const recover of ['sync', 'indexAll'] as const) {
+      const root = tempDir('cg-matlab-scripts-upgrade-');
+      const freshRoot = tempDir('cg-matlab-scripts-upgrade-fresh-');
+      try {
+        const files = { ...START, 'top.m': 'globs\nk = G(1);\n' };
+        writeTree(freshRoot, files);
+        (await CodeGraph.init(freshRoot, { index: true })).close();
+        writeTree(root, files);
+        (await CodeGraph.init(root, { index: true })).close();
+        // What an index built before this pass holds: every such row failed.
+        const db = DatabaseConnection.open(getDatabasePath(root));
+        try {
+          const flipped = db.getDb().prepare(
+            `UPDATE unresolved_refs SET status = 'failed' WHERE status = 'dormant' AND language = 'matlab' AND reference_kind = 'calls'
+               AND candidates IS NULL AND instr(reference_name, '.') = 0 AND instr(reference_name, ':') = 0`
+          ).run().changes;
+          expect(flipped).toBe(2);
+        } finally {
+          db.close();
+        }
+        const cg = await CodeGraph.open(root);
+        try {
+          if (recover === 'sync') await cg.sync();
+          else await cg.indexAll();
+        } finally {
+          cg.close();
+        }
+        expect(matlabRows(root), recover).toEqual(matlabRows(freshRoot));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(freshRoot, { recursive: true, force: true });
+      }
+    }
+  }, 120_000);
+});
+
+describe('MATLAB script workspaces: what a pass keeps of the scripts it read', () => {
+  it('a pass reads only the scripts it has not seen, and keeps only what it read off the indexed text', async () => {
+    const root = tempDir('cg-matlab-scripts-memo-');
+    try {
+      writeTree(root, { 'f.m': runner('f', 'globs', 'G(3)'), 'g.m': runner('g', 'globs', 'G(4)'), 'globs.m': 'global G\n' });
+      (await CodeGraph.init(root, { index: true })).close();
+      const db = DatabaseConnection.open(getDatabasePath(root));
+      try {
+        const queries = new QueryBuilder(db.getDb());
+        const memo = new MatlabScriptMemo();
+        const pass = async () => (await settleMatlabScriptWorkspaces(queries, root, () => undefined, memo))!;
+        const asleep = () => rowsOf(matlabRows(root), 'dormant');
+        // Edited since it was indexed: read and used by this pass, never kept.
+        fs.writeFileSync(`${root}/globs.m`, 'x = 1;\n');
+        expect(await pass()).toMatchObject({ scriptsRead: 1, parsed: 1, woken: 2 });
+        expect(memo.size).toBe(0);
+        expect(await pass()).toMatchObject({ scriptsRead: 1, parsed: 1, woken: 0 });
+        // Gone: no read, nothing kept, and the rows stay awake.
+        fs.rmSync(`${root}/globs.m`);
+        expect(await pass()).toMatchObject({ scriptsRead: 0, parsed: 0, woken: 0, slept: 0 });
+        expect(memo.size).toBe(0);
+        // Back to the text the index holds: read once and kept.
+        fs.writeFileSync(`${root}/globs.m`, 'global G\n');
+        expect(await pass()).toMatchObject({ scriptsRead: 1, parsed: 1, slept: 2 });
+        expect(memo.size).toBe(1);
+        expect(asleep()).toEqual(['f.m:3 G', 'g.m:3 G']);
+        // Then the memo answers, by the content hash the index holds: no read.
+        expect(await pass()).toMatchObject({ scriptsRead: 0, parsed: 0, slept: 0, woken: 0 });
+        fs.writeFileSync(`${root}/globs.m`, 'x = 1;\n');
+        expect(await pass()).toMatchObject({ scriptsRead: 0, parsed: 0, slept: 0, woken: 0 });
+      } finally {
+        db.close();
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('holds at most its bound, the least recently asked for dropped first', () => {
+    const memo = new MatlabScriptMemo(2);
+    const entry = { script: true, names: new Set(['G']) };
+    memo.set('a.m', 'h1', entry);
+    memo.set('b.m', 'h1', entry);
+    expect(memo.get('a.m', 'h1')).toBe(entry);
+    memo.set('c.m', 'h1', entry);
+    expect(memo.size).toBe(2);
+    expect(memo.get('b.m', 'h1')).toBeUndefined();
+    expect(memo.get('a.m', 'h1')).toBe(entry);
+    expect(memo.get('a.m', 'h2')).toBeUndefined();
+    expect(memo.get('c.m', 'h1')).toBe(entry);
+  });
+
+  it('keeps one entry per script, its latest text\'s, however often the script is edited', () => {
+    const memo = new MatlabScriptMemo();
+    const first = { script: true, names: new Set(['G']) };
+    const later = { script: true, names: new Set(['H']) };
+    for (let i = 0; i < 50; i++) memo.set('s.m', `h${i}`, first);
+    memo.set('s.m', 'hz', later);
+    expect(memo.size).toBe(1);
+    expect(memo.get('s.m', 'hz')).toBe(later);
+    expect(memo.get('s.m', 'h0')).toBeUndefined();
+  });
 });

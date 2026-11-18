@@ -39,6 +39,7 @@ import {
   interpretScope,
   isWasmMemoryError,
   loadedNames,
+  matlabClearedNames,
   sinkInputs,
   type InterpHost,
   type ParsedCode,
@@ -532,6 +533,14 @@ interface ScopeFacts {
   clobbers: boolean;
   /** Whether functions are nested in it, which share its variables. */
   nested: boolean;
+  /**
+   * In a script: the names it leaves in the workspace that runs it, read in
+   * text order. Those assigned, declared `global` or `load`ed since the last
+   * `clear` that may remove more than it names (see matlabClearedNames), less
+   * every name a `clear` names; a `persistent` declaration (refused outside a
+   * function) makes none. Unused in a function.
+   */
+  made: Set<string>;
 }
 
 /** Calls that may set names the code does not spell: a `load`, a `clear`, code run by `eval`, a script `run`. */
@@ -565,6 +574,23 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const passed = new Set<string>();
   let clobbers = false;
   let nested = false;
+  const scriptNames = new Set<string>();
+  const clearedByName = new Set<string>();
+  /** `v` is one of the scope's variables, made here (see ScopeFacts.made). */
+  const local = (v: string): void => {
+    locals.add(v);
+    scriptNames.add(v);
+  };
+  const loadedName = (v: string): void => {
+    loaded.add(v);
+    scriptNames.add(v);
+  };
+  /** A `clear` / `clearvars` statement with these arguments (see ScopeFacts.made). */
+  const cleared = (name: string, items: readonly (string | null)[]): void => {
+    const names = matlabClearedNames(name, items);
+    if (names === null) scriptNames.clear();
+    else for (const v of names) clearedByName.add(v);
+  };
 
   /**
    * What an assignment's right side may be known as (see ScopeFacts): a
@@ -639,14 +665,14 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   /** `x(k) = …` makes x a variable. */
   const indexAssigned = (left: SyntaxNode): void => {
     const name = getChildByField(left, 'name');
-    if (name) locals.add(getNodeText(name, source));
+    if (name) local(getNodeText(name, source));
   };
   /** `v.f = …` / `v.f(k) = …`: v is a variable, and f a field the scope fills in; `s(k).f = …` makes s one. */
   const fieldAssigned = (left: SyntaxNode): void => {
     const obj = getChildByField(left, 'object');
     if (obj?.type === 'identifier') {
       const v = getNodeText(obj, source);
-      locals.add(v);
+      local(v);
       const field = obj.nextNamedSibling;
       const fieldName = field?.type === 'function_call' ? getChildByField(field, 'name') : field;
       if (fieldName?.type === 'identifier') structFields.add(`${v}.${getNodeText(fieldName, source)}`);
@@ -672,6 +698,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         case 'persistent_operator':
           identifiersIn(c, source, locals);
           identifiersIn(c, source, assigned);
+          if (c.type === 'global_operator') identifiersIn(c, source, scriptNames);
           continue;
         case 'identifier':
           // `setup_vars`: a statement that may run a script.
@@ -684,7 +711,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           else written(left, right);
           if (left?.type === 'identifier') {
             const v = getNodeText(left, source);
-            locals.add(v);
+            local(v);
             const right = getChildByField(c, 'right');
             const made = constructed(right);
             if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier' });
@@ -694,7 +721,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           } else if (left?.type === 'multioutput_variable') {
             // `[a, s.f, x(k), ~] = …`
             for (const out of namedChildren(left)) {
-              if (out.type === 'identifier') locals.add(getNodeText(out, source));
+              if (out.type === 'identifier') local(getNodeText(out, source));
               else if (out.type === 'field_expression') fieldAssigned(out);
               else if (out.type === 'function_call') indexAssigned(out);
             }
@@ -704,7 +731,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         }
         case 'iterator': {
           const v = c.namedChild(0);
-          if (v?.type === 'identifier') locals.add(getNodeText(v, source));
+          if (v?.type === 'identifier') local(getNodeText(v, source));
           written(v, c.namedChild(1));
           break;
         }
@@ -712,7 +739,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           // `catch ME` — the error variable is on the `catch` line. An
           // identifier on a later line is a statement (a command-syntax call).
           const v = errorVariable(c);
-          if (v) locals.add(getNodeText(v, source));
+          if (v) local(getNodeText(v, source));
           written(v, null);
           break;
         }
@@ -723,7 +750,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           if (n.type === 'field_expression' && getChildByField(n, 'object')?.id !== c.id) break;
           const name = getNodeText(callee, source);
           if (name === 'load' && isStatement(c)) {
-            for (const v of loadedNames(callArgs(c).map((a) => stringLiteral(a, source)))) loaded.add(v);
+            for (const v of loadedNames(callArgs(c).map((a) => stringLiteral(a, source)))) loadedName(v);
+          } else if ((name === 'clear' || name === 'clearvars') && isStatement(c)) {
+            cleared(name, callArgs(c).map((a) => stringLiteral(a, source)));
           } else if (name === 'eval' || name === 'evalc') {
             for (const arg of callArgs(c).slice(0, 2)) evalCodes.push({ callee: name, arg });
           }
@@ -736,15 +765,16 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
             }
           }
           // `c{k}` / `a(end)` in a function: c and a are its variables.
-          if (isFunction && arrayEvidence(c) === 'variable') locals.add(name);
+          if (isFunction && arrayEvidence(c) === 'variable') local(name);
           break;
         }
         case 'command': {
           const cmd = namedChildren(c).find((a) => a.type === 'command_name');
           const name = cmd ? getNodeText(cmd, source) : '';
           if (CLOBBERING_CALL.test(name) || !MATLAB_BUILTINS.has(name)) clobbers = true;
+          if (name === 'clear' || name === 'clearvars') cleared(name, commandItems(c, source));
           if (name !== 'load') break;
-          for (const v of loadedNames(commandItems(c, source))) loaded.add(v);
+          for (const v of loadedNames(commandItems(c, source))) loadedName(v);
           break;
         }
       }
@@ -753,7 +783,8 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   };
   walk(scope);
   if (!isFunction) for (const v of loaded) locals.add(v);
-  return { locals, constructions, structFields, evalCodes, loaded, assigned, valued, copies, passed, clobbers, nested };
+  for (const v of clearedByName) scriptNames.delete(v);
+  return { locals, constructions, structFields, evalCodes, loaded, assigned, valued, copies, passed, clobbers, nested, made: scriptNames };
 }
 
 /**
@@ -1802,6 +1833,24 @@ export function matlabParamSinks<T>(
     };
     return use(collector.sinks, codeRefsOf);
   });
+}
+
+/**
+ * The names a script's code makes in the workspace that runs it: every
+ * variable its top level assigns in any form, a `for` or `catch` variable, a
+ * `global` it declares, and each name a `load f a b` list makes, in text
+ * order: a `clear` that may remove more than it names (`clear`, `clear all`,
+ * `clearvars -except …`) leaves only those made after it, and a name a
+ * `clear` names is not made (scanScope's `made`; nested and local functions
+ * excluded). A `persistent` declaration makes none: MATLAB refuses it
+ * outside a function. `root` is the parse of the whole file `source`, which
+ * its owner deletes; a file whose text is read as no MATLAB code (see
+ * matlabUnreadReason) makes none. For
+ * ../../resolution/matlab-script-workspace.ts.
+ */
+export function matlabScriptMadeNames(root: SyntaxNode, source: string, filePath: string): Set<string> {
+  if (matlabUnreadReason(source) !== null) return new Set();
+  return inFile(root, source, filePath, () => scanScope(root, source, false).made);
 }
 
 /** The `fromNodeId` of the references matlabParamSinks reads off code a caller passes: the function holding the sink. */

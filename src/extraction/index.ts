@@ -8,7 +8,6 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import {
   Language,
@@ -53,8 +52,8 @@ import {
   type MatlabCarrierStep,
 } from '../resolution/matlab-builtin-carriers';
 import { manifestEvidence, type ManifestEvidence } from '../resolution/workspace-packages';
-import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
-export { oversizeStamp };
+import { MAX_SOURCE_FILE_SIZE_BYTES, hashContent, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
+export { hashContent, oversizeStamp };
 
 /**
  * Number of files to read in parallel during indexing.
@@ -214,12 +213,6 @@ export interface SyncResult {
   detectedFrameworks?: string[];
 }
 
-/**
- * Calculate SHA256 hash of file contents
- */
-export function hashContent(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
 
 
 /**

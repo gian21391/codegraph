@@ -70,6 +70,7 @@ import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
 import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
 import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
+import { MatlabScriptMemo, settleMatlabScriptWorkspaces, type MatlabScriptWorkspaceStats } from './matlab-script-workspace';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { MATLAB_PATH_METADATA_KEY, MATLAB_PATH_PENDING_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from '../graph/matlab-search-path';
 import { computeMatlabPathRecord, currentMatlabConfigDigest, matlabPathInputsMoved, sameMatlabPath } from './matlab-path-record';
@@ -3624,6 +3625,22 @@ export class ReferenceResolver {
   matlabScriptCandidates(changedFilePaths: readonly string[]): string[] {
     return matlabScriptCandidates(this.queries, changedFilePaths);
   }
+
+  /**
+   * The MATLAB calls of a name a script the call's scope ran before it makes,
+   * kept dormant, and every other of their shape failed (see
+   * ./matlab-script-workspace). Run last in every full index and sync.
+   */
+  async settleMatlabScriptWorkspaces(): Promise<MatlabScriptWorkspaceStats | null> {
+    return settleMatlabScriptWorkspaces(this.queries, this.projectRoot, createYielder(), this.matlabScripts);
+  }
+
+  /**
+   * The script files the pass above has read, by path and content hash, for
+   * the resolver's life: clearCaches leaves it, since an entry is of one
+   * text and no edit can make it wrong (see MatlabScriptMemo, which bounds it).
+   */
+  private readonly matlabScripts = new MatlabScriptMemo();
 
   /** See ./matlab-sync's reopenMatlabScriptRuns. */
   reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): { count: number; fromEdges: number[] } {

@@ -38,7 +38,12 @@
  *     unless it is of a name code run at runtime makes (the `runtime` fact:
  *     `eval('x = 3;'); x(2)`, a `load`ed name, anything a callback given as
  *     text or `evalin` runs), most often a variable there; such a handle
- *     reference (a callback's) goes the same way.
+ *     reference (a callback's) goes the same way. Nor is one of a name a
+ *     script makes that the call's scope ran before it (`alsglobe` declaring
+ *     `global IDXgolden`, then `IDXgolden(k)`): a variable that script left
+ *     in the scope's workspace. That one is judged after resolution, by a
+ *     pass of its own over every such call (see isMatlabPlainCall and
+ *     ./matlab-script-workspace), which keeps it dormant.
  *
  * Every class but the built-ins' is kept dormant, and judged wherever its
  * file is, fresh or not: the rule reads the project's symbols alone, so a
@@ -176,6 +181,39 @@ function matlabUnmatchableKeys(ref: UnresolvedRef): string[] | null {
   return [...names, ...names.flatMap(matlabFileNames)];
 }
 
+/**
+ * Which of `keys` (names a call's carrier would carry, see
+ * matlabUnmatchableKeys) a node of the project carries: a name any node has
+ * (asked of `known`, the names every node carries, when the caller has it),
+ * and a `.m` file's name only when the file is a carrier
+ * (MATLAB_CARRIER_NODES): a file nothing is read from carries none.
+ */
+export function matlabCarriedKeys(keys: Iterable<string>, known: ReadonlySet<string> | null, queries: QueryBuilder): (key: string) => boolean {
+  const all = [...keys];
+  const named = known ?? queries.getNodeNamesAmong(all);
+  const fileKeys = new Set<string>();
+  for (const k of all) if (named.has(k) && /\.[mM]$/.test(k)) fileKeys.add(k);
+  const carriedFiles = fileKeys.size > 0 ? queries.getNodeNamesAmong(fileKeys, MATLAB_CARRIER_NODES) : fileKeys;
+  return (k) => named.has(k) && (!fileKeys.has(k) || carriedFiles.has(k));
+}
+
+/**
+ * Whether `ref` has the shape of a call a fresh pass parks as failed, not
+ * dormant, when nothing carries its name: a MATLAB `calls` row of a bare
+ * name (no member, no qualifier) that is no built-in's, written with
+ * arguments (no `form` fact), with no `runtime`, `dispatch` or `computed`
+ * fact — `IDXgolden(k)`. When a script its scope ran before it makes the
+ * name, it is one of the variables that script left in the scope's workspace,
+ * and kept dormant instead (see ./matlab-script-workspace). Its carriers are
+ * not asked here.
+ */
+export function isMatlabPlainCall(ref: { referenceName: string; referenceKind: string; language?: string; candidates?: readonly string[] }): boolean {
+  if (ref.language !== 'matlab' || ref.referenceKind !== 'calls' || isDottedMatlabName(ref.referenceName)) return false;
+  if (MATLAB_BUILTINS.has(ref.referenceName)) return false;
+  const facts = matlabRefFacts(ref);
+  return facts.form === undefined && !facts.runtime && facts.dispatch === undefined && !facts.computed;
+}
+
 /** The failures a resolution pass does not park as failed (see the top of this file). */
 export interface UnanswerableMatlabFailures {
   /** A built-in's calls, deleted. */
@@ -242,13 +280,7 @@ export function unanswerableMatlabFailures(
   dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
   dropUncarried(calledMembers, MATLAB_NODES);
   if (pending.length === 0) return { deleted, dormant };
-  const named = known ?? queries.getNodeNamesAmong(pending.flatMap((p) => p.keys));
-  // A `.m` file's name, the one a file node carries, is asked again of the
-  // carriers (MATLAB_CARRIER_NODES): a file nothing is read from carries none.
-  const fileKeys = new Set<string>();
-  for (const { keys } of pending) for (const k of keys) if (named.has(k) && /\.[mM]$/.test(k)) fileKeys.add(k);
-  const carriedFiles = fileKeys.size > 0 ? queries.getNodeNamesAmong(fileKeys, MATLAB_CARRIER_NODES) : fileKeys;
-  const carried = (k: string): boolean => named.has(k) && (!fileKeys.has(k) || carriedFiles.has(k));
+  const carried = matlabCarriedKeys(pending.flatMap((p) => p.keys), known, queries);
   for (const { ref, keys, builtin } of pending) {
     if (keys.some(carried)) continue;
     const facts = matlabRefFacts(ref);

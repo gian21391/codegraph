@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 
@@ -21,6 +22,11 @@ export function oversizeStamp(size: number): string {
   return `codegraph:oversize:${size}`;
 }
 
+/** The hash the index stores of a file's text (`files.content_hash`): SHA-256, hex. */
+export function hashContent(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
 /**
  * The text whose hash the index stores for a file of `size` bytes: its content
  * within the limit, the size stamp over it. Anything that checks a file on disk
@@ -33,16 +39,17 @@ export function indexedHashInput(size: number, content: () => string): string {
 
 /**
  * A source file's text, or null for what extraction wouldn't take: anything but
- * a regular file, or a file over the limit, which decoding could multiply into
- * gigabytes of heap. Checked on the open file: looking the path up twice is a
- * quarter of the read. O_NONBLOCK keeps a FIFO with no writer from parking the
- * open itself. Throws what a failed open or read throws.
+ * a regular file, or a file over the limit (`maxBytes`, a caller's tighter
+ * one), which decoding could multiply into gigabytes of heap. Checked on the
+ * open file: looking the path up twice is a quarter of the read. O_NONBLOCK
+ * keeps a FIFO with no writer from parking the open itself. Throws what a
+ * failed open or read throws.
  */
-export function readSourceText(file: string, encoding: BufferEncoding = 'utf-8'): string | null {
+export function readSourceText(file: string, encoding: BufferEncoding = 'utf-8', maxBytes = MAX_SOURCE_FILE_SIZE_BYTES): string | null {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
   try {
     const stats = fs.fstatSync(fd);
-    if (!stats.isFile() || stats.size > MAX_SOURCE_FILE_SIZE_BYTES) return null;
+    if (!stats.isFile() || stats.size > Math.min(maxBytes, MAX_SOURCE_FILE_SIZE_BYTES)) return null;
     return fs.readFileSync(fd, encoding);
   } finally {
     fs.closeSync(fd);

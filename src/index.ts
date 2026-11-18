@@ -863,6 +863,13 @@ export class CodeGraph {
           await this.resolver.resolveParameterFlows();
         }
 
+        // A MATLAB call of a name a script its scope ran makes is one of the
+        // script's variables: last of the resolution steps, so that nothing
+        // after it undoes it, and on every completed run, so that an index an
+        // earlier build left is set right too (see
+        // resolution/matlab-script-workspace).
+        if (result.success && !options.signal?.aborted) await this.settleMatlabScriptWorkspaces();
+
         // Over an existing graph the vocabulary was kept (see the top of the
         // run). Every write of this run has landed, so drop the rows of names
         // deleted or renamed since they were written — the orphan cleanup the
@@ -1941,6 +1948,12 @@ export class CodeGraph {
           await this.resolver.resolveParameterFlows(flowChange);
         }
 
+        // The MATLAB calls of a name a script their scope ran makes, judged
+        // again from scratch: last, as in a full index, and on every sync,
+        // changed files or not, so that a sync killed before it, or an index
+        // an earlier build left, ends as a fresh index does.
+        await this.settleMatlabScriptWorkspaces();
+
         // Refresh planner stats + checkpoint the WAL after bulk writes.
         // Off-thread — see indexAll's call site.
         if (filesChanged || result.filesRemoved > 0 || orphanCount > 0 || synthesized) {
@@ -1990,6 +2003,16 @@ export class CodeGraph {
         this.fileLock.release();
       }
     });
+  }
+
+  /** The resolver's MATLAB script-workspace pass, timed under CODEGRAPH_SYNTH_TIMINGS. */
+  private async settleMatlabScriptWorkspaces(): Promise<void> {
+    const stats = await this.resolver.settleMatlabScriptWorkspaces();
+    if (stats && process.env.CODEGRAPH_SYNTH_TIMINGS) {
+      console.error(
+        `[phase-timing] matlab-script-workspaces: ${stats.ms}ms (${stats.runs} runs, ${stats.read} rows read, ${stats.rows} judged, ${stats.scriptsRead} scripts read, ${stats.parsed} parsed, ${stats.slept} slept, ${stats.woken} woken)`
+      );
+    }
   }
 
   /**
