@@ -401,6 +401,30 @@ describe('MATLAB path: resolution', () => {
   });
 });
 
+describe('MATLAB path: stubs, the help text of a MEX function', () => {
+  const HELP = '% MX  help for a MEX function\n';
+  const FILES: Record<string, string> = {
+    'codegraph.json': config({ startup: "addpath('lib2');\naddpath('lib1');" }),
+    'lib1/mx.m': HELP,
+    'lib2/mx.m': HELP,
+    'old/offmx.m': HELP,
+    'lib2/caller.m': 'function caller(x)\nmx(x);\noffmx(x);\nend\n',
+    'app/main.m': 'function main(x)\noffmx(x);\nend\n',
+  };
+
+  it('an on-path caller takes the path\'s first copy, nearer one or not, and no stub off the path; an off-path caller the nearest', async () => {
+    const root = project(FILES);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(edgesFrom(cg, 'lib2/caller.m', 'caller')).toEqual(['caller -calls-> lib1/mx.m @ lib1/mx.m']);
+      expect(unresolvedRows(root)).toEqual(expect.arrayContaining(['lib2/caller.m:3 calls:offmx']));
+      expect(edgesFrom(cg, 'app/main.m', 'main')).toEqual(['main -calls-> old/offmx.m @ old/offmx.m']);
+    } finally {
+      cg.close();
+    }
+  });
+});
+
 describe('MATLAB path: MATLAB\'s own functions come before a folder put after them', () => {
   // physbase: aoinit.m puts matlab/chris/commands on the path with '-end', and
   // its sound.m and split.m never run (MATLAB's own do); downloads/minpack's
@@ -580,6 +604,22 @@ describe('MATLAB path: sync converges on a fresh index', () => {
       { 'setup/setp.m': setp(2) },
     );
     expect(r.steps.map((s) => s.filter((e) => e.startsWith('lib1/caller.m caller -calls-> util')))).toEqual([[TO_LIB1], [TO_LIB2]]);
+    expect(r.synced).toEqual(r.fresh);
+    expect(r.syncedRows).toEqual(r.freshRows);
+  });
+
+  it('after a path edit that moves which stub copy comes first, and puts one off the path', async () => {
+    const HELP = '% MX  help for a MEX function\n';
+    const r = await syncedAndFresh(
+      { ...BASE, 'lib1/mx.m': HELP, 'lib2/mx.m': HELP, 'lib1/mxuser.m': 'function mxuser()\nmx(1);\nend\n', 'codegraph.json': config({ startup: "addpath('lib2'); addpath('lib1')" }) },
+      { 'codegraph.json': config({ startup: "addpath('lib1'); addpath('lib2')" }) },
+      { 'codegraph.json': config({ startup: "addpath('lib1')" }) },
+    );
+    expect(r.steps.map((s) => s.filter((e) => e.includes('-calls-> lib') && e.includes('mx.m')))).toEqual([
+      ['lib1/mxuser.m mxuser -calls-> lib1/mx.m @ lib1/mx.m'],
+      ['lib1/mxuser.m mxuser -calls-> lib2/mx.m @ lib2/mx.m'],
+      ['lib1/mxuser.m mxuser -calls-> lib1/mx.m @ lib1/mx.m'],
+    ]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
   });

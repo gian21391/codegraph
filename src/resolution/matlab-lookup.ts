@@ -22,6 +22,24 @@
  *      setup_paths`) reaches a script on the path too: its file node — and
  *      so does a callback given as text that is one (`'Callback',
  *      'refresh_plots'`), a reference to the script it runs.
+ *   8. Last, when nothing above answers: a stub, the help text of a MEX
+ *      function of the name (`lcaGet.m`, comments only, beside the
+ *      `lcaGet.mexa64` the index never reads; see ../graph/matlab-scripts),
+ *      for a call of any form: its file node, the help being what the call
+ *      reaches. One in a `private/` folder in reach first, then by the path
+ *      rules of step 7, a script of the name competing (a stub behind a
+ *      nearer script is never reached). MATLAB would put a MEX file in a
+ *      folder before a function file in a later one, but the index sees no
+ *      MEX file, and a help text with none beside it is an empty script:
+ *      last is the side that adds no wrong edge. Never a built-in's name.
+ *      The two forms rank a stub against a script differently: a statement
+ *      takes a script at step 7, however far, before any stub, however near
+ *      (the rule before stubs, the conservative side); a call with
+ *      arguments takes the stub only when the path rules pick it over
+ *      every script of the name, and else nothing (MATLAB would run the
+ *      script, and the call would error). A nearer `.m` of the name that the
+ *      index reads as no MATLAB (Octave, binary, empty) blocks no farther
+ *      stub, though MATLAB would find that file first.
  *
  * An import holds in the function that makes it and the functions nested in
  * it, not in the file's other functions. Of several equally near same-named
@@ -70,7 +88,7 @@ import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { MATLAB_BUILTINS } from '../extraction/languages/matlab-builtins';
-import { isMatlabScriptFile } from '../graph/matlab-scripts';
+import { isMatlabScriptFile, isMatlabStubFile } from '../graph/matlab-scripts';
 import { dirOf, matlabLookupFolder, type MatlabSearchPath } from '../graph/matlab-search-path';
 
 const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
@@ -562,7 +580,29 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
     const scripts = scriptsHere();
     target = nearest(scripts.length > 0 ? [...onPath, ...scripts] : onPath, from);
   }
+  // 8. A stub, when nothing above answers (one it found and a nearer case
+  // variant beat answers no call, nor does a stub then).
+  target ??= stubTarget(name, from, context);
   return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
+}
+
+/**
+ * Step 8 (see the top of this file): the stub of `name` MATLAB reaches from
+ * `from` — one in a `private/` folder in reach, the nearest; else the one the
+ * path rules pick among the stubs and the scripts of the name (`choose`,
+ * `nearest`), when that is a stub. A built-in's name has none.
+ */
+function stubTarget(name: string, from: string, context: ResolutionContext): Node | undefined {
+  if (MATLAB_BUILTINS.has(name)) return undefined;
+  const files = matlabFileNames(name).flatMap((fileName) => (context.isAbsentName?.(fileName) ? [] : context.getNodesByName(fileName)));
+  const stubs = files.filter((file) => isMatlabStubFile(file, context) && privateInReach(file, from));
+  if (stubs.length === 0) return undefined;
+  const priv = stubs.filter((file) => /(?:^|\/)private\//.test(file.filePath));
+  if (priv.length > 0) return nearest(priv, from);
+  const scripts = files.filter((file) => isMatlabScriptFile(file, context));
+  const all = scripts.length > 0 ? [...stubs, ...scripts] : stubs;
+  const picked = searchPathOf(context) ? choose(all, from, context) : nearest(all, from);
+  return picked && stubs.includes(picked) ? picked : undefined;
 }
 
 /**
@@ -622,6 +662,15 @@ function scriptsNamed(name: string, context: ResolutionContext): Node[] {
 export function isMatlabPathScript(filePath: string, context: ResolutionContext): boolean {
   const file = context.getNodesInFile(filePath).find((n) => n.kind === 'file');
   return file !== undefined && isMatlabScriptFile(file, context);
+}
+
+/**
+ * Whether `filePath`, a MATLAB file, is a stub a call of its name may reach
+ * (step 8): for a sync, which re-opens the calls of a file that became one.
+ */
+export function isMatlabPathStub(filePath: string, context: ResolutionContext): boolean {
+  const file = context.getNodesInFile(filePath).find((n) => n.kind === 'file');
+  return file !== undefined && isMatlabStubFile(file, context);
 }
 
 /**

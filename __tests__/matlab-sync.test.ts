@@ -39,7 +39,8 @@ describe('MATLAB sync converges on a fresh index', () => {
       { 'setup_paths.m': '# Octave\naddpath(pwd);\n' },
       { 'setup_paths.m': 'addpath(pwd);\n' },
     );
-    expect(steps).toEqual([[SCRIPT_CALL], [], [SCRIPT_CALL], [], [SCRIPT_CALL]]);
+    // As help text it is a stub, which the statement reaches too; Octave answers nothing.
+    expect(steps).toEqual([[SCRIPT_CALL], [SCRIPT_CALL], [SCRIPT_CALL], [], [SCRIPT_CALL]]);
     expect(synced).toEqual(fresh);
   });
 
@@ -411,6 +412,137 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     expect(run[3]!.syncedRows).toEqual([]);
     expect(run[3]!.syncedDormant).toContain('user.m:3 calls:EPICS2MatlabTime::datestr');
   }, 180_000);
+});
+
+describe('MATLAB sync converges on a fresh index for stubs, the help text of a MEX function', () => {
+  // A call of a stub's name nothing else answers links to the stub's file:
+  // each step of each sequence ends with the edges, live rows and dormant
+  // rows a fresh index of the same files has.
+  const HELP = '% MEXF  help for a MEX function\n%   v = mexf(pv)\n';
+  const FUNCTION = 'function v = mexf(pv)\nv = pv;\nend\n';
+  const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\n## MEXF\n1;\n';
+  const expectEachStepFresh = (run: Awaited<ReturnType<typeof syncedAndFreshEachStep>>, steps: Array<Record<string, string | null>>): void => {
+    run.forEach((step, i) => {
+      const what = `step ${i} ${JSON.stringify(steps[i])}`;
+      expect(step.synced, `${what} edges`).toEqual(step.fresh);
+      expect(step.syncedRows, `${what} rows`).toEqual(step.freshRows);
+      expect(step.syncedDormant, `${what} dormant rows`).toEqual(step.freshDormant);
+    });
+  };
+  const MAIN = 'function main(pv)\nv = mexf(pv);\nmexf\nend\n';
+  const TO = (file: string): string[] => [`app/main.m main -calls-> ${file} @ ${file}`, `app/main.m main -calls-> ${file} @ ${file}`];
+
+  it('when a function file becomes help text only, and back', async () => {
+    const steps = [{ 'lib/mexf.m': HELP }, { 'lib/mexf.m': FUNCTION }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'lib/mexf.m': FUNCTION }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(TO('lib/mexf.m'));
+    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> mexf @ lib/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m']);
+  }, 120_000);
+
+  it('when a script becomes help text only, and back: the statement stays, the call with arguments comes and goes', async () => {
+    const steps = [{ 'lib/mexf.m': HELP }, { 'lib/mexf.m': 'disp(1);\n' }, { 'lib/mexf.m': HELP }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'lib/mexf.m': 'disp(1);\n' }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(TO('lib/mexf.m'));
+    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> lib/mexf.m @ lib/mexf.m']);
+  }, 120_000);
+
+  it('when a stub that answered a statement before a farther function becomes a script, and back', async () => {
+    // The script, nearer, runs the statement; as help text, the farther function answers both calls.
+    const steps = [{ 'app/mexf.m': HELP }, { 'app/mexf.m': 'disp(1);\n' }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'app/mexf.m': 'disp(1);\n', 'lib/mexf.m': FUNCTION }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(['app/main.m main -calls-> mexf @ lib/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m']);
+    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> app/mexf.m @ app/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m']);
+  }, 120_000);
+
+  it('when a nearer function of the name is added and removed while a stub exists, and a farther one too', async () => {
+    const steps = [{ 'app/mexf.m': FUNCTION }, { 'app/mexf.m': null }, { 'other/mexf.m': FUNCTION }, { 'other/mexf.m': null }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'lib/mexf.m': HELP }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(['app/main.m main -calls-> mexf @ app/mexf.m', 'app/main.m main -calls-> mexf @ app/mexf.m']);
+    expect(run[1]!.synced).toEqual(TO('lib/mexf.m'));
+    expect(run[2]!.synced).toEqual(['app/main.m main -calls-> mexf @ other/mexf.m', 'app/main.m main -calls-> mexf @ other/mexf.m']);
+    expect(run[3]!.synced).toEqual(TO('lib/mexf.m'));
+  }, 180_000);
+
+  it('when a stub is deleted and added back', async () => {
+    const steps = [{ 'lib/mexf.m': null }, { 'lib/mexf.m': HELP }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'lib/mexf.m': HELP }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual([]);
+    expect(run[1]!.synced).toEqual(TO('lib/mexf.m'));
+  }, 120_000);
+
+  it('when a stub with a farther copy goes to Octave and back, and to a function and back, and from Octave to a function', async () => {
+    const steps = [
+      { 'app/mexf.m': OCTAVE }, { 'app/mexf.m': HELP }, { 'app/mexf.m': FUNCTION }, { 'app/mexf.m': HELP },
+      { 'app/mexf.m': OCTAVE }, { 'app/mexf.m': FUNCTION }, { 'app/mexf.m': OCTAVE },
+    ];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'app/mexf.m': HELP, 'lib/mexf.m': HELP }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(TO('lib/mexf.m'));
+    expect(run[1]!.synced).toEqual(TO('app/mexf.m'));
+    expect(run[3]!.synced).toEqual(TO('app/mexf.m'));
+    // The nearer file turns from Octave into a function: it takes the calls the farther stub answered.
+    expect(run[5]!.synced).toEqual(['app/main.m main -calls-> mexf @ app/mexf.m', 'app/main.m main -calls-> mexf @ app/mexf.m']);
+    expect(run[6]!.synced).toEqual(TO('lib/mexf.m'));
+  }, 240_000);
+
+  it('when a nearer Octave file of the name becomes a function while a farther script answers the statement', async () => {
+    const steps = [{ 'app/mexf.m': FUNCTION }, { 'app/mexf.m': OCTAVE }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'app/mexf.m': OCTAVE, 'lib/mexf.m': 'disp(1);\n' }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toEqual(['app/main.m main -calls-> mexf @ app/mexf.m', 'app/main.m main -calls-> mexf @ app/mexf.m']);
+    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> lib/mexf.m @ lib/mexf.m']);
+  }, 120_000);
+
+  it('when a class an object of is passed gains a method named like the stub, and loses it', async () => {
+    const CLS = 'classdef Cls\n  methods\n    function obj = Cls()\n    end\n  end\nend\n';
+    const WITH = 'classdef Cls\n  methods\n    function obj = Cls()\n    end\n    function r = mexf(obj, x)\n      r = x;\n    end\n  end\nend\n';
+    const main = 'function main\nobj = Cls();\nv = mexf(obj, 1);\nend\n';
+    const steps = [{ 'app/Cls.m': WITH }, { 'app/Cls.m': CLS }];
+    const run = await syncedAndFreshEachStep({ 'app/main.m': main, 'app/Cls.m': CLS, 'lib/mexf.m': HELP }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced).toContain('app/main.m main -calls-> Cls::mexf @ app/Cls.m');
+    expect(run[1]!.synced).toContain('app/main.m main -calls-> lib/mexf.m @ lib/mexf.m');
+  }, 120_000);
+
+  it('when a nearer file of the name in another case is added and removed: it vetoes a stub and a function alike', async () => {
+    const steps = [{ 'app/Mexf.m': 'function v = Mexf(pv)\nv = pv;\nend\n' }, { 'app/Mexf.m': null }, { 'app/MEXF.m': HELP }, { 'app/MEXF.m': null }];
+    for (const target of [HELP, FUNCTION]) {
+      const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'lib/mexf.m': target }, ...steps);
+      expectEachStepFresh(run, steps);
+      const linked = target === HELP ? TO('lib/mexf.m') : ['app/main.m main -calls-> mexf @ lib/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m'];
+      expect(run.map((step) => step.synced.filter((e) => e.startsWith('app/main.m')))).toEqual([[], linked, [], linked]);
+    }
+  }, 240_000);
+
+  it('when a farther function with more than 500 statement calls loses one to a nearer help text that becomes a script', async () => {
+    // 520 statements in lib/ take the function beside them; the one in app/ takes the nearer script.
+    const gen: Record<string, string> = {};
+    for (let i = 1; i <= 26; i++) gen[`lib/gen/g${i}.m`] = `function g${i}\n${'mexf\n'.repeat(20)}end\n`;
+    const steps = [{ 'app/mexf.m': 'disp(2);\n' }, { 'app/mexf.m': HELP }];
+    const run = await syncedAndFreshEachStep({ ...gen, 'app/main.m': 'function main\nmexf\nend\n', 'app/mexf.m': HELP, 'lib/mexf.m': FUNCTION }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run[0]!.synced.filter((e) => e.startsWith('app/main.m'))).toEqual(['app/main.m main -calls-> app/mexf.m @ app/mexf.m']);
+    expect(run[0]!.synced.filter((e) => e.endsWith('@ lib/mexf.m'))).toHaveLength(520);
+    expect(run[1]!.synced.filter((e) => e.startsWith('app/main.m'))).toEqual(['app/main.m main -calls-> mexf @ lib/mexf.m']);
+  }, 180_000);
+
+  it('when a nearer file of the name in another case vetoes more than 500 calls, and is removed', async () => {
+    // 520 calls the variant vetoes go failed, and every one links again once it is gone.
+    const gen: Record<string, string> = {};
+    for (let i = 1; i <= 26; i++) gen[`app/gen/g${i}.m`] = `function g${i}\n${'v = mexf(1);\n'.repeat(20)}end\n`;
+    const steps = [{ 'app/gen/Mexf.m': 'function v = Mexf(pv)\nv = pv;\nend\n' }, { 'app/gen/Mexf.m': null }];
+    for (const target of [HELP, FUNCTION]) {
+      const run = await syncedAndFreshEachStep({ ...gen, 'lib/mexf.m': target }, ...steps);
+      expectEachStepFresh(run, steps);
+      expect(run[0]!.synced.filter((e) => e.includes('lib/mexf.m'))).toHaveLength(0);
+      expect(run[1]!.synced.filter((e) => e.includes('lib/mexf.m'))).toHaveLength(520);
+    }
+  }, 240_000);
 });
 
 describe('MATLAB recovery from an interrupted index', () => {

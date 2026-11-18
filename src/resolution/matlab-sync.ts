@@ -4,7 +4,12 @@
  *
  *   - A script runs by its file's name, and its calls end at its file node,
  *     which a re-index keeps: a file that becomes a script, or stops being
- *     one, changes no name it defines (reopenMatlabScriptRuns).
+ *     one, changes no name it defines (reopenMatlabScriptRuns). So does a
+ *     stub, the help text of a MEX function, which a call of its name
+ *     nothing else answers reaches (../graph/matlab-scripts). And a name
+ *     the delta does hold moves the calls of its script's or stub's file
+ *     node, and of its case variants, which are no edges of the name
+ *     (reopenMatlabNamesakes).
  *   - A method call reaches an inherited method through the superclass lists
  *     of the classes between: a class whose list changes (`Mid < pkg.Base`
  *     → `Mid < handle`) changes no name either (MatlabSuperclassChange).
@@ -14,8 +19,14 @@ import type { Node, NodeKind, UnresolvedReference } from '../types';
 import type { QueryBuilder } from '../db/queries';
 import type { ResolutionContext } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
-import { isMatlabPathScript, matlabAncestorClasses, matlabSuperclassNames } from './matlab-lookup';
-import { matlabFileStem } from '../extraction/languages/matlab-path';
+import { isMatlabPathScript, isMatlabPathStub, matlabAncestorClasses, matlabSuperclassNames } from './matlab-lookup';
+import { matlabFileNames, matlabFileStem } from '../extraction/languages/matlab-path';
+import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+
+/** What a script runs before, or a stub comes after: a function file's function, or a class on the path. */
+const NAMESAKE_KINDS: ReadonlySet<string> = new Set(['function', 'class', 'enum']);
+
+const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /**
  * The files among a sync's `changedFilePaths` whose script verdict
@@ -35,19 +46,24 @@ export function matlabScriptCandidates(queries: QueryBuilder, changedFilePaths: 
 
 /**
  * Put back in the pending set the MATLAB calls a sync's `.m` files may now
- * answer differently because one became a script MATLAB runs by its name, or
- * stopped being one (a function went in, its code went out leaving only help
- * text, it turned to Octave), for the sync's resolution sweep. The calls into
- * a file that is no script now go back as the references they were; the
- * calls parked as failed under the name of one that is a script
- * (`setup_paths` for `setup_paths.m`) are retried. Calls in `changedFilePaths`
- * are left alone: the sync resolved them already. `matlabFilePaths` are the
- * ones matlabScriptCandidates picks out of them. Returns the number of
- * references put back, and the rows of the ones that were calls into a file
- * that is no script now: the sync judges those as a fresh index judges its
- * rows (see MatlabFreshReferences), since such a file can be one whose text
- * turned to Octave or binary, which carries no name (a fresh index keeps no
- * row of a call of it).
+ * answer differently because one became a script MATLAB runs by its name or
+ * a stub (the help text of a MEX function), or stopped being one (a function
+ * went in, its code went out leaving only help text, it turned to Octave),
+ * for the sync's resolution sweep. The calls into a changed file's node go
+ * back as the references they were, whatever it is now: a script that became
+ * a stub answers calls with arguments too, and the statements it answered may
+ * be a farther function's now (a stub comes last), and the reverse. The calls
+ * linked to another copy of the file's name, and those parked as failed under
+ * the name of one that is a script or a stub (`setup_paths` for
+ * `setup_paths.m`), go back too: it may answer them now; for a script, so do
+ * the statements linked to a farther function or class of its name. Calls in
+ * `changedFilePaths` are left alone: the sync resolved them already.
+ * `matlabFilePaths` are the ones matlabScriptCandidates picks out of them.
+ * Returns the number of references put back, and the rows of the ones that
+ * were calls into a changed file: the sync judges those as a fresh index
+ * judges its rows (see MatlabFreshReferences), since such a file can be one
+ * whose text turned to Octave or binary, which carries no name (a fresh index
+ * keeps no row of a call of it).
  */
 export function reopenMatlabScriptRuns(
   queries: QueryBuilder,
@@ -58,32 +74,15 @@ export function reopenMatlabScriptRuns(
   const fresh = new Set(changedFilePaths);
   const edgeIds: number[] = [];
   const refs: UnresolvedReference[] = [];
-  const copyEdgeIds: number[] = [];
+  const copyEdges = new Set<number>();
   const copyRefs: UnresolvedReference[] = [];
   const stems = new Set<string>();
+  // A copy that is one of these files has its own edges put back below, once.
+  const changed = new Set(matlabFilePaths);
   for (const filePath of matlabFilePaths) {
     const stem = matlabFileStem(filePath);
     if (!stem) continue;
-    if (isMatlabPathScript(filePath, context)) {
-      stems.add(stem);
-      // A script that was help text or Octave a sync ago left its calls
-      // linked to a farther copy of its file, which kept its file node and
-      // so its name: no definition changed, and a nearer script answers them
-      // now. They go back as the references they were, as an added file's do.
-      const fileName = filePath.slice(filePath.lastIndexOf('/') + 1);
-      for (const copy of queries.getNodesByName(fileName)) {
-        if (copy.kind !== 'file' || copy.filePath === filePath || copy.language !== 'matlab') continue;
-        for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(copy.id, copy.filePath, 'matlab')) {
-          if (fresh.has(edge.sourceFilePath)) continue;
-          const ref = resurrectRefFromDroppedEdge(edge);
-          if (!ref) continue;
-          copyEdgeIds.push(edge.edgeId);
-          copyRefs.push(ref);
-        }
-      }
-      continue;
-    }
-    // Only the edges into the file node: a script's calls end there.
+    // Only the edges into the file node: a script's or a stub's calls end there.
     for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(`file:${filePath}`, filePath, 'matlab')) {
       if (fresh.has(edge.sourceFilePath)) continue;
       const ref = resurrectRefFromDroppedEdge(edge);
@@ -91,12 +90,129 @@ export function reopenMatlabScriptRuns(
       edgeIds.push(edge.edgeId);
       refs.push(ref);
     }
+    const script = isMatlabPathScript(filePath, context);
+    if (script || isMatlabPathStub(filePath, context)) {
+      stems.add(stem);
+      // A script runs a statement before a farther function or class of its
+      // name, which answered it while this file was help text, Octave or
+      // nothing: the delta's rebind for the name, which no definition here
+      // changed (a stub comes after them all, and takes nothing from them).
+      // Only a statement can move (a script takes no argument), and every one
+      // is read through the namesakes themselves, so no name is too common
+      // for it (`getam`, thousands of calls of its functions).
+      if (script) {
+        for (const namesake of queries.getNodesByName(stem)) {
+          if (namesake.language !== 'matlab' || !NAMESAKE_KINDS.has(namesake.kind)) continue;
+          for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(namesake.id, namesake.filePath, 'matlab')) {
+            if (fresh.has(edge.sourceFilePath) || copyEdges.has(edge.edgeId)) continue;
+            const ref = resurrectRefFromDroppedEdge(edge);
+            if (!ref || matlabRefFacts(ref).form !== 'statement') continue;
+            copyEdges.add(edge.edgeId);
+            copyRefs.push(ref);
+          }
+        }
+      }
+      // A script or a stub that was a function, help text or Octave a sync
+      // ago left its calls linked to a farther copy of its file, which kept
+      // its file node and so its name: no definition changed, and a nearer
+      // one answers them now. They go back as the references they were, as
+      // an added file's do.
+      const fileName = filePath.slice(filePath.lastIndexOf('/') + 1);
+      for (const copy of queries.getNodesByName(fileName)) {
+        if (copy.kind !== 'file' || changed.has(copy.filePath) || copy.language !== 'matlab') continue;
+        for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(copy.id, copy.filePath, 'matlab')) {
+          if (fresh.has(edge.sourceFilePath) || copyEdges.has(edge.edgeId)) continue;
+          const ref = resurrectRefFromDroppedEdge(edge);
+          if (!ref) continue;
+          copyEdges.add(edge.edgeId);
+          copyRefs.push(ref);
+        }
+      }
+    }
   }
   const fromEdges = edgeIds.length > 0 ? queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs) : [];
-  if (copyEdgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(copyEdgeIds, copyRefs);
+  if (copyEdges.size > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds([...copyEdges], copyRefs);
   const rowIds = stems.size === 0 ? [] : queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
     ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
   return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds), fromEdges };
+}
+
+/**
+ * Put back in the pending set the MATLAB calls a sync's definition delta
+ * moves that its rebind (the edges into a node of a delta name) cannot see,
+ * for the sync's resolution sweep, in files the sync left alone:
+ *
+ *   - the calls linked to a file node `n.m` (or `n.M`) of a name `n` a
+ *     function, class or method of came or went: a script or a stub
+ *     answered them, which a new definition of the name may take (a stub
+ *     comes last; a statement runs the nearer of a script and a function),
+ *     though the file node kept its name (an Octave `n.m` turned into a
+ *     function, `n` added as a method of a class an object of is passed);
+ *   - the calls linked to a node whose name equals a delta name only when
+ *     case is ignored (`foo`, `foo.m` for a `Foo.m` or `FOO.m` added or
+ *     removed): a nearer case variant vetoes them (nearerInexactMatch in
+ *     ./matlab-lookup), and they are no edge of the delta's names; and the
+ *     failed calls of those names, which a case variant that went no longer
+ *     vetoes. Nodes of the delta's exact names are the rebind's.
+ *
+ * Read through the file nodes and the nodes of each name, not by target name,
+ * so no name is too common to be reopened (a script with six copies). The
+ * calls into a changed file's node are reopenMatlabScriptRuns's. Returns the
+ * number of references put back.
+ */
+export function reopenMatlabNamesakes(
+  queries: QueryBuilder,
+  definitionDelta: readonly string[],
+  changedFilePaths: readonly string[],
+): number {
+  if (definitionDelta.length === 0 || !queries.hasFilesOfLanguage('matlab')) return 0;
+  const fresh = new Set(changedFilePaths);
+  const delta = new Set(definitionDelta);
+  // `n` for a name `n` and for a file name `n.m`, the case of each kept.
+  const stems = new Set<string>();
+  for (const name of delta) {
+    const stem = IDENTIFIER.test(name) ? name : matlabFileStem(name);
+    if (stem !== null) stems.add(stem);
+  }
+  if (stems.size === 0) return 0;
+  // A definition's own file nodes: the exact `n.m` / `n.M` of each delta name.
+  const exactFiles = new Set<string>();
+  for (const name of delta) if (IDENTIFIER.test(name)) for (const f of matlabFileNames(name)) exactFiles.add(f);
+  const edgeIds: number[] = [];
+  const refs: UnresolvedReference[] = [];
+  const seenEdges = new Set<number>();
+  const seenNodes = new Set<string>();
+  // The names of the case variants found, whose failed calls a variant that
+  // went no longer vetoes: the delta's own are retried by the sync already.
+  const variants = new Set<string>();
+  const keys = new Set([...stems].flatMap((stem) => [stem.toLowerCase(), `${stem.toLowerCase()}.m`]));
+  for (const key of keys) {
+    for (const node of queries.getNodesByLowerName(key)) {
+      if (node.language !== 'matlab' || seenNodes.has(node.id)) continue;
+      seenNodes.add(node.id);
+      const called = node.kind === 'file' ? matlabFileStem(node.name) : node.name;
+      if (called !== null && !delta.has(called)) variants.add(called);
+      if (node.kind === 'file' && fresh.has(node.filePath)) continue;
+      // The rebind's, unless a definition's own file (it may hold more calls than the rebind takes of one name).
+      // Nor a symbol named like a file the delta holds alone (`foo` for `foo.m` gone or come): a stub comes after
+      // it, an empty, Octave or encrypted file blocks nothing, and a new script's statements are reopened with the
+      // script runs.
+      if ((delta.has(node.name) || (node.kind !== 'file' && stems.has(node.name))) && !exactFiles.has(node.name)) continue;
+      for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(node.id, node.filePath, 'matlab')) {
+        if (fresh.has(edge.sourceFilePath) || seenEdges.has(edge.edgeId)) continue;
+        seenEdges.add(edge.edgeId);
+        const ref = resurrectRefFromDroppedEdge(edge);
+        if (!ref) continue;
+        edgeIds.push(edge.edgeId);
+        refs.push(ref);
+      }
+    }
+  }
+  if (edgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs);
+  // No per-name ceiling: the veto of every row of these names just changed, however many there are.
+  const rowIds = variants.size === 0 ? [] : queries.getRetryableFailedReferences([...variants], Number.MAX_SAFE_INTEGER).flatMap((ref) =>
+    ref.language === 'matlab' && variants.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
+  return refs.length + queries.reopenFailedReferences(rowIds);
 }
 
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];

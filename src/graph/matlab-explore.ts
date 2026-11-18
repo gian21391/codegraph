@@ -4,7 +4,9 @@
  *
  *   - A script has no symbol but its file (`setup_paths.m`): the file is what
  *     a name of one asks for, the file's code its body, and a script on a
- *     flow is a hop the gather (symbols, not files) never reaches.
+ *     flow is a hop the gather (symbols, not files) never reaches. So is a
+ *     stub's (`lcaGet.m`, the help text of a MEX function): its help is all
+ *     the project holds of the function.
  *   - A class folder keeps each method in a file of its own (`@SerialLink/
  *     fdyn.m`), and a script is a file of its own, where no other query token
  *     is named beside it: the graph corroborates a bare word instead — the
@@ -19,11 +21,15 @@
 import type CodeGraph from '../index';
 import type { Node } from '../types';
 import { MATLAB_CLASS_FOLDER_CONTAINS, isMatlabClassFolderFile } from '../resolution/matlab-class-folders';
-import { indexedMatlabScriptLookup, isMatlabScriptFile, type MatlabScriptLookup } from './matlab-scripts';
+import { indexedMatlabScriptLookup, isMatlabScriptFile, isMatlabStubFile, type MatlabScriptLookup } from './matlab-scripts';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 
 export interface MatlabExplore {
-  /** The file nodes of the scripts named `name` (`setup_paths.m` for `setup_paths`), by the resolver's own rule. */
+  /**
+   * The file nodes of the scripts and stubs named `name` (`setup_paths.m` for
+   * `setup_paths`), by the resolver's own rules: the copy the most MATLAB
+   * calls link to first, then by path.
+   */
   scriptsNamed(name: string): Node[];
   /**
    * The ids of `nodes` (defs of the bare word `token` no co-named file
@@ -63,10 +69,26 @@ export function matlabExploreFor(index: CodeGraph, projectRoot: string): MatlabE
   };
 }
 
+/**
+ * The copies first that the most MATLAB calls link to, then by path: the copy
+ * the project's code reaches (13 copies of `lcaGet.m` across labCA's versions
+ * and platform folders), with no path model at query time. Explore shows the
+ * first of many.
+ */
 function scriptsNamed(index: CodeGraph, name: string, lookup: MatlabScriptLookup): Node[] {
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return [];
   try {
-    return matlabFileNames(name).flatMap((fileName) => index.getNodesByName(fileName).filter((n) => isMatlabScriptFile(n, lookup)));
+    const files = matlabFileNames(name).flatMap((fileName) =>
+      index.getNodesByName(fileName).filter((n) => isMatlabScriptFile(n, lookup) || isMatlabStubFile(n, lookup)));
+    if (files.length < 2) return files;
+    const calls = new Map<string, number>();
+    const edges = index.getIncomingEdgesTo(files.map((n) => n.id), ['calls']);
+    const callers = index.getNodesByIds([...new Set(edges.map((e) => e.source))]);
+    for (const e of edges) {
+      if (callers.get(e.source)?.language === 'matlab') calls.set(e.target, (calls.get(e.target) ?? 0) + 1);
+    }
+    const byPath = (a: Node, b: Node): number => (a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : 0);
+    return files.sort((a, b) => (calls.get(b.id) ?? 0) - (calls.get(a.id) ?? 0) || byPath(a, b));
   } catch {
     return [];
   }

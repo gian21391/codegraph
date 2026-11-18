@@ -113,7 +113,7 @@ describe('MATLAB scripts in codegraph_explore', () => {
 });
 
 describe('MATLAB scripts in codegraph_explore are the resolver\'s scripts', () => {
-  it('shows a script named alone, and no Octave file, help text or package file of the name', async () => {
+  it('shows a script or a stub (help text only) named alone, and no Octave file or package file of the name', async () => {
     const root = tempDir('cg-matlab-explore-scripts-');
     writeTree(root, {
       'real_script.m': 'z = 3;\n',
@@ -130,7 +130,62 @@ describe('MATLAB scripts in codegraph_explore are the resolver\'s scripts', () =
         return [...text.matchAll(/^\*\*`([^`]+)`\*\* — \S+\(file\)$/gm)].map((m) => m[1]!);
       };
       expect(await shown('real_script')).toEqual(['real_script.m']);
-      for (const name of ['oct_script', 'mex_help', 'pkg_script']) expect(await shown(name)).toEqual([]);
+      // The help text of a MEX function is all the project holds of it.
+      expect(await shown('mex_help')).toEqual(['mex_help.m']);
+      for (const name of ['oct_script', 'pkg_script']) expect(await shown(name)).toEqual([]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('shows, of many copies of a stub, the one the most calls link to, not the first indexed', async () => {
+    // A name of camel case is a precise one: no caller corroborates the copy, the order alone picks it.
+    const root = tempDir('cg-matlab-explore-stub-copies-');
+    const HELP = '% MEXGET  help text of a MEX function\n';
+    writeTree(root, {
+      'a/mexGet.m': HELP,
+      'b/mexGet.m': HELP,
+      'c/mexGet.m': HELP,
+      'z/mexGet.m': HELP,
+      'z/user_fn.m': 'function user_fn(pv)\nv = mexGet(pv);\nw = mexGet(v);\nend\n',
+      'c/other_fn.m': 'function other_fn(pv)\nv = mexGet(pv);\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(allEdges(cg).filter((e) => e.includes('mexGet.m')).sort()).toEqual([
+        'c/other_fn.m other_fn -calls-> c/mexGet.m @ c/mexGet.m',
+        'z/user_fn.m user_fn -calls-> z/mexGet.m @ z/mexGet.m',
+        'z/user_fn.m user_fn -calls-> z/mexGet.m @ z/mexGet.m',
+      ]);
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'user_fn mexGet' })).content[0]!.text;
+      expect([...text.matchAll(/^\*\*`([^`]+)`\*\* — \S+\(file\)$/gm)].map((m) => m[1]!)).toEqual(['z/mexGet.m']);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('shows the head of a stub too long to show whole, which has no symbol inside to show instead', async () => {
+    const root = tempDir('cg-matlab-explore-long-stub-');
+    const lines = ['% MEXGET  read a process variable (help text of a MEX function)'];
+    for (let i = 0; i < 400; i++) lines.push(`%   option ${i}: a line of the long help text that documents the calling sequence`);
+    writeTree(root, {
+      'lib/mexGet.m': lines.join('\n') + '\n',
+      'app/user_fn.m': 'function user_fn(pv)\nv = mexGet(pv);\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      // Larger than explore's whole ceiling: shown by clusters, where the file node was all it had.
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'user_fn mexGet' })).content[0]!.text;
+      expect(text).toMatch(/^\*\*`lib\/mexGet\.m`\*\*/m);
+      expect(text).toContain('% MEXGET  read a process variable');
+      // And the lines it leaves out come back from the query its own marker names.
+      const followUp = /codegraph_explore `(lib\/mexGet\.m:\d+-\d+)` returns them/.exec(text)?.[1];
+      expect(followUp).toBeDefined();
+      const rest = (await new ToolHandler(cg).execute('codegraph_explore', { query: followUp! })).content[0]!.text;
+      const firstElided = Number(/:(\d+)-/.exec(followUp!)![1]);
+      expect(rest).toContain(`${firstElided}\t%   option ${firstElided - 2}: a line of the long help text`);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });

@@ -1736,9 +1736,13 @@ export class CodeGraph {
           const reopenedFailed = this.queries.reopenFailedReferences(
             this.queries.getRetryableFailedReferences(definitionDelta).flatMap((ref) => (ref.rowId === undefined ? [] : [ref.rowId]))
           );
+          // MATLAB: the calls of a delta name that end at no node of it (a
+          // script's or a stub's file node `n.m`), and those a case variant
+          // of it vetoes (see reopenMatlabNamesakes).
+          const matlabNamesakes = this.resolver.reopenMatlabNamesakes(definitionDelta, result.changedFilePaths ?? []);
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
             console.error(
-              `[phase-timing] sync-rebind: ${Date.now() - tRebind}ms (${definitionDelta.length} changed names, ${rebound} edges and ${reopenedFailed} failed refs re-opened)`
+              `[phase-timing] sync-rebind: ${Date.now() - tRebind}ms (${definitionDelta.length} changed names, ${rebound} edges, ${matlabNamesakes} MATLAB namesake refs and ${reopenedFailed} failed refs re-opened)`
             );
           }
         }

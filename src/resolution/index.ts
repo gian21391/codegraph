@@ -69,7 +69,7 @@ import { LRUCache } from './lru-cache';
 import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
 import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
-import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabScriptRuns } from './matlab-sync';
+import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabNamesakes, reopenMatlabScriptRuns } from './matlab-sync';
 import { MatlabScriptMemo, settleMatlabScriptWorkspaces, type MatlabScriptWorkspaceStats } from './matlab-script-workspace';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { MATLAB_PATH_METADATA_KEY, MATLAB_PATH_PENDING_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from '../graph/matlab-search-path';
@@ -3641,6 +3641,11 @@ export class ReferenceResolver {
    * text and no edit can make it wrong (see MatlabScriptMemo, which bounds it).
    */
   private readonly matlabScripts = new MatlabScriptMemo();
+
+  /** See ./matlab-sync's reopenMatlabNamesakes. */
+  reopenMatlabNamesakes(definitionDelta: readonly string[], changedFilePaths: readonly string[]): number {
+    return reopenMatlabNamesakes(this.queries, definitionDelta, changedFilePaths);
+  }
 
   /** See ./matlab-sync's reopenMatlabScriptRuns. */
   reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): { count: number; fromEdges: number[] } {

@@ -4660,6 +4660,13 @@ export class ToolHandler {
       const spans = anchorSpans.get(anchor.file) ?? [];
       spans.push(span);
       anchorSpans.set(anchor.file, spans);
+      // A file of no symbol (a MATLAB script or stub, whose elided lines a
+      // previous answer named by exactly this span) still renders the span:
+      // its file node carries the file into the render, where the span is.
+      if (!fileNodes.some((n) => n.kind !== 'file' && n.kind !== 'import' && n.kind !== 'export')) {
+        const file = fileNodes.find((n) => n.kind === 'file');
+        if (file && !subgraph.nodes.has(file.id)) subgraph.nodes.set(file.id, file);
+      }
     }
 
     if (subgraph.nodes.size === 0) {
@@ -4974,7 +4981,8 @@ export class ToolHandler {
             .slice(0, 3);
         }
         // A MATLAB script has no symbol but its file (`setup_paths.m`): the
-        // file is what a name of one asks for, and its code is the body.
+        // file is what a name of one asks for, and its code is the body. So
+        // has a stub, the help text of a MEX function (`lcaGet.m`).
         if (cands.length === 0 && !isQual && matlab) cands = matlab.scriptsNamed(t).filter((n) => !isTestPath(n.filePath));
         if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
@@ -7054,6 +7062,17 @@ export class ToolHandler {
         if (span.start > fileLines.length) continue;
         const end = Math.min(span.end, fileLines.length);
         ranges.push({ start: span.start, end, name: `lines ${span.start}-${end}`, kind: 'range', importance: EXACT_IMPORTANCE, spine: false });
+      }
+
+      // A file the query named, with nothing inside it to show (a MATLAB
+      // stub: the help text of a MEX function, no symbol and no call), shows
+      // from its head rather than not at all: the envelope filter dropped the
+      // file node, which was all it had.
+      if (ranges.length === 0) {
+        for (const n of rangeNodes.values()) {
+          if (n.kind !== 'file' || !namedSeedIds.has(n.id)) continue;
+          ranges.push({ start: n.startLine, end: n.endLine, name: n.name, kind: n.kind, importance: 10, spine: false, qualifiedName: n.qualifiedName, named: true, definition: true });
+        }
       }
 
       ranges.sort((a, b) => a.start - b.start);

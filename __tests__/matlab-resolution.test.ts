@@ -874,11 +874,12 @@ describe('MATLAB function precedence', () => {
 });
 
 describe('MATLAB scripts run by name', () => {
-  it('links a statement naming a script, and `run` naming one, to the script\'s file — and nothing else', async () => {
+  it('links a statement naming a script, and `run` naming one, to the script\'s file — and nothing else but a stub', async () => {
     const { edges } = await indexOfProject({
       'setup_paths.m': '% adds the project\'s folders\naddpath(pwd);\n',
       'lib/config.m': 'cfg = 1;\n',
-      // The help text of a MEX function of that name: MATLAB runs the MEX file.
+      // The help text of a MEX function of that name: MATLAB runs the MEX
+      // file, and the call links to the help (a stub, see 'MATLAB stubs').
       'doc_only.m': '% DOC_ONLY  help for a MEX function\n%   y = doc_only(x)\n',
       // Outside the path's plain folders.
       '+pkg/pkgscript.m': 'q = 1;\n',
@@ -910,6 +911,7 @@ describe('MATLAB scripts run by name', () => {
       'runner.m': 'setup_paths\n',
     });
     expect(edges).toEqual([
+      'main.m main -calls-> doc_only.m @ doc_only.m',
       'main.m main -calls-> lib/config.m @ lib/config.m',
       'main.m main -calls-> lib/config.m @ lib/config.m',
       'main.m main -calls-> lib/config.m @ lib/config.m',
@@ -931,6 +933,112 @@ describe('MATLAB scripts run by name', () => {
       'a/useA.m useA -calls-> tool @ a/tool.m',
       'b/useB.m useB -calls-> b/tool.m @ b/tool.m',
       'b/useB.m useB -calls-> tool @ a/tool.m',
+    ]);
+  });
+});
+
+describe('MATLAB stubs: the help text of a MEX function', () => {
+  // `lcaGet.m` beside the `lcaGet.mexa64` the index never reads: comments
+  // only. A call of its name links to its file, the help being what the call
+  // reaches, when nothing else answers it.
+  const HELP = (name: string): string => `% ${name.toUpperCase()}  help for a MEX function\n%   v = ${name}(pv)\n`;
+
+  it('links a call with arguments, an assigned call, a statement, command syntax and a handle of its name to its file', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      'mex/lcaGet.m': HELP('lcaGet'),
+      'mex/lcaPut.m': HELP('lcaPut'),
+      // A block comment, a blank line and a line comment: no statement either.
+      'mex/lcaClear.m': '%{\nLCACLEAR  help\n%}\n\n% more help\n',
+      'main.m': [
+        'function main(pv)',
+        'lcaGet(pv);',
+        'v = lcaGet(pv, 0, "double");',
+        'lcaClear',
+        'lcaPut myPV 1',
+        'h = @lcaGet;',
+        'end',
+        '',
+      ].join('\n'),
+    });
+    expect(edges).toEqual([
+      'main.m main -calls-> mex/lcaClear.m @ mex/lcaClear.m',
+      'main.m main -calls-> mex/lcaGet.m @ mex/lcaGet.m',
+      'main.m main -calls-> mex/lcaGet.m @ mex/lcaGet.m',
+      'main.m main -calls-> mex/lcaPut.m @ mex/lcaPut.m',
+      'main.m main -references-> mex/lcaGet.m @ mex/lcaGet.m',
+    ]);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('comes last: a function file of the name, nearer or farther, a script for a statement, and a local function win', async () => {
+    const { edges } = await indexOfProject({
+      // A stub beside the caller, the function farther.
+      'x/tool.m': HELP('tool'),
+      'y/tool.m': 'function tool(n)\nend\n',
+      'x/useX.m': 'function useX()\ntool(1);\ntool\nend\n',
+      // A function beside the caller, the stub farther.
+      'y/useY.m': 'function useY()\ntool(1);\nend\n',
+      // A script farther than the stub: it runs a statement; a call with
+      // arguments goes to the stub, the nearer of the two files of the name.
+      'x/run1.m': HELP('run1'),
+      'y/run1.m': 'disp(1);\n',
+      'x/useRun.m': 'function useRun()\nrun1\nrun1(2);\nend\n',
+      // The script nearer: a call with arguments reaches no stub behind it.
+      'y/useRun2.m': 'function useRun2()\nrun1(2);\nend\n',
+      // A local function of the caller's file.
+      'x/localer.m': 'function localer()\ntool2(1);\nend\nfunction tool2(n)\nend\n',
+      'x/tool2.m': HELP('tool2'),
+    });
+    expect(edges).toEqual([
+      'x/localer.m localer -calls-> tool2 @ x/localer.m',
+      'x/useRun.m useRun -calls-> x/run1.m @ x/run1.m',
+      'x/useRun.m useRun -calls-> y/run1.m @ y/run1.m',
+      'x/useX.m useX -calls-> tool @ y/tool.m',
+      'x/useX.m useX -calls-> tool @ y/tool.m',
+      'y/useY.m useY -calls-> tool @ y/tool.m',
+    ]);
+  });
+
+  it('answers nothing under a built-in\'s name, as Octave or binary text, in a package or a class folder, or in a private folder out of reach', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      'help/input.m': HELP('input'),
+      'oct/octstub.m': '## OCTSTUB  help in Octave\n## more help\n',
+      'bin/binstub.m': 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 encrypted\n',
+      '+pkg/pkgstub.m': HELP('pkgstub'),
+      '@Cls/clsstub.m': HELP('clsstub'),
+      'lib/private/privstub.m': HELP('privstub'),
+      'lib/inreach.m': 'function inreach(x)\nprivstub(x);\nend\n',
+      'main.m': [
+        'function main(x)',
+        "y = input('go');",
+        'octstub(x);',
+        'binstub(x);',
+        'pkgstub(x);',
+        'clsstub(x);',
+        'privstub(x);',
+        'end',
+        '',
+      ].join('\n'),
+    });
+    expect(edges).toEqual(['lib/inreach.m inreach -calls-> lib/private/privstub.m @ lib/private/privstub.m']);
+    // The built-in's call keeps its row while the stub carries the name; the
+    // calls of the names a package's, a class folder's or an out-of-reach
+    // private file carries stay calls that link nowhere.
+    expect(unresolved).toEqual(expect.arrayContaining(['main.m:2 calls:input', 'main.m:5 calls:pkgstub', 'main.m:6 calls:clsstub', 'main.m:7 calls:privstub']));
+  });
+
+  it('takes the nearest of two copies, then genpath order, and a nearer case variant vetoes it', async () => {
+    const { edges } = await indexOfProject({
+      'a/mx.m': HELP('mx'),
+      'b/mx.m': HELP('mx'),
+      'b/useB.m': 'function useB()\nmx(1);\nend\n',
+      'c/useC.m': 'function useC()\nmx(1);\nfx(1);\nend\n',
+      'd/fx.m': HELP('fx'),
+      'c/FX.m': 'function FX(n)\nend\n',
+    });
+    expect(edges).toEqual([
+      'b/useB.m useB -calls-> b/mx.m @ b/mx.m',
+      'c/useC.m useC -calls-> a/mx.m @ a/mx.m',
     ]);
   });
 });
