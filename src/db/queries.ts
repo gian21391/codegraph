@@ -554,6 +554,7 @@ export class QueryBuilder {
     deleteEdgesByTarget?: SqliteStatement;
     getEdgesBySource?: SqliteStatement;
     getEdgesByTarget?: SqliteStatement;
+    getDependentEdgesByTarget?: SqliteStatement;
     getUnresolvedFromNode?: SqliteStatement;
     getUnresolvedInFile?: SqliteStatement;
     insertFile?: SqliteStatement;
@@ -2906,6 +2907,24 @@ export class QueryBuilder {
   }
 
   /**
+   * Incoming edges to a node except `contains`: the edges that make their
+   * source depend on the target, in {@link getIncomingEdges} order.
+   *
+   * Impact traversal runs this once per visited node, so it stays one index
+   * search with no LIMIT. A kind list searches the index once per kind, and a
+   * LIMIT under this ORDER BY made each read markedly slower (#3248).
+   */
+  getIncomingEdgesExceptContains(targetId: string): Edge[] {
+    if (!this.stmts.getDependentEdgesByTarget) {
+      this.stmts.getDependentEdgesByTarget = this.db.prepare(
+        "SELECT * FROM edges WHERE target = ? AND kind != 'contains' ORDER BY kind, source, line, col"
+      );
+    }
+    const rows = this.stmts.getDependentEdgesByTarget.all(targetId) as EdgeRow[];
+    return rows.map(rowToEdge);
+  }
+
+  /**
    * Get incoming edges to a node. Kind must precede opaque source IDs:
    * file IDs sort before function IDs, so source-first ordering lets imports
    * displace actual calls in capped caller lists. Keep deterministic ties
@@ -4708,6 +4727,47 @@ export class QueryBuilder {
       language: row.language as Language,
       rowId: row.id,
     }));
+  }
+
+  /** The `#include`s of C and C++ files the graph holds: the file writing each, and the indexed file it names. */
+  getCppIncludeEdges(): Array<{ source: string; target: string }> {
+    return this.db.prepare(
+      `SELECT s.file_path AS source, t.file_path AS target FROM edges e
+       JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+       WHERE e.kind = 'imports' AND s.kind = 'file' AND t.kind = 'file' AND s.language IN ('c', 'cpp')`
+    ).all() as Array<{ source: string; target: string }>;
+  }
+
+  /**
+   * The failed C++ calls and function values with a qualifier outside `std`
+   * (`Txn::Put`, `T::T/2`), calls on a variable (`shard.Clear`), and what
+   * values are constructed as, which may go through a template parameter
+   * (cpp-template-instantiations.ts), of the files named, one at a time: there
+   * can be a great many, few of which do. (`+status` walks the table: what is
+   * left unresolved is nearly all of it, and the index on status only adds pages.)
+   */
+  *iterateFailedCppTypeReferences(files: readonly string[]): IterableIterator<UnresolvedReference> {
+    const rows = this.db.prepare(
+      `SELECT from_node_id, reference_name, reference_kind, line, col, file_path FROM unresolved_refs
+       WHERE +status = 'failed' AND language = 'cpp' AND file_path IN (SELECT value FROM json_each(?))
+         AND (reference_kind = 'instantiates'
+         OR (reference_kind IN ('calls', 'function_ref') AND reference_name GLOB '*::*' AND reference_name NOT GLOB 'std::*')
+         OR (reference_kind = 'calls' AND reference_name GLOB '*.*' AND reference_name NOT GLOB '*(*'))`
+    ).iterate(JSON.stringify(files)) as IterableIterator<Pick<UnresolvedRefRow, 'from_node_id' | 'reference_name' | 'reference_kind' | 'line' | 'col' | 'file_path'>>;
+    for (const row of rows) {
+      yield {
+        fromNodeId: row.from_node_id,
+        referenceName: row.reference_name,
+        referenceKind: row.reference_kind as EdgeKind,
+        line: row.line,
+        column: row.col,
+        filePath: row.file_path,
+        language: 'cpp',
+      };
+    }
+    // The walk reads the whole table, which would stay in this connection's page
+    // cache through the end of synthesis, where an index peaks in memory.
+    this.db.exec('PRAGMA shrink_memory');
   }
 
   /**
