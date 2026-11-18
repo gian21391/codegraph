@@ -43,6 +43,19 @@ describe('MATLAB sync converges on a fresh index', () => {
     expect(synced).toEqual(fresh);
   });
 
+  it('when a script with a farther copy becomes help text only, or Octave, and back: the call returns to the nearer copy', async () => {
+    const FARTHER_CALL = 'main.m main -calls-> sub/setup_paths.m @ sub/setup_paths.m';
+    const { steps, synced, fresh } = await syncedAndFresh(
+      { 'main.m': MAIN, 'setup_paths.m': 'addpath(pwd);\n', 'sub/setup_paths.m': 'x = 1;\n' },
+      { 'setup_paths.m': '% SETUP_PATHS  help for a MEX function\n' },
+      { 'setup_paths.m': 'addpath(pwd);\n' },
+      { 'setup_paths.m': '# Octave\naddpath(pwd);\n' },
+      { 'setup_paths.m': 'addpath(pwd);\n' },
+    );
+    expect(steps).toEqual([[SCRIPT_CALL], [FARTHER_CALL], [SCRIPT_CALL], [FARTHER_CALL], [SCRIPT_CALL]]);
+    expect(synced).toEqual(fresh);
+  });
+
   it('when the target of a call is deleted and added back: a function, a script, a class\'s method', async () => {
     const helper = 'function helper()\nend\n';
     const tool = 'disp(1);\n';

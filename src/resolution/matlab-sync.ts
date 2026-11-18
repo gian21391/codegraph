@@ -58,12 +58,29 @@ export function reopenMatlabScriptRuns(
   const fresh = new Set(changedFilePaths);
   const edgeIds: number[] = [];
   const refs: UnresolvedReference[] = [];
+  const copyEdgeIds: number[] = [];
+  const copyRefs: UnresolvedReference[] = [];
   const stems = new Set<string>();
   for (const filePath of matlabFilePaths) {
     const stem = matlabFileStem(filePath);
     if (!stem) continue;
     if (isMatlabPathScript(filePath, context)) {
       stems.add(stem);
+      // A script that was help text or Octave a sync ago left its calls
+      // linked to a farther copy of its file, which kept its file node and
+      // so its name: no definition changed, and a nearer script answers them
+      // now. They go back as the references they were, as an added file's do.
+      const fileName = filePath.slice(filePath.lastIndexOf('/') + 1);
+      for (const copy of queries.getNodesByName(fileName)) {
+        if (copy.kind !== 'file' || copy.filePath === filePath || copy.language !== 'matlab') continue;
+        for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(copy.id, copy.filePath, 'matlab')) {
+          if (fresh.has(edge.sourceFilePath)) continue;
+          const ref = resurrectRefFromDroppedEdge(edge);
+          if (!ref) continue;
+          copyEdgeIds.push(edge.edgeId);
+          copyRefs.push(ref);
+        }
+      }
       continue;
     }
     // Only the edges into the file node: a script's calls end there.
@@ -76,9 +93,10 @@ export function reopenMatlabScriptRuns(
     }
   }
   const fromEdges = edgeIds.length > 0 ? queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs) : [];
+  if (copyEdgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(copyEdgeIds, copyRefs);
   const rowIds = stems.size === 0 ? [] : queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
     ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
-  return { count: refs.length + queries.reopenFailedReferences(rowIds), fromEdges };
+  return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds), fromEdges };
 }
 
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];
