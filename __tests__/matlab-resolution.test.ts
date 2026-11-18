@@ -729,6 +729,17 @@ describe('MATLAB function precedence', () => {
     expect(unresolved).toEqual([]);
   });
 
+  it('keeps no row for a call of MATLAB\'s own functions that real code leaves unlinked, in MATLAB or a toolbox, and links a project copy of one', async () => {
+    const { edges, unresolved } = await indexOfProject({
+      'useMore.m': 'function useMore(x, d)\nn = nextpow2(numel(x));\nt = seconds(d);\ns = resize(x, 3);\nh = histogram(x);\nB = bwareaopen(x > 0, 4);\nT = table(x);\nmissing(x);\nend\n',
+      // A project's own copy of one, on the path, as a shipped toolbox carries.
+      'cot.m': 'function y = cot(x)\ny = 1 ./ tan(x);\nend\n',
+      'useCot.m': 'function useCot(x)\ny = cot(x);\nend\n',
+    });
+    expect(edges).toEqual(['useCot.m useCot -calls-> cot @ cot.m']);
+    expect(unresolved).toEqual(['useMore.m:8 calls:missing']);
+  });
+
   it('takes a classdef file\'s local function before the method of the same name, and a script\'s local function before the built-in', async () => {
     expect(await edgesOfProject({
       // MATLAB order: a local function comes before the method of the first argument's class.
