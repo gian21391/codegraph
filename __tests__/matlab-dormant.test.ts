@@ -1220,3 +1220,119 @@ describe('MATLAB script workspaces: what a pass keeps of the scripts it read', (
     expect(memo.get('s.m', 'h0')).toBeUndefined();
   });
 });
+
+describe('MATLAB dormant rows: the names a load that does not list them may make', () => {
+  const HELPER = 'function y = helper(x)\ny = x;\nend\n';
+  const LOADER = [
+    'function quadv(FileName)',
+    "eval(['load ', FileName]);",
+    'x = BPMnum(3);', // read of the loaded data: dormant
+    'plot(t0)', // a bare read: dormant, as before
+    "siglab('DataAbort')", // passes a text: a call leaving the index
+    'g(@h)', // passes a handle: a call leaving the index
+    'y = helper(2);', // a carrier: linked
+    'end',
+    '',
+  ].join('\n');
+
+  it('a read after the load is dormant; a call passing a text or a handle stays live; a carrier still links', async () => {
+    const r = await indexOfProject({ 'quadv.m': LOADER, 'helper.m': HELPER, 'gd_user.m': 'load gd\ng = gains(1);\ngains(2)\n' });
+    expect(r.dormant).toEqual(['gd_user.m:2 calls:gains', 'quadv.m:3 calls:BPMnum', 'quadv.m:4 calls:t0']);
+    // `gains(2)`, a statement of its own with arguments, reads as a call.
+    expect(r.unresolved).toEqual(['gd_user.m:3 calls:gains', 'quadv.m:5 calls:siglab', 'quadv.m:6 calls:g', 'quadv.m:6 function_ref:h']);
+    expect(r.edges).toContain('quadv.m quadv -calls-> helper @ helper.m');
+  });
+
+  it('a read before the load, or in another local function, stays live', async () => {
+    const code = ['function a(f)', 'x = Early(1);', 'load(f)', 'end', 'function b()', 'y = InB(1);', 'end', ''].join('\n');
+    const r = await indexOfProject({ 'a.m': code });
+    expect(r.unresolved).toEqual(['a.m:2 calls:Early', 'a.m:6 calls:InB']);
+    expect(r.dormant).toEqual([]);
+  });
+
+  it('a read in a clause the load is not in, in a static workspace, after a clear, or after a call of the class\'s own load stays live', async () => {
+    const r = await indexOfProject({
+      // (Each statement in its own function: a load in the `if` reaches a read after the whole statement.)
+      'branches.m': ['function branches(fname, useFile)', 'if useFile', '    load(fname)', 'else', '    a = makedefaults(1);', 'end', 'end', 'function tried(fname)', 'try', '    load(fname)', 'catch', '    b = report_failure(2);', 'end', 'end', 'function switched(fname, mode)', 'switch mode', '    case 1', '        load(fname)', '    case 2', '        c = fallbackcfg(3);', 'end', 'end', ''].join('\n'),
+      'plotgui.m': ['function plotgui(fname)', 'load(fname)', 'y = smoothit(3);', '  function cb(src, evt)', '    z = rescaleit(2);', '  end', 'end', ''].join('\n'),
+      'nestedload.m': ['function nestedload(fname)', 'w = 1;', '  function inner()', '    load(fname)', '    q = missingfn(w);', '  end', 'end', ''].join('\n'),
+      'cleared.m': ['function cleared(fname)', 'load(fname)', 'clear all', 'd = afterclear(1);', ''].join('\n'),
+      'Loader2.m': ['classdef Loader2', '  methods', '    function load(obj, f)', '      disp(f)', '    end', '    function run(obj, f)', '      load(obj, f)', '      r7 = afterclassmethod(1);', '    end', '  end', 'end', ''].join('\n'),
+    });
+    expect(r.dormant).toEqual([]);
+    expect(r.unresolved).toEqual([
+      'Loader2.m:8 calls:afterclassmethod',
+      'branches.m:12 calls:report_failure', 'branches.m:20 calls:fallbackcfg', 'branches.m:5 calls:makedefaults',
+      'cleared.m:4 calls:afterclear',
+      'nestedload.m:5 calls:missingfn',
+      'plotgui.m:3 calls:smoothit', 'plotgui.m:5 calls:rescaleit',
+    ]);
+    expect(r.edges).toContain('Loader2.m Loader2::run -calls-> Loader2::load @ Loader2.m');
+  });
+
+  it('a clear in the loop or in the load\'s own clause ends it, a load in parfor or spmd makes nothing, and a loop still carries it round', async () => {
+    const r = await indexOfProject({
+      'loops.m': [
+        'function loops(fs)',
+        'for k = 1:3',
+        '  load(fs{k})',
+        '  clear all',
+        '  a = inloop(1);', // the clear runs every pass before it: a call
+        'end',
+        'end',
+        'function wrap(fs)',
+        'for k = 1:3',
+        '  if k > 1, b = wrapped(1); end', // read on the next pass, after the load: data
+        '  load(fs{k})',
+        'end',
+        'end',
+        'function ownclause(f, x)',
+        'if x',
+        '  load(f)',
+        '  clear all',
+        'end',
+        'c = afterclause(1);', // the load's own clause cleared what it made: a call
+        'end',
+        'function par(fs)',
+        'parfor k = 1:3',
+        '  load(fs{k})',
+        '  d = inparfor(1);', // MATLAB refuses that load: a call
+        'end',
+        'spmd',
+        '  load(fs{1})',
+        '  e = inspmd(1);',
+        'end',
+        'end',
+        '',
+      ].join('\n'),
+    });
+    expect(r.dormant).toEqual(['loops.m:10 calls:wrapped']);
+    expect(r.unresolved).toEqual(['loops.m:19 calls:afterclause', 'loops.m:24 calls:inparfor', 'loops.m:28 calls:inspmd', 'loops.m:5 calls:inloop']);
+  });
+
+  it('a script run after the load still runs in this workspace: the names it makes are variables', async () => {
+    const r = await indexOfProject({ 'f.m': ['function f(fname)', 'load(fname)', 'globs', "x = G('a');", 'end', ''].join('\n'), 'globs.m': 'global G\n' });
+    expect(r.edges).toContain('f.m f -calls-> globs.m @ globs.m');
+    expect(r.dormant).toEqual(['f.m:4 calls:G']);
+    expect(r.unresolved).toEqual([]);
+  });
+
+  it('a sync that adds the load, removes it, and adds then removes a carrier of the name ends where a fresh index ends', async () => {
+    const plain = 'function user2(f)\nx = BPMnum(3);\nend\n';
+    const loading = 'function user2(f)\nload(f)\nx = BPMnum(3);\nend\n';
+    const BPM = 'function y = BPMnum(i)\ny = i;\nend\n';
+    const steps: Files[] = [
+      { 'user2.m': loading },
+      { 'user2.m': plain },
+      { 'user2.m': loading },
+      { 'BPMnum.m': BPM },
+      { 'BPMnum.m': null },
+      { 'BPMnum.m': BPM, 'user2.m': plain },
+      { 'BPMnum.m': null },
+    ];
+    const run = await expectSyncsFresh({ 'user2.m': plain }, steps);
+    expect(run.map((s) => s.syncedDormant.some((r) => r.endsWith('calls:BPMnum')))).toEqual([true, false, true, false, true, false, false]);
+    expect(run.map((s) => s.syncedRows.some((r) => r.endsWith('calls:BPMnum')))).toEqual([false, true, false, false, false, false, true]);
+    expect(run.map((s) => s.synced.some((e) => e.includes('-calls-> BPMnum @ BPMnum.m')))).toEqual([false, false, false, true, false, true, false]);
+  }, 600_000);
+});

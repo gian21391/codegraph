@@ -179,6 +179,24 @@ export function loadedNames(items: readonly (string | null)[]): string[] {
 }
 
 /**
+ * Whether a `load` statement with these arguments as text (null for one that
+ * is not literal) may make names its arguments do not spell: no list (`load
+ * f`, `load(f)`, `load`: every variable the file holds), a list with a
+ * wildcard or `-regexp`, or one with an item that is not literal (`load(f,
+ * v)`). Not an ASCII file given as a literal (`-ascii`, or an extension other
+ * than `.mat` without `-mat`): that makes one variable, named after the file.
+ */
+export function loadMakesUnlisted(items: readonly (string | null)[]): boolean {
+  if (items.some((s) => s !== null && (s.includes('*') || s.toLowerCase() === '-regexp'))) return true;
+  const options = items.filter((s): s is string => s !== null && s.startsWith('-')).map((s) => s.toLowerCase());
+  const rest = items.filter((s) => s === null || !s.startsWith('-'));
+  const file = rest[0];
+  if (typeof file === 'string' && (options.includes('-ascii') || (!options.includes('-mat') && /\.(?!mat$)[^./\\]*$/i.test(file)))) return false;
+  const list = rest.slice(1);
+  return list.length === 0 || list.some((s) => s === null);
+}
+
+/**
  * The variables a `clear` / `clearvars` statement (`name`) removes, from its
  * arguments as text (null for one that is not literal): the names it lists,
  * none for an item type that removes no variable (`clear functions`, `mex`,

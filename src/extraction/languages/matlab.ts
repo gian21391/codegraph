@@ -38,6 +38,7 @@ import {
   SINK_WORDS,
   interpretScope,
   isWasmMemoryError,
+  loadMakesUnlisted,
   loadedNames,
   matlabClearedNames,
   sinkInputs,
@@ -369,6 +370,22 @@ interface Frame {
    */
   runtime?: ReadonlySet<string>;
   /**
+   * In a function, a script's top level or code `eval` runs where it is: the
+   * `load`s there that may make names the code does not spell (see
+   * LoadSites). A name no variable there read after one may be one it made:
+   * its reference carries the `runtime` fact (see loadMayMake).
+   */
+  loads?: LoadSites;
+  /** Code `eval` runs where it is: the argument that gives it, in the tree of the code around (its place in that code's text order). */
+  at?: SyntaxNode;
+  /**
+   * A function that is nested, or holds nested functions: its workspace is
+   * static, and MATLAB refuses a `load` there that would add a variable its
+   * code does not spell ("Attempt to add … to a static workspace"), so no
+   * load there makes a name the code does not spell (see addRuntimeNames).
+   */
+  staticWorkspace?: boolean;
+  /**
    * A function's parameters in order (null for an ignored `~`), when each
    * holds what the caller passed (see Sym in matlab-values.ts): a function's
    * own, not a nested one's (it shares its workspace), not a lambda's.
@@ -499,6 +516,141 @@ function runtimeFact(f: Frame, name: string): MatlabRefFacts {
   return isRuntimeName(f, name) ? { runtime: true } : {};
 }
 
+/**
+ * A statement of a scope, and the parts of the scope it runs in that run only
+ * sometimes, innermost first: the clauses of the `if` / `switch` / `try`
+ * statements around it (a clause is a `block` or an `…_clause` child of one),
+ * and the bodies of the `for` / `while` loops around it.
+ */
+interface Placed {
+  node: SyntaxNode;
+  clauses: readonly SyntaxNode[];
+  loops: readonly SyntaxNode[];
+}
+
+const BRANCH_STATEMENT = /^(?:if|switch|try)_statement$/;
+const LOOP_STATEMENT = /^(?:for|parfor|while)_statement$/;
+
+/** `node` of `scope`, placed (see Placed). */
+function placed(node: SyntaxNode, scope: SyntaxNode): Placed {
+  const clauses: SyntaxNode[] = [];
+  const loops: SyntaxNode[] = [];
+  for (let n = node, p = node.parent; p && p.id !== scope.id; n = p, p = p.parent) {
+    if (BRANCH_STATEMENT.test(p.type) && (n.type === 'block' || n.type.endsWith('_clause'))) clauses.push(n);
+    else if (LOOP_STATEMENT.test(p.type) && n.type === 'block') loops.push(n);
+  }
+  return { node, clauses, loops };
+}
+
+/**
+ * The `load`s of a scope that may make names its code does not spell (see
+ * loadMakesUnlisted), and code an `eval` there runs that holds one: each
+ * statement (the `eval` call for code it runs). And the scope's `clear` /
+ * `clearvars` statements that may remove every variable (see
+ * matlabClearedNames), which end what a load before them made.
+ */
+interface LoadSites {
+  sites: readonly Placed[];
+  clears: readonly Placed[];
+}
+
+/**
+ * Whether `node` of `scope` runs in a `parfor` loop or an `spmd` block, whose
+ * workspace a `load` that does not list its names is refused in (a
+ * transparency violation). `parfor` parses as a `for_statement`.
+ */
+function inParallelBlock(node: SyntaxNode, scope: SyntaxNode): boolean {
+  for (let p = node.parent; p && p.id !== scope.id; p = p.parent) {
+    if (p.type === 'spmd_statement' || (p.type === 'for_statement' && p.child(0)?.type === 'parfor')) return true;
+  }
+  return false;
+}
+
+/** The load sites and clears of `scope`, placed (see LoadSites), less sites in a parallel block (see inParallelBlock); undefined when no site is left. */
+function loadSitesOf(sites: readonly SyntaxNode[], clears: readonly SyntaxNode[], scope: SyntaxNode): LoadSites | undefined {
+  const kept = sites.filter((s) => !inParallelBlock(s, scope));
+  if (kept.length === 0) return undefined;
+  return { sites: kept.map((s) => placed(s, scope)), clears: clears.map((c) => placed(c, scope)) };
+}
+
+/** Whether `inner` lies within `outer`'s text. */
+function within(inner: SyntaxNode, outer: SyntaxNode): boolean {
+  return outer.startIndex <= inner.startIndex && inner.endIndex <= outer.endIndex;
+}
+
+/** Whether placed statement `c` runs whenever `n` does: every clause and loop body around `c` holds `n` too. */
+function runsWith(c: Placed, n: SyntaxNode): boolean {
+  return c.clauses.every((r) => within(n, r)) && c.loops.every((r) => within(n, r));
+}
+
+/**
+ * Whether load site `s` may have run before what is read at `p` (not part of
+ * the load itself), with what it made still there: a loop body holds both
+ * (a read before it runs after it on the next pass), or it comes before `p`
+ * in text order, in no clause of an `if` / `switch` / `try` that `p` is in
+ * another clause of (`if a, load(f), else, x = g(1); end`: `g` is called
+ * when the load did not run; `try, load(f), catch, …`: the catch runs when
+ * it failed). Either way, no clear may come between them, on the way round
+ * the loop for a read before the load in it, that runs whenever `p` does or
+ * whenever the load does (one in a clause or a loop body neither is in may
+ * not have run).
+ */
+function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boolean {
+  if (within(p, s.node)) return false;
+  const ends = (c: Placed): boolean => runsWith(c, p) || runsWith(c, s.node);
+  const loop = s.loops.find((l) => within(p, l));
+  if (loop && s.node.endIndex > p.startIndex) {
+    return !clears.some((c) => within(c.node, loop) && (c.node.startIndex >= s.node.endIndex || c.node.endIndex <= p.startIndex) && ends(c));
+  }
+  if (s.node.endIndex > p.startIndex) return false;
+  if (!loop && s.clauses.some((c) => within(p, c.parent!) && !within(p, c))) return false;
+  return !clears.some((c) => s.node.endIndex <= c.node.startIndex && c.node.endIndex <= p.startIndex && ends(c));
+}
+
+/**
+ * Whether a name read at `at` in frame `f` (and no variable there) may be one
+ * a `load` that does not list its names made (see Frame.loads and
+ * loadReaches). Code `eval` runs where it is reads at the `eval`'s place in
+ * the code around. A function's own workspace ends the walk: a nested
+ * function and its parent have a static one, where no load may make a name
+ * the code does not spell (see addRuntimeNames), and another function of the
+ * file is another workspace.
+ */
+function loadMayMake(f: Frame, at: SyntaxNode): boolean {
+  let pos = at;
+  for (let g: Frame | null = f; g; g = g.parent) {
+    const loads = g.loads;
+    const p = pos;
+    if (loads?.sites.some((s) => loadReaches(s, p, loads.clears))) return true;
+    if (g.kind === 'function') return false;
+    if (g.kind === 'eval' && g.at) pos = g.at;
+  }
+  return false;
+}
+
+/** Arguments written as what no index of an array is: a text, a handle, a function, a cell. */
+const NO_INDEX_ARGS: ReadonlySet<string> = new Set(['string', 'handle_operator', 'lambda', 'cell']);
+
+/**
+ * Whether `f(…)` reads as no index of an array, whatever a `load` made: a
+ * statement of its own that passes arguments, or whose display a `;` turns
+ * off (`hor_line(x, y)`, `floor92(50, 1);`: an index there would do nothing
+ * but show the value, which code leaves to a debugging session; a call for
+ * its effect is what such a statement is), several outputs (`[a, b] =
+ * f(x)`: an array's index gives one), or passing what no
+ * array is indexed by — a text or a handle (`siglab('DataAbort')`, `g(@h)`),
+ * written so or as its record says (see MatlabCallArgs), a function, a cell,
+ * or a struct the caller built (`ft_analysis(cfg)`).
+ */
+function readsAsCall(call: SyntaxNode, args: MatlabCallArgs | undefined): boolean {
+  if (isStatement(call) && (call.nextSibling?.type === ';' || callArgs(call).length > 0)) return true;
+  const p = call.parent;
+  if (p?.type === 'assignment' && getChildByField(p, 'right')?.id === call.id && getChildByField(p, 'left')?.type === 'multioutput_variable') return true;
+  if (callArgs(call).some((a) => NO_INDEX_ARGS.has(a.type))) return true;
+  if (!args) return false;
+  return Object.values(args).some((v) => argItemsOf(v).some((x) => (typeof x === 'string' && (x.startsWith("'") || x.startsWith('@'))) || (typeof x === 'object' && 'o' in x)));
+}
+
 function inFrame(f: Frame, walk: () => void): void {
   frames.push(f);
   try {
@@ -517,10 +669,14 @@ interface ScopeFacts {
    */
   constructions: Array<{ v: string; head: string; cls: string; bare: boolean }>;
   structFields: Set<string>;
-  /** The code arguments of the `eval` / `evalc` calls here (`eval(code, catchCode)`), with the name called. */
-  evalCodes: Array<{ callee: string; arg: SyntaxNode }>;
+  /** The code arguments of the `eval` / `evalc` calls here (`eval(code, catchCode)`), with the name called and the call. */
+  evalCodes: Array<{ callee: string; arg: SyntaxNode; call: SyntaxNode }>;
   /** The names `load(f, 'a', 'b')` / `load f a b` statements here make (in a script, variables too). */
   loaded: Set<string>;
+  /** The `load` statements here that may make names they do not spell (`load f`, `load(f)`: see loadMakesUnlisted), in text order. */
+  loads: SyntaxNode[];
+  /** The `clear` / `clearvars` statements here that may remove every variable (see matlabClearedNames), in text order. */
+  clears: SyntaxNode[];
   /** Every name written here: assigned, indexed or field-assigned into, a loop's, a `catch`'s, a global. */
   assigned: Set<string>;
   /** The names written here from a value the interpreter may know of itself: a text, a handle, a cell, a struct, a text built. */
@@ -568,6 +724,13 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const structFields = new Set<string>();
   const evalCodes: ScopeFacts['evalCodes'] = [];
   const loaded = new Set<string>();
+  const loads: SyntaxNode[] = [];
+  const clears: SyntaxNode[] = [];
+  /** A `load` statement with these arguments: the names it lists, and whether it may make more (a text with a part nothing here knows says no name). */
+  const loadStatement = (at: SyntaxNode, items: readonly (string | null)[]): void => {
+    for (const v of loadedNames(items)) loadedName(v);
+    if (loadMakesUnlisted(items.map((s) => (s !== null && s.includes(PLACEHOLDER) ? null : s)))) loads.push(at);
+  };
   const assigned = new Set<string>();
   const valued = new Set<string>();
   const copies: ScopeFacts['copies'] = [];
@@ -586,9 +749,12 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
     scriptNames.add(v);
   };
   /** A `clear` / `clearvars` statement with these arguments (see ScopeFacts.made). */
-  const cleared = (name: string, items: readonly (string | null)[]): void => {
+  const cleared = (at: SyntaxNode, name: string, items: readonly (string | null)[]): void => {
     const names = matlabClearedNames(name, items);
-    if (names === null) scriptNames.clear();
+    if (names === null) {
+      scriptNames.clear();
+      clears.push(at);
+    }
     else for (const v of names) clearedByName.add(v);
   };
 
@@ -703,6 +869,8 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         case 'identifier':
           // `setup_vars`: a statement that may run a script.
           if ((n.type === 'block' || n.type === 'source_file') && !MATLAB_BUILTINS.has(getNodeText(c, source))) clobbers = true;
+          // `clear` alone removes every variable: it ends what a load before it made (see LoadSites).
+          if ((n.type === 'block' || n.type === 'source_file') && /^clear(?:vars)?$/.test(getNodeText(c, source))) clears.push(c);
           break;
         case 'assignment': {
           const left = getChildByField(c, 'left');
@@ -750,11 +918,11 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           if (n.type === 'field_expression' && getChildByField(n, 'object')?.id !== c.id) break;
           const name = getNodeText(callee, source);
           if (name === 'load' && isStatement(c)) {
-            for (const v of loadedNames(callArgs(c).map((a) => stringLiteral(a, source)))) loadedName(v);
+            loadStatement(c, callArgs(c).map((a) => stringLiteral(a, source)));
           } else if ((name === 'clear' || name === 'clearvars') && isStatement(c)) {
-            cleared(name, callArgs(c).map((a) => stringLiteral(a, source)));
+            cleared(c, name, callArgs(c).map((a) => stringLiteral(a, source)));
           } else if (name === 'eval' || name === 'evalc') {
-            for (const arg of callArgs(c).slice(0, 2)) evalCodes.push({ callee: name, arg });
+            for (const arg of callArgs(c).slice(0, 2)) evalCodes.push({ callee: name, arg, call: c });
           }
           const args = callArgs(c);
           if (CLOBBERING_CALL.test(name) || (args.length === 0 && isStatement(c) && !MATLAB_BUILTINS.has(name))) clobbers = true;
@@ -772,9 +940,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           const cmd = namedChildren(c).find((a) => a.type === 'command_name');
           const name = cmd ? getNodeText(cmd, source) : '';
           if (CLOBBERING_CALL.test(name) || !MATLAB_BUILTINS.has(name)) clobbers = true;
-          if (name === 'clear' || name === 'clearvars') cleared(name, commandItems(c, source));
+          if (name === 'clear' || name === 'clearvars') cleared(c, name, commandItems(c, source));
           if (name !== 'load') break;
-          for (const v of loadedNames(commandItems(c, source))) loadedName(v);
+          loadStatement(c, commandItems(c, source));
           break;
         }
       }
@@ -784,7 +952,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   walk(scope);
   if (!isFunction) for (const v of loaded) locals.add(v);
   for (const v of clearedByName) scriptNames.delete(v);
-  return { locals, constructions, structFields, evalCodes, loaded, assigned, valued, copies, passed, clobbers, nested, made: scriptNames };
+  return { locals, constructions, structFields, evalCodes, loaded, loads, clears, assigned, valued, copies, passed, clobbers, nested, made: scriptNames };
 }
 
 /**
@@ -1145,6 +1313,46 @@ const PLACEHOLDER = 'CgHole__';
  */
 let fileFunctions: ReadonlySet<string> = EMPTY;
 
+/**
+ * The methods a class file's classdef defines (property accessors aside): a
+ * call there may be the class's own. Set while extractFile walks the file.
+ */
+let fileMethods: ReadonlySet<string> = EMPTY;
+
+/** The methods `root`'s classdef defines (see fileMethods). */
+function fileMethodsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const cls of namedChildren(root)) {
+    if (cls.type !== 'class_definition') continue;
+    for (const section of namedChildren(cls)) {
+      if (section.type !== 'methods') continue;
+      for (const m of namedChildren(section)) {
+        const name = m.type === 'function_definition' || m.type === 'function_signature' ? getChildByField(m, 'name') : null;
+        if (!name || /^[gs]et\.$/.test(source.slice(Math.max(0, name.startIndex - 4), name.startIndex))) continue;
+        names.add(getNodeText(name, source));
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * Whether `load` where frame `f` calls it is MATLAB's: no variable there, no
+ * function of the file, and no method of the file's classdef (`load(obj,
+ * f)` there may call the class's own; a `load` of another file — a project
+ * `load.m`, `@Cls/load.m` — is not seen from this file's text).
+ */
+function loadIsMatlabs(f: Frame): boolean {
+  return !isLocal(f, 'load') && !fileFunctions.has('load') && !fileMethods.has('load');
+}
+
+/** Whether frame `f` (code eval runs or a lambda, read through to the function around) is a function whose workspace is static (see Frame.staticWorkspace). */
+function inStaticWorkspace(f: Frame): boolean {
+  let g: Frame | null = f;
+  while (g && (g.kind === 'lambda' || g.kind === 'eval')) g = g.parent;
+  return g?.staticWorkspace === true;
+}
+
 /** The functions `root` defines outside a class (see fileFunctions). */
 function fileFunctionsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
   const names = new Set<string>();
@@ -1299,16 +1507,29 @@ function forwardable(params: readonly (string | null)[], facts: ScopeFacts, walk
  * The names a scope's code makes at runtime — what the code its `eval`s run
  * assigns or loads (`eval('x = 3;')`), what its `load` lists name: a
  * script's variables (`x(2)` there reads x), a function's runtime names (see
- * Frame.runtime). A name with a part nothing here knows is passed over.
+ * Frame.runtime). A name with a part nothing here knows is passed over. And
+ * the `load`s that may make names no code spells (see Frame.loads): its own,
+ * and the `eval`s whose code holds one (`eval(['load ' f])`), unless `load`
+ * is not MATLAB's there (see loadIsMatlabs), or the function's workspace is
+ * static (see Frame.staticWorkspace).
  */
-function addRuntimeNames(facts: ScopeFacts, f: Frame, source: string, isFunction: boolean): void {
+function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source: string, isFunction: boolean): void {
   const made = new Set<string>(isFunction ? facts.loaded : []);
-  for (const { callee, arg } of facts.evalCodes) {
+  const loadCalled = !f.staticWorkspace && loadIsMatlabs(f);
+  const sites: SyntaxNode[] = loadCalled ? [...facts.loads] : [];
+  for (const { callee, arg, call } of facts.evalCodes) {
     if (isLocal(f, callee)) continue;
+    let loads = false;
     for (const code of valueAt(arg, source).strs) {
-      for (const n of parseCode(code)?.facts.locals ?? []) if (!n.includes(PLACEHOLDER)) made.add(n);
+      const parsed = parseCode(code);
+      for (const n of parsed?.facts.locals ?? []) if (!n.includes(PLACEHOLDER)) made.add(n);
+      if (parsed && parsed.facts.loads.length > 0) loads = true;
     }
+    // (An `eval(code, catchCode)` call's two codes are consecutive entries.)
+    if (loads && loadCalled && sites[sites.length - 1] !== call) sites.push(call);
   }
+  const loads = loadSitesOf(sites, facts.clears, scope);
+  if (loads) f.loads = loads;
   if (made.size === 0) return;
   if (isFunction) f.runtime = made;
   else for (const n of made) facts.locals.add(n);
@@ -1449,6 +1670,11 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
       parent: here ? outer : null,
       values: NO_VALUES,
     };
+    if (here) {
+      f.at = at;
+      const loads = loadIsMatlabs(outer) && !inStaticWorkspace(outer) ? loadSitesOf(facts.loads, facts.clears, root) : undefined;
+      if (loads) f.loads = loads;
+    }
     const refs: UnresolvedReference[] = [];
     const sub = codeContext(ctx, text, at, { callback: mode === 'callback', runtime: !here, asValue, computed }, refs);
     const memo = arrayEvidenceMemo;
@@ -1992,6 +2218,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     parent,
     ...(params ? { params, forwards: forwardable(params, facts, walk), def: node, untouchedParams: untouched(params, facts) } : {}),
     site,
+    ...(nested || facts.nested ? { staticWorkspace: true } : {}),
   };
 
   // What holds something on entry: the parameters, and a method's output (a constructor's is the object).
@@ -2012,7 +2239,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
   ctx.pushScope(fn.id);
   inFrame(f, () => {
     f.values = scopeValues(node, options, source, walk);
-    addRuntimeNames(facts, f, source, true);
+    addRuntimeNames(facts, f, node, source, true);
     for (const c of children) {
       if (c.type === 'block' || c.type === 'arguments_statement' || c.type === 'function_definition') ctx.visitNode(c);
     }
@@ -2124,6 +2351,7 @@ function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
 function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () => T): T {
   javaImported = javaImportsOf(root, source);
   fileFunctions = fileFunctionsOf(root, source);
+  fileMethods = fileMethodsOf(root, source);
   fileStem = matlabFileStem(filePath);
   try {
     return body();
@@ -2133,6 +2361,7 @@ function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () 
     fileStem = null;
     codeDepth = 0;
     fileFunctions = EMPTY;
+    fileMethods = EMPTY;
     for (const { tree } of codeTrees.values()) tree?.delete();
     codeTrees = new Map();
   }
@@ -2155,7 +2384,7 @@ function walkFile(node: SyntaxNode, ctx: ExtractorContext): void {
     // A function file's or a class file's top level runs nothing of its own.
     const script = !sinkCollector && namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
     f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source, needsWalk(node, undefined, source, facts)) : NO_VALUES;
-    addRuntimeNames(facts, f, source, false);
+    addRuntimeNames(facts, f, node, source, false);
     for (const c of namedChildren(node)) if (!sinkCollector || DEFINITIONS.has(c.type)) ctx.visitNode(c);
   });
 }
@@ -2235,7 +2464,9 @@ export const matlabExtractor: LanguageExtractor = {
         const form = (sup ?? callee).nextSibling?.type === '(' ? undefined : 'bare';
         // (A walk for parameter sinks keeps no reference: what calls pass is no part of it.)
         const args = form || sinkCollector || MATLAB_BUILTINS.has(written) ? undefined : callArgsFact(node, source);
-        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtimeFact(frame(), written), ...(args ? { args } : {}) });
+        // A plain name's call after a `load` that may have made it (see loadMayMake) may read a variable, unless it reads as no index (see readsAsCall).
+        const loaded = ref?.name === written && !MATLAB_BUILTINS.has(written) && loadMayMake(frame(), node) && !readsAsCall(node, args);
+        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...(loaded ? { runtime: true } : runtimeFact(frame(), written)), ...(args ? { args } : {}) });
         if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx, isStatement(node));
         if (ref) dynamicCallRefs(node, written, ctx, ref.name === written);
         else if (isLocal(frame(), written)) {
@@ -2297,7 +2528,11 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=');
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name) && !javaImported.has(name) && !inUnreadText(node, source)) addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
+        if (!isLocal(frame(), name) && !javaImported.has(name) && !inUnreadText(node, source)) {
+          // A read after a `load` that may have made the name (see loadMayMake); not a statement, which may run a script here.
+          const loaded = !statement && !MATLAB_BUILTINS.has(name) && loadMayMake(frame(), node);
+          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...(loaded ? { runtime: true } : runtimeFact(frame(), name)) });
+        }
         return false;
       }
 

@@ -26,10 +26,15 @@
  *   - `runtime` — a name only code run at runtime may make a variable: one
  *     that `eval`'d code assigns or a `load` name list makes in a function
  *     (`eval('f = @g;'); f(1)` — MATLAB reads `f` as a function from the
- *     function's own code, so `f.m` is called unless the eval ran), and every
- *     name of code run in another workspace (a callback given as text, what
- *     `evalin` runs), whose variables the index cannot see: resolved like
- *     any other, and dropped when nothing answers it (see
+ *     function's own code, so `f.m` is called unless the eval ran); one read
+ *     after a `load` that does not list what it makes (`load(f); x =
+ *     BPMnum(3);`, in a function whose workspace is not static, a script or
+ *     code `eval` runs: see loadMayMake in matlab.ts), unless the call reads
+ *     as no index (a text passed, a statement of its own with arguments:
+ *     `siglab('DataAbort')`, `hor_line(x, y)`); and
+ *     every name of code run in another workspace (a callback given as text,
+ *     what `evalin` runs), whose variables the index cannot see: resolved
+ *     like any other, and dropped when nothing answers it (see
  *     ../../resolution/matlab-failures.ts).
  *   - `self` — a member call on the method's own object (`obj.step()`,
  *     `veh.deriv(t, y)`), recorded as `Cls::m`: one whose class neither

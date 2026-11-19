@@ -271,7 +271,7 @@ end
 });
 
 describe('MATLAB variables load makes', () => {
-  it('reads the names after the file as names made at runtime, and a struct from S = load(…); a load without names changes nothing', () => {
+  it('reads the names after the file as names made at runtime, and a struct from S = load(…); a load without names may make any', () => {
     const code = `function f(file)
 load(file, 'a', '-mat');
 a(3)
@@ -280,12 +280,12 @@ b(1)
 S = load(file);
 S.k(2)
 load(file);
-d(1)
+x = d(1);
 load(file, '-regexp', 'e.*');
-e(1)
+y = e(1);
 end
 `;
-    expect(refs('f.m', code)).toEqual(['3 calls:a runtime', '5 calls:b runtime', '9 calls:d', '11 calls:e']);
+    expect(refs('f.m', code)).toEqual(['3 calls:a runtime', '5 calls:b runtime', '9 calls:d runtime', '11 calls:e runtime']);
   });
 
   it('reads them through code eval runs too', () => {
@@ -294,6 +294,155 @@ end
 
   it('reads them as variables in a script, whose names are looked up as it runs', () => {
     expect(refs('s.m', "load cfg.mat lattice\nlattice(2)\neval('x = 3;');\nx(2)\n")).toEqual([]);
+  });
+});
+
+describe('MATLAB names a load that does not list them may make', () => {
+  /** `refs` of a function whose body is `body`, after `function f(fname, d, v)`. */
+  const inF = (body: string): string[] => refs('f.m', `function f(fname, d, v)\n${body}\nend\n`);
+
+  it('each form marks a later read, called or bare, as made at runtime', () => {
+    const forms = [
+      'load gd', 'load gd -mat', 'load', "load('gd')", 'load(fname)', 'load([d fname])', "load(fname, '-mat')",
+      'load(fname, v)', "load(fname, 'a', v)", 'load gd BPM*', "load(fname, '-regexp', '^BPM')",
+      "eval(['load ' fname])", "eval(['load ', d, fname, ' -mat'])", "evalc(['load ' fname])",
+    ];
+    for (const form of forms) {
+      expect(inF(`${form}\nx = BPMnum(3);\nplot(t0)`), form).toEqual(['3 calls:BPMnum runtime', '4 calls:t0 runtime']);
+    }
+  });
+
+  it('a read before the load is not marked, unless a loop body holds both', () => {
+    expect(inF('a = Before(1);\nload(fname)\nb = After(1);')).toEqual(['2 calls:Before', '4 calls:After runtime']);
+    expect(inF('for k = 1:3\n  a = InLoop(k);\n  load(fname)\nend\nb = Before2(1);')).toEqual(['3 calls:InLoop runtime', '6 calls:Before2 runtime']);
+    expect(inF('while true\n  a = InWhile(1);\n  eval([\'load \' fname])\nend')).toEqual(['3 calls:InWhile runtime']);
+    // A loop that holds no load, before one: not marked.
+    expect(inF('for k = 1:3\n  a = Other(k);\nend\nload(fname)')).toEqual(['3 calls:Other']);
+  });
+
+  it('a load in one local function marks none of another\'s reads', () => {
+    const code = `function a(fname)
+load(fname)
+x = InA(1);
+end
+function b()
+y = InB(1);
+end
+`;
+    expect(refs('a.m', code)).toEqual(['3 calls:InA runtime', '6 calls:InB']);
+    // Functions with no `end`: each its own workspace still.
+    expect(refs('a.m', 'function a(fname)\nload(fname)\nx = InA(1);\nfunction b()\ny = InB(1);\n')).toEqual(['3 calls:InA runtime', '5 calls:InB']);
+  });
+
+  it('a function that holds nested functions, or a nested one, has a static workspace: a load there makes no name the code does not spell', () => {
+    // MATLAB refuses a load there that would add a variable the code does not spell ("Attempt to add … to a static workspace").
+    const parent = `function p(fname)
+load(fname)
+q = AfterLoad(1);
+  function n()
+    r = InNested(1);
+  end
+end
+`;
+    expect(refs('p.m', parent)).toEqual(['3 calls:AfterLoad', '5 calls:InNested']);
+    const inner = `function p(fname)
+  function n()
+    load(fname)
+    r = AfterInner(1);
+    eval(['load ' fname]);
+    eval('t = InEval(1);');
+  end
+s = InParent(1);
+end
+`;
+    expect(refs('p.m', inner)).toEqual(['4 calls:AfterInner', '6 calls:InEval', '8 calls:InParent']);
+    // A function with no nested one beside them in the file is not static.
+    expect(refs('p.m', `${parent}function o(fname)\nload(fname)\nu = InOther(1);\nend\n`)).toEqual(['3 calls:AfterLoad', '5 calls:InNested', '10 calls:InOther runtime']);
+  });
+
+  it('a load on one branch of an if, a switch or a try marks no read on a branch that excludes it; one after the statement, or in a loop holding both, it marks', () => {
+    expect(inF('if v\n  load(fname)\nelse\n  a = makedefaults(1);\nend\nb = After(1);')).toEqual(['5 calls:makedefaults', '7 calls:After runtime']);
+    expect(inF('if v\n  load(fname)\n  a = Same(1);\nelseif d\n  b = InElseif(1);\nelseif InCond(2)\nelse\n  c = InElse(1);\nend')).toEqual(['4 calls:Same runtime', '6 calls:InElseif', '7 calls:InCond', '9 calls:InElse']);
+    expect(inF('if v\n  if d\n    load(fname)\n  end\nelse\n  a = OuterElse(1);\nend')).toEqual(['7 calls:OuterElse']);
+    expect(inF('switch v\n  case 1\n    load(fname)\n  case 2\n    c = fallbackcfg(3);\n  otherwise\n    o = InOtherwise(1);\nend\nz = AfterSwitch(1);')).toEqual(['6 calls:fallbackcfg', '8 calls:InOtherwise', '10 calls:AfterSwitch runtime']);
+    expect(inF('try\n  load(fname)\n  a = InTry(1);\ncatch\n  b = report_failure(2);\nend\nc = AfterTry(1);')).toEqual(['4 calls:InTry runtime', '6 calls:report_failure', '8 calls:AfterTry runtime']);
+    expect(inF('try\n  a = Tried(1);\ncatch\n  load(fname)\nend\nc = AfterCatch(1);')).toEqual(['3 calls:Tried', '7 calls:AfterCatch runtime']);
+    expect(inF("if v\n  eval(['load ' fname])\nelse\n  eval('a = EvalElse(1);');\nend")).toEqual(['5 calls:EvalElse']);
+    // A loop's next pass may take the other branch, after the load ran.
+    expect(inF('for k = 1:3\n  if k == 1\n    load(fname)\n  else\n    a = NextPass(k);\n  end\nend')).toEqual(['6 calls:NextPass runtime']);
+  });
+
+  it('a clear that may remove every variable ends what a load before it made, where it runs whenever the read does', () => {
+    expect(inF('load(fname)\nclear all\nd = afterclear(1);')).toEqual(['4 calls:afterclear']);
+    expect(inF('load(fname)\nclear\nd = AfterBare(1);\nload(fname)\ne = Reloaded(1);')).toEqual(['4 calls:AfterBare', '6 calls:Reloaded runtime']);
+    expect(inF('load(fname)\nclearvars\nd = AfterVars(1);')).toEqual(['3 calls:clearvars', '4 calls:AfterVars']);
+    // One that names what it removes leaves the rest.
+    expect(inF('load(fname)\nclear x\nd = AfterNamed(1);')).toEqual(['4 calls:AfterNamed runtime']);
+    // One that may not have run does not end it; one in the same clause does.
+    expect(inF('load(fname)\nif v\n  clear all\nend\nd = MaybeCleared(1);')).toEqual(['6 calls:MaybeCleared runtime']);
+    expect(inF('if v\n  load(fname)\n  clear all\n  d = SameClause(1);\nend')).toEqual(['5 calls:SameClause']);
+    expect(inF('load(fname)\nfor k = 1:3\n  clear all\n  d = LoopCleared(k);\nend')).toEqual(['5 calls:LoopCleared']);
+    // A loop holding the load, the clear and the read: every pass clears between the load and the read, this pass's
+    // and the last one's; a read before the clear on the way round still follows the load.
+    expect(inF('for k = 1:3\n  load(fname)\n  clear all\n  d = InLoop(k);\nend')).toEqual(['5 calls:InLoop']);
+    expect(inF('for k = 1:3\n  d = Wrapped(k);\n  load(fname)\n  clear all\nend')).toEqual(['3 calls:Wrapped']);
+    expect(inF('for k = 1:3\n  clear all\n  d = AfterClear(k);\n  load(fname)\nend')).toEqual(['4 calls:AfterClear']);
+    expect(inF('for k = 1:3\n  d = BeforeLoad(k);\n  clear all\n  load(fname)\nend')).toEqual(['3 calls:BeforeLoad runtime']);
+  });
+
+  it('a call of the classdef\'s own load method is no load', () => {
+    const loader = `classdef Loader2
+  methods
+    function load(obj, f)
+      disp(f)
+    end
+    function run(obj, f)
+      load(obj, f)
+      r7 = afterclassmethod(1);
+    end
+  end
+end
+`;
+    expect(refs('Loader2.m', loader)).toEqual(['7 calls:Loader2::load', '8 calls:afterclassmethod']);
+    const plain = loader.replace('function load(obj, f)', 'function save(obj, f)');
+    expect(refs('Loader2.m', plain).filter((r) => !/calls:(?:\w+::)?load$/.test(r))).toEqual(['8 calls:afterclassmethod runtime']);
+  });
+
+  it('a value, a field, a variable or a local function named load, and an ASCII file given as text, mark nothing', () => {
+    expect(inF('S = load(fname);\nS.x(2)\nz = Q1(1);')).toEqual(['4 calls:Q1']);
+    expect(inF('obj.load(fname);\ns.load;\nz = Q2(1);')).toEqual(['2 calls:obj::load', '3 calls:s::load', '4 calls:Q2']);
+    expect(inF('load data.txt\nload(\'data.dat\')\nload gd -ascii\nz = Q3(1);')).toEqual(['5 calls:Q3']);
+    // An ASCII file whose name the code does not say: a variable of a name nothing spells.
+    expect(inF('load(fname, \'-ascii\')\nz = Q4(1);')).toEqual(['3 calls:Q4 runtime']);
+    expect(refs('f.m', 'function f(fname)\nload = @(x) x;\nload(fname)\nz = Q5(1);\nend\n')).toEqual(['4 calls:Q5']);
+    expect(refs('f.m', 'function f(fname)\nload(fname)\nz = Q6(1);\nend\nfunction load(x)\nend\n')).toEqual(['3 calls:Q6']);
+  });
+
+  it('a load that lists its names makes those alone, as before', () => {
+    expect(inF("load(fname, 'a');\na(2)\nz = Q7(1);")).toEqual(['3 calls:a runtime', '4 calls:Q7']);
+  });
+
+  it('a call passing a text or a handle stays a call: siglab(\'DataAbort\'), g(@h)', () => {
+    expect(inF("load gd\nsiglab('DataAbort')\ng(@h)\nk = Data(2);")).toEqual(['3 calls:siglab', '4 calls:g', '4 function_ref:h', '5 calls:Data runtime']);
+  });
+
+  it('so does one no index can be: passing any text, a function, a cell, a struct the code built; several outputs; a statement of its own with arguments, whatever ends it', () => {
+    const body = "load gd\nok = FcUtil('|_?', 3);\nh(@(x) x, 1)\nc({1})\ncfg = [];\ncfg.output = 'cov';\nft_analysis(cfg, 2)\n[a, b] = two(3);\nfloor92(50, 1);\nhor_line(3, 4)\nk = Data(3);";
+    expect(inF(body)).toEqual(['3 calls:FcUtil', '4 calls:h', '5 calls:c', '8 calls:ft_analysis', '9 calls:two', '10 calls:floor92', '11 calls:hor_line', '12 calls:Data runtime']);
+  });
+
+  it('a statement of its own is not marked: it may run a script, in this workspace', () => {
+    expect(inF('load gd\nsetup_vars\nz = Q8(1);')).toEqual(['3 calls:setup_vars', '4 calls:Q8 runtime']);
+  });
+
+  it('code eval runs where it is: its own load marks what it reads after, and the load around it what it reads', () => {
+    expect(inF("eval('load gd; z = Q9(2);');")).toEqual(['2 calls:Q9 runtime']);
+    expect(inF("eval('z = Q10(2); load gd');")).toEqual(['2 calls:Q10']);
+    expect(inF("load gd\neval('z = Q11(2);');")).toEqual(['3 calls:Q11 runtime']);
+  });
+
+  it('a script\'s top level is one scope, read in text order', () => {
+    expect(refs('s.m', 'g = gains(1);\nload gd\ng = gains(2);\ngains(3)\n')).toEqual(['1 calls:gains', '3 calls:gains runtime', '4 calls:gains']);
   });
 });
 
