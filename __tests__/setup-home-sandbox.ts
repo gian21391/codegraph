@@ -57,6 +57,11 @@ process.env.XDG_CONFIG_HOME = path.join(home, '.config');
 for (const override of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'HERMES_HOME', 'QWEN_HOME', 'DSH_HOME', 'GROK_HOME', 'KIMI_CODE_HOME', 'QODER_CONFIG_DIR', 'PI_CODING_AGENT_DIR']) {
   delete process.env[override];
 }
+// A user setting (README: "set `CODEGRAPH_NO_DAEMON=1` in your MCP server's
+// environment") that a developer's shell or a benchmark script may export. Every
+// spawned `serve --mcp` inherits it, so the daemon suites' daemons never start;
+// the tests that want it set it in the child's env themselves.
+delete process.env.CODEGRAPH_NO_DAEMON;
 
 // Both spellings: GIT_CONFIG_GLOBAL for git >= 2.32, and `$HOME/.gitconfig`
 // (the same file) for older ones.

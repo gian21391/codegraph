@@ -3921,8 +3921,10 @@ function useTmpDirs(label: string): { home: () => string; cwd: () => string } {
   let homeRestore: { restore: () => void };
 
   beforeEach(() => {
-    tmpHome = mkTmpDir(`${label}-home`);
-    tmpCwd = mkTmpDir(`${label}-cwd`);
+    // Resolved: after the chdir below, `process.cwd()` (where a local install
+    // writes) is the real path, and macOS's tmpdir sits behind /var -> /private/var.
+    tmpHome = fs.realpathSync(mkTmpDir(`${label}-home`));
+    tmpCwd = fs.realpathSync(mkTmpDir(`${label}-cwd`));
     origCwd = process.cwd();
     process.chdir(tmpCwd);
     homeRestore = setHome(tmpHome);

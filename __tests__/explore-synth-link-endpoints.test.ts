@@ -34,8 +34,16 @@ afterAll(() => {
 
 const SECTION = '**Dynamic-dispatch links among your symbols**';
 
-/** The `- a → b [...]` lines of the dynamic-dispatch links section. */
+/** The `- … +N more (M links in all)` line that counts the links past the cap. */
+const MORE_LINE = /^- … \+\d+ more \(\d+ links in all\)$/;
+
+/** The `- a → b [...]` lines of the dynamic-dispatch links section (not the count of the rest). */
 function linkLines(text: string): string[] {
+  return sectionLines(text).filter((line) => !MORE_LINE.test(line));
+}
+
+/** Every `- ` line of the dynamic-dispatch links section. */
+function sectionLines(text: string): string[] {
   const at = text.indexOf(SECTION);
   if (at < 0) return [];
   const out: string[] = [];
@@ -159,6 +167,8 @@ describe('codegraph_explore — dynamic-dispatch links are listed per link', () 
 
     const links = linkLines(text);
     expect(links).toHaveLength(6);
+    // The two links past the cap are counted, last.
+    expect(sectionLines(text).at(-1)).toBe('- … +2 more (8 links in all)');
     expect(links[0]).toMatch(new RegExp(`^- Shape\\.area → ${last}\\.area\\s+\\[dynamic: interface → impl @${last.toLowerCase()}\\.ts:4\\]$`));
     // The other five are five distinct implementations, none of them the chain's.
     const rest = links.slice(1).map((l) => /→ (\w+)\.area/.exec(l)?.[1]);
