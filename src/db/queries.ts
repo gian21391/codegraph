@@ -160,7 +160,30 @@ export interface NodeFilter {
    * call (see ../resolution/matlab-failures).
    */
   readable?: boolean;
+  /**
+   * Only a node a MATLAB member call written with arguments (`v.f(x)`,
+   * `pkg.f(x)`, `obj@Base(x)`) can reach, or one standing for code MATLAB
+   * reaches that way (see MATLAB_MEMBER_NODES in
+   * ../resolution/matlab-failures): a method, a class or an enumeration, a
+   * package's function (exported, with an owner: `pkg::f`), and the file
+   * node of a `.m` file directly in a class or a package folder (`@Cls/f.m`,
+   * `+pkg/f.m`, the help text of a MEX function there).
+   */
+  matlabMember?: boolean;
 }
+
+/**
+ * A `nodes` row's folder (the path before its basename, the file node's
+ * name), and that folder's last segment's first character: `@` for a class
+ * folder, `+` for a package one. Either separator ends a segment.
+ */
+const NODE_DIR_SQL = 'substr(file_path, 1, length(file_path) - length(name) - 1)';
+const NODE_FOLDER_MARK_SQL = `substr(${NODE_DIR_SQL}, length(rtrim(${NODE_DIR_SQL}, replace(replace(${NODE_DIR_SQL}, '/', ''), '\\', ''))) + 1, 1)`;
+
+/** NodeFilter.matlabMember as SQL over a `nodes` row. */
+const MATLAB_MEMBER_NODE_SQL = `(kind IN ('method', 'class', 'enum')
+  OR (kind = 'function' AND is_exported = 1 AND instr(qualified_name, '::') > 0)
+  OR (kind = 'file' AND ${NODE_FOLDER_MARK_SQL} IN ('@', '+')))`;
 
 /** The paths of the MATLAB files stored with MATLAB_UNREAD_CODE: their text was read as no MATLAB code. */
 const UNREAD_MATLAB_FILES_SQL = `SELECT path FROM files WHERE language = 'matlab' AND errors LIKE '%"code":"${MATLAB_UNREAD_CODE}"%'`;
@@ -175,6 +198,7 @@ function nodeFilterSql(filter: NodeFilter): { sql: string; params: string[] } {
     params.push(filter.language);
   }
   if (filter.readable) sql += ` AND file_path NOT IN (${UNREAD_MATLAB_FILES_SQL})`;
+  if (filter.matlabMember) sql += ` AND ${MATLAB_MEMBER_NODE_SQL}`;
   return { sql, params };
 }
 

@@ -36,7 +36,7 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
-import { MATLAB_CALLABLE_NODES, MATLAB_NODES } from '../resolution/matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, MATLAB_NODES } from '../resolution/matlab-failures';
 import {
   applyMatlabCarrierRows,
   matlabCarrierChanges,
@@ -4102,18 +4102,23 @@ export class ExtractionOrchestrator {
     // BEFORE their nodes are replaced/deleted. Compared against the post-store
     // pairs below to derive `definitionDelta` (CG-33).
     const pairsBefore = new Set<string>();
-    // The same pairs of the MATLAB nodes alone, and of the callable ones
-    // among them (no property, constant, enumeration member or field), for a
+    // The same pairs of the MATLAB nodes alone, of the callable ones among
+    // them (no property, constant, enumeration member or field), and of the
+    // ones a member call written with arguments can reach (a method, a class,
+    // a package's function, a `.m` file in a class or package folder), for a
     // MATLAB member call's carriers (see resolution/matlab-builtin-carriers):
     // a property turned into a method of the same name changes the second and
-    // leaves the first as it was.
+    // leaves the first as it was, and a local function turned into a classdef
+    // method changes the third alone.
     const trackMatlab = this.queries.hasFilesOfLanguage('matlab');
     const matlabPairsBefore = new Set<string>();
     const callablePairsBefore = new Set<string>();
+    const memberPairsBefore = new Set<string>();
     const sampleMatlabPairs = (files: string[]): void => {
       if (!trackMatlab) return;
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_NODES)) matlabPairsBefore.add(pair);
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_CALLABLE_NODES)) callablePairsBefore.add(pair);
+      for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_MEMBER_NODES)) memberPairsBefore.add(pair);
     };
     // What this sync's carrier step is worked out from, recorded before any
     // file is replaced or removed (see MatlabCarrierInputs): the files, as
@@ -4472,6 +4477,8 @@ export class ExtractionOrchestrator {
       matlabPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_NODES) : new Set(),
       callablePairsBefore,
       callablePairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_CALLABLE_NODES) : new Set(),
+      memberPairsBefore,
+      memberPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_MEMBER_NODES) : new Set(),
       unreadBefore,
       reachingBefore: carrierInputs.reaching,
     });

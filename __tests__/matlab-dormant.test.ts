@@ -211,13 +211,13 @@ describe('MATLAB dormant rows: a sync ends where a fresh index ends, for every c
       { 'Model.m': cls('Model', methods('reset', 'recalib')) },
       { 'Model.m': null, 'models/Model.m': cls('Model', methods('reset', 'recalib')) },
       { 'models/Model.m': cls('Model', methods('reset')) },
-      // A property carries a member call written with arguments.
+      // A property carries no member call written with arguments: `a.recalib(2)` indexes it.
       { 'models/Model.m': cls('Model', props('recalib') + methods('reset')) },
       { 'models/Model.m': null },
     ];
     const run = await expectSyncsFresh(BASE, steps);
     expect(run.map((s) => s.synced.some((e) => e.startsWith('user.m user -calls-> Model::recalib')))).toEqual([true, false, true, true, false, false, false]);
-    expect(run.map((s) => s.syncedDormant.includes('user.m:8 calls:a.recalib'))).toEqual([false, true, false, false, true, false, true]);
+    expect(run.map((s) => s.syncedDormant.includes('user.m:8 calls:a.recalib'))).toEqual([false, true, false, false, true, true, true]);
   }, 600_000);
 
   it('a member read: a property of the name does not wake it, a method does, and a JavaScript function never', async () => {
@@ -1334,5 +1334,106 @@ describe('MATLAB dormant rows: the names a load that does not list them may make
     expect(run.map((s) => s.syncedDormant.some((r) => r.endsWith('calls:BPMnum')))).toEqual([true, false, true, false, true, false, false]);
     expect(run.map((s) => s.syncedRows.some((r) => r.endsWith('calls:BPMnum')))).toEqual([false, true, false, false, false, false, true]);
     expect(run.map((s) => s.synced.some((e) => e.includes('-calls-> BPMnum @ BPMnum.m')))).toEqual([false, false, false, true, false, true, false]);
+  }, 600_000);
+});
+
+describe('MATLAB dormant rows: a member call written with arguments is kept only for what a dotted call can reach', () => {
+  // `s.X(1)` on a parameter, `p.X(1)` on a package; `s.Y(1)` beside them,
+  // which only a plain function `Y.m` carries: a field's or a property's
+  // index, or Java, never a call of `Y`.
+  const CALLER = ['function u(s)', 'a = s.X(1);', 'b = p.X(2);', 'c = s.Y(3);', 'end', ''].join('\n');
+  const PLAIN_Y = { 'u.m': CALLER, 'lib/Y.m': 'function r = Y(v)\nr = v;\nend\n' };
+  const localFn = (name: string): string => `function r = ${name}(v)\nr = v;\nend\n`;
+  const classWithLocal = cls('C', methods('go')) + localFn('X');
+  const classWithMethod = cls('C', methods('go', 'X'));
+  const DORMANT_ALL = ['u.m:2 calls:s.X', 'u.m:3 calls:p::X', 'u.m:4 calls:s.Y'];
+
+  it('a plain, local or nested function, a script or a property of the name carries none: each goes dormant', async () => {
+    const carriers: Array<Record<string, string>> = [
+      { 'lib/X.m': localFn('X') },
+      { 'tools/helpers.m': 'function helpers()\nend\n' + localFn('X') },
+      { 'tools/outer.m': 'function outer()\n  function r = X(v)\n    r = v;\n  end\nend\n' },
+      { 'X.m': 'x = 1;\n' },
+      { 'K.m': cls('K', props('X') + methods('go')) },
+    ];
+    for (const carrier of carriers) {
+      const r = await indexOfProject({ ...PLAIN_Y, ...carrier });
+      expect(r.dormant, JSON.stringify(carrier)).toEqual(DORMANT_ALL);
+      expect(r.unresolved, JSON.stringify(carrier)).toEqual([]);
+    }
+  }, 600_000);
+
+  it('a classdef method, a class-folder method, a package function, a class in a package and a MEX help file in one keep it, as before', async () => {
+    const cases: Array<{ files: Record<string, string>; edges: string[]; live: string[]; dormant: string[] }> = [
+      // The one method of the name: `s.X(1)` links to it, and `p.X(2)`, of a
+      // package the project lacks, is kept: which class or package a head
+      // names is other files' to say.
+      { files: { 'M.m': classWithMethod.replace(/\bC\b/g, 'M') }, edges: ['u.m u -calls-> M::X @ M.m'], live: ['u.m:3 calls:p::X'], dormant: ['u.m:4 calls:s.Y'] },
+      // Two unrelated classes' methods: no edge, the row live.
+      { files: { 'M.m': cls('M', methods('X')), 'N.m': cls('N', methods('X')) }, edges: [], live: ['u.m:2 calls:s.X', 'u.m:3 calls:p::X'], dormant: ['u.m:4 calls:s.Y'] },
+      { files: { '@C/C.m': cls('C', methods('go')), '@C/X.m': 'function r = X(obj, v)\nr = v;\nend\n' }, edges: ['u.m u -calls-> C::X @ @C/X.m'], live: ['u.m:3 calls:p::X'], dormant: ['u.m:4 calls:s.Y'] },
+      { files: { '+p/X.m': localFn('X') }, edges: ['u.m u -calls-> p::X @ +p/X.m'], live: ['u.m:2 calls:s.X'], dormant: ['u.m:4 calls:s.Y'] },
+      { files: { '+p/X.m': cls('X', methods('go')) }, edges: ['u.m u -instantiates-> p::X @ +p/X.m'], live: ['u.m:2 calls:s.X'], dormant: ['u.m:4 calls:s.Y'] },
+      // The help text of a MEX function `p.X`: MATLAB runs the MEX file, which the index never reads.
+      { files: { '+p/X.m': '% X  Help text of a MEX function.\n%   r = p.X(v)\n' }, edges: [], live: ['u.m:2 calls:s.X', 'u.m:3 calls:p::X'], dormant: ['u.m:4 calls:s.Y'] },
+    ];
+    for (const c of cases) {
+      const r = await indexOfProject({ ...PLAIN_Y, ...c.files });
+      const what = JSON.stringify(c.files).slice(0, 120);
+      expect(r.edges.filter((e) => e.startsWith('u.m ')), what).toEqual(c.edges);
+      expect(r.unresolved, what).toEqual(c.live);
+      expect(r.dormant, what).toEqual(c.dormant);
+    }
+  }, 600_000);
+
+  it('a sync ends where a fresh index ends: a method added beside a function of the name and deleted, a local function turned into a method and back', async () => {
+    const initial = { ...PLAIN_Y, 'lib/X.m': localFn('X'), 'C.m': classWithLocal };
+    const steps: Files[] = [
+      { 'M.m': cls('M', methods('go', 'X')) },
+      { 'M.m': null },
+      { 'C.m': classWithMethod },
+      { 'C.m': classWithLocal },
+      { 'C.m': classWithMethod, 'lib/X.m': null },
+      { 'C.m': classWithLocal },
+    ];
+    const run = await expectSyncsFresh(initial, steps);
+    expect(run.map((s) => s.syncedDormant.includes('u.m:2 calls:s.X'))).toEqual([false, true, false, true, false, true]);
+    expect(run.map((s) => s.synced.some((e) => e.startsWith('u.m u -calls-> M::X')))).toEqual([true, false, false, false, false, false]);
+    expect(run.map((s) => s.synced.some((e) => e.startsWith('u.m u -calls-> C::X')))).toEqual([false, false, true, false, true, false]);
+    expect(run.every((s) => s.syncedDormant.includes('u.m:4 calls:s.Y'))).toBe(true);
+  }, 600_000);
+
+  it('a sync ends where a fresh index ends: a property turned into a method and back, a package function and a MEX help file added and removed', async () => {
+    const initial = { ...PLAIN_Y, 'K.m': cls('K', props('X') + methods('go')) };
+    const steps: Files[] = [
+      { 'K.m': cls('K', methods('go', 'X')) },
+      { 'K.m': cls('K', props('X') + methods('go')) },
+      { '+p/X.m': localFn('X') },
+      { '+p/X.m': null },
+      { '+p/X.m': '% X  Help text of a MEX function.\n' },
+      { '+p/X.m': 'x = 1;\n' },
+      { '+p/X.m': null, 'p/X.m': localFn('X') },
+      { 'p/X.m': null },
+    ];
+    const run = await expectSyncsFresh(initial, steps);
+    expect(run.map((s) => s.syncedDormant.includes('u.m:2 calls:s.X'))).toEqual([false, true, false, true, false, false, true, true]);
+    expect(run.map((s) => s.syncedDormant.includes('u.m:3 calls:p::X'))).toEqual([false, true, false, true, false, false, true, true]);
+    expect(run.map((s) => s.synced.some((e) => e.startsWith('u.m u -calls-> p::X')))).toEqual([false, false, true, false, false, false, false, false]);
+  }, 600_000);
+
+  it('the last method of the name deleted beside a plain function of it puts every failed row to sleep, more than the retry takes', async () => {
+    // Two classes' `X`: `s.X(1)` is ambiguous and stays failed while both
+    // stand. The plain `X` answers every other class of call, so only the
+    // member calls among its failed rows are judged again.
+    const USERS = 510;
+    const users: Record<string, string> = {};
+    for (let i = 1; i <= USERS; i++) users[`users/u${i}.m`] = `function u${i}(s)\nr = s.X(1);\nend\n`;
+    const initial = { ...users, 'lib/X.m': localFn('X'), 'M.m': cls('M', methods('X')), 'N.m': cls('N', methods('X')) };
+    const steps: Files[] = [{ 'M.m': null, 'N.m': null }, { 'M.m': cls('M', methods('X')) }, { 'M.m': null }];
+    const run = await syncedAndFreshEachStep(initial, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((s) => s.syncedRows.length)).toEqual([0, 0, 0]);
+    expect(run.map((s) => s.syncedDormant.length)).toEqual([USERS, 0, USERS]);
+    expect(run[1]!.synced.filter((e) => e.includes(' -calls-> M::X @ M.m')).length).toBe(USERS);
   }, 600_000);
 });

@@ -15,17 +15,22 @@
  *     link the call as a fresh index would.
  *   - A member or qualified call (`v.f(x)`, `Cls.m`, `pkg.f`, `obj@Base(x)`;
  *     see matlabMemberCall) whose member no symbol could answer: written with
- *     arguments, no symbol of the member's name (nor a `.m` file of it);
- *     written without (`t = m.Total;`, `Cls.MAX`, the `bare` fact), no
- *     callable one — a property, a constant, an enumeration member or a field
- *     of the name is read, never called. Only MATLAB's symbols and `.m`
- *     files count: a MATLAB call resolves to nothing else. One the member's
- *     name has an answer for is kept, a read of the class's own property too
- *     (resolution gives that one no edge): which of a class's members is a
- *     property and which a method, and which class a head names, is other
- *     files' to say, and the row is what a sync that changes them links
- *     again. The rule depends on the project's symbols alone, never on which
- *     file a sync extracted, so it holds in every file: a sync ends with the
+ *     arguments, no symbol of the member's name that a dotted call can reach
+ *     (MATLAB_MEMBER_NODES: a method, a class, a package's function, a `.m`
+ *     file in a class or package folder) — a plain, local or nested
+ *     function, a script, a property or a field of the name is never what
+ *     `am.X(i)`, `handles.f1(k)` or `jLabel.setText(s)` runs, which index a
+ *     struct's field or a property, or call Java; written without
+ *     (`t = m.Total;`, `Cls.MAX`, the `bare` fact), no callable one — a
+ *     property, a constant, an enumeration member or a field of the name is
+ *     read, never called. Only MATLAB's symbols and `.m` files count: a
+ *     MATLAB call resolves to nothing else. One the member's name has an
+ *     answer for is kept, a read of the class's own property too (resolution
+ *     gives that one no edge): which of a class's members is a property and
+ *     which a method, and which class a head names, is other files' to say,
+ *     and the row is what a sync that changes them links again. The rule
+ *     depends on the project's symbols alone, never on which file a sync
+ *     extracted, so it holds in every file: a sync ends with the
  *     rows a fresh index of the same files has. One whose name the value
  *     interpreter built (the `computed` fact: `feval(strcat('pkg.', 'f'))`,
  *     `eval(['x = Model.' 'make;'])`) is kept whatever carries its member: no
@@ -119,10 +124,27 @@ export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'e
  * carry their names.
  */
 export const MATLAB_CARRIER_NODES: NodeFilter = { readable: true };
-/** The MATLAB nodes that carry a member's name for a call written with arguments. */
+/** The MATLAB nodes: a sync diffs their names, file by file, for the member calls' carriers (see ./matlab-builtin-carriers). */
 export const MATLAB_NODES: NodeFilter = { language: 'matlab', readable: true };
-/** The MATLAB nodes that carry a member's name for one written without: the callable ones. */
+/** The MATLAB nodes that carry a member's name for a call written without an argument list: the callable ones. */
 export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS, readable: true };
+/**
+ * The MATLAB nodes that carry a member's name for a call written with
+ * arguments (`v.f(x)`, `pkg.f(x)`, `Cls.m(x)`, `obj@Base(x)`): the ones such
+ * a call can reach, which are the ones resolution links it to
+ * (callTarget in ./matlab-lookup) — a method (in a classdef or a class
+ * folder), a class or an enumeration (`pkg.Cls(x)`, `obj@Base(x)` on a class
+ * that declares no constructor), a package's function (`pkg::f`, exported:
+ * isPackageMember) — and the file node of a `.m` file directly in a class or
+ * a package folder (`+pkg/f.m`, `@Cls/f.m`: the help text of a MEX function
+ * that MATLAB reaches as `pkg.f(x)`, which the index never reads). Never a
+ * plain, local or nested function, a script or any other `.m` file, a
+ * property, a constant, an enumeration member or a field: `a.f(x)` reaches
+ * none of them. (A nested or package-local function `pkg::helper` is
+ * reached by its qualified name from its own file alone, where the call
+ * resolves to it and so never fails.) Every one is a callable node too.
+ */
+export const MATLAB_MEMBER_NODES: NodeFilter = { language: 'matlab', readable: true, matlabMember: true };
 
 /**
  * A MATLAB member or qualified call, the rule's subject (see the top of this
@@ -230,8 +252,8 @@ export interface UnanswerableMatlabFailures {
  * `known`, the names every node carries (read when the pass began, after its
  * definitions were stored), or, when the pass has none (its caches dropped
  * since), of the index; a member's carriers, of MATLAB's symbols alone
- * (MATLAB_NODES for a call with arguments, MATLAB_CALLABLE_NODES for one
- * without).
+ * (MATLAB_MEMBER_NODES for a call with arguments, MATLAB_CALLABLE_NODES for
+ * one without).
  *
  * No node of a `.m` file whose text was read as no MATLAB code carries a
  * name (MATLAB_CARRIER_NODES): Octave's `datestr.m`, MATLAB Compiler's
@@ -278,7 +300,7 @@ export function unanswerableMatlabFailures(
     for (const { ref, keys } of list) if (!keys.some((k) => found.has(k))) dormant.add(ref);
   };
   dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
-  dropUncarried(calledMembers, MATLAB_NODES);
+  dropUncarried(calledMembers, MATLAB_MEMBER_NODES);
   if (pending.length === 0) return { deleted, dormant };
   const carried = matlabCarriedKeys(pending.flatMap((p) => p.keys), known, queries);
   for (const { ref, keys, builtin } of pending) {

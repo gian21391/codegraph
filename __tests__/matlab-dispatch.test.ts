@@ -768,12 +768,13 @@ describe('MATLAB member call rows: kept while the member has a carrier, and a sy
     expect(refs('Sub.m', code).filter((r) => r.includes('Base::')).map((r) => r.replace(/ \[args:[^\]]*\]$/, ''))).toEqual(['4 calls:Base::Base', '7 calls:Base::show']);
   });
 
-  it('deletes a member call\'s row only when no symbol could answer it: none at all, or for a read, no callable one', async () => {
+  it('keeps a member call\'s row live only when a symbol could answer it: for a call, one a dotted call reaches (not a property), for a read, a callable one', async () => {
     const { unresolved } = await indexOfProject({
       'Other.m': withProps(cls('Other', 'handle', method('r = run(obj)', '            r = 1;\n')), '        limit\n'),
       'Model.m': cls('Model', 'handle', method('go(obj)', '            a = obj.limit;\n            b = obj.run;\n            c = obj.nothing;\n            obj.limit(1);\n            obj.nothing(1);\n')),
     });
-    expect(unresolved).toEqual(['Model.m:5 calls:Model::run', 'Model.m:7 calls:Model::limit']);
+    // `obj.limit(1)` indexes a property, which no call reaches: dormant.
+    expect(unresolved).toEqual(['Model.m:5 calls:Model::run']);
   });
 });
 
@@ -968,10 +969,16 @@ describe('MATLAB kept member rows past the retry ceiling (review 2, cases 6 and 
   it('drops the kept rows when the last carrier of the kind they need goes (case 6)', async () => {
     const steps = await syncedAndFreshEachStep(
       { ...users(), 'Model.m': MODEL_PROPS.replace('        Total\n        Rate\n', '        Gain\n'), 'Other.m': OTHER_METHODS },
-      { 'Other.m': OTHER_PROPS },
+      { 'Other.m': null, 'lib/Total.m': 'function t = Total(varargin)\nt = 1;\nend\n', 'lib/Rate.m': 'function t = Rate(varargin)\nt = 1;\nend\n' },
+      { 'lib/Total.m': null, 'lib/Rate.m': null, 'Other.m': OTHER_PROPS },
       { 'Other.m': null },
     );
-    expect(steps.map((st) => st.syncedRows.length)).toEqual([USERS, 0]);
+    // Plain functions in place of the methods carry the reads (`m.Total`, a
+    // callable's name) but not the calls (`m.Rate(1)`, which only a dotted
+    // call's target answers): the rows of one name split, past the ceiling.
+    // Then properties carry neither (`m.Rate(1)` indexes one): every row sleeps.
+    expect(steps.map((st) => st.syncedRows.length)).toEqual([USERS, 0, 0]);
+    expect(steps.map((st) => st.syncedDormant.length)).toEqual([USERS, 2 * USERS, 2 * USERS]);
     expectEveryStepFresh(steps);
   }, 600_000);
 });

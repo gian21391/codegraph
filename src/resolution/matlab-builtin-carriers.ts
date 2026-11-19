@@ -24,23 +24,27 @@
  * runtime makes, `T::datestr` dispatched under a built-in's name (see
  * matlabUnmatchableKeys in ./matlab-failures), and a member call (`v.f(x)`,
  * `m.Total`, `obj@Base(x)`; see matlabMemberCall), which only MATLAB's
- * symbols carry, and only callable ones when written without arguments — is
+ * symbols carry — only callable ones when written without arguments, and
+ * only the ones a dotted call can reach (a method, a class, a package's
+ * function, a `.m` file in a class or package folder) when written with —, is
  * never deleted: while nothing carries its name it is a dormant row, which
  * no reader counts, stored under its tail. Every name whose carriers a sync
  * may have changed — whose definition set changed in any language, whose
- * MATLAB or callable MATLAB definitions did (a property turned into a method
- * of the same name), the name of a `.m` file whose text turned to MATLAB
- * code or from it (MatlabCarrierChange.judged) — has its dormant and failed
- * rows judged again, by the resolver's own rule (see matlabDormancyFlips): a
- * dormant row the name now has a carrier for wakes, and the sync's sweep
- * links it or parks it failed; a failed one it has none for any more goes
- * dormant. That is two probes of the node names (which of the names any node
- * carries, and which a callable MATLAB one does) and two lookups of rows by
- * tail (the dormant ones of the names some node carries, the failed ones of
- * the names no callable MATLAB symbol carries), however many files name the
- * word, and no file is read for it. (An edge to a carrier the sync removes
- * goes back to a reference, which the sweep resolves and, failing, keeps
- * dormant, wherever it is.)
+ * MATLAB, callable MATLAB or member-reachable MATLAB definitions did (a
+ * property turned into a method of the same name, a local function turned
+ * into a classdef method), the name of a `.m` file whose text turned to
+ * MATLAB code or from it (MatlabCarrierChange.judged) — has its dormant and
+ * failed rows judged again, by the resolver's own rule (see
+ * matlabDormancyFlips): a dormant row the name now has a carrier for wakes,
+ * and the sync's sweep links it or parks it failed; a failed one it has none
+ * for any more goes dormant. That is three probes of the node names (which
+ * of the names any node carries, which a callable MATLAB one does, and which
+ * one a member call can reach does) and two lookups of rows by tail (the
+ * dormant ones of the names some node carries, the failed ones of the names
+ * no callable MATLAB symbol carries or whose MATLAB definitions changed),
+ * however many files name the word, and no file is read for it. (An edge
+ * to a carrier the sync removes goes back to a reference, which the sweep
+ * resolves and, failing, keeps dormant, wherever it is.)
  *
  * And a name whose MATLAB definitions a sync changed at all
  * (MatlabCarrierChange.relinked) has its failed rows resolved again, every
@@ -75,7 +79,7 @@ import * as path from 'path';
 import { DORMANT_REF_STATUS, type QueryBuilder } from '../db/queries';
 import { MATLAB_BUILTINS, addMatlabReachableNames } from '../extraction/languages/matlab-builtins';
 import { isJavaImport } from '../extraction/languages/matlab-java';
-import { MATLAB_CALLABLE_NODES, MATLAB_CARRIER_NODES, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_CARRIER_NODES, MATLAB_MEMBER_NODES, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
 
 /** What a sync changed of the project's symbols and files, as the extraction step of a sync knows it. */
 export interface MatlabCarrierInput {
@@ -95,6 +99,15 @@ export interface MatlabCarrierInput {
   callablePairsBefore: ReadonlySet<string>;
   /** The same of the files the sync extracted, read after. */
   callablePairsAfter: ReadonlySet<string>;
+  /**
+   * `file\0name` of every MATLAB node a member call written with arguments
+   * can reach (MATLAB_MEMBER_NODES) of those files, read before: a local
+   * function turned into a classdef method of the same name, in one file,
+   * changes these alone.
+   */
+  memberPairsBefore: ReadonlySet<string>;
+  /** The same of the files the sync extracted, read after. */
+  memberPairsAfter: ReadonlySet<string>;
   /**
    * Of the files the sync replaced or removed, the ones whose text had been
    * read as no MATLAB code (Octave, a binary: see MATLAB_CARRIER_NODES), read
@@ -165,10 +178,11 @@ function builtinOf(name: string): string | null {
 export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrierInput): MatlabCarrierChange {
   const candidates = new Set<string>();
   // Every name a carrier of some class may have come or gone for: a name
-  // whose definition set changed in any language, or whose MATLAB or
-  // callable MATLAB one did (a property turned into a method keeps its
-  // names), as a symbol's (`f`) and as a `.m` file's (`f.m`); and the ones
-  // whose MATLAB or callable MATLAB definitions changed (`relinked`).
+  // whose definition set changed in any language, or whose MATLAB, callable
+  // MATLAB or member-reachable MATLAB one did (a property turned into a
+  // method keeps its names, a local function turned into a method its
+  // callable ones), as a symbol's (`f`) and as a `.m` file's (`f.m`); and the
+  // ones whose MATLAB definitions of any of the three changed (`relinked`).
   const judged = new Set<string>();
   const relinked = new Set<string>();
   const judge = (name: string): void => {
@@ -188,6 +202,7 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
   };
   addChanged(input.matlabPairsBefore, input.matlabPairsAfter, relinked);
   addChanged(input.callablePairsBefore, input.callablePairsAfter, relinked);
+  addChanged(input.memberPairsBefore, input.memberPairsAfter, relinked);
   for (const name of input.deltaNames) {
     judge(name);
     const b = builtinOf(name);
@@ -429,17 +444,26 @@ export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarri
 export function matlabDormancyFlips(queries: QueryBuilder, change: MatlabCarrierChange): { wake: number[]; sleep: number[]; reopen: number[] } {
   if (change.judged.length === 0) return { wake: [], sleep: [], reopen: [] };
   // Only a name some node carries now can wake a row (every class's
-  // carriers are nodes of that name), and none a callable MATLAB symbol
-  // carries can put one to sleep (it is a carrier of every class): the
-  // dormant rows of the others are not read, and the failed ones only to
-  // reopen.
+  // carriers are nodes of that name), and none a MATLAB symbol a member call
+  // can reach carries can put one to sleep (it is a carrier of every class:
+  // such a node is a callable one, and a callable one a node). A callable
+  // one no member call reaches (a plain function `X`) answers every class
+  // but a member call written with arguments (`v.X(1)`): a failed one of
+  // those is judged too. Its failed rows are read only when the name is
+  // relinked, though, as they were before: a member call's carriers are
+  // MATLAB nodes, whose every change relinks the name (see
+  // matlabCarrierChanges), so one judged only for another language's
+  // definitions keeps its member calls as they were. The dormant rows of
+  // the others are not read, and the failed ones only to reopen.
   const keys = change.judged.flatMap(matlabNameKeys);
   const named = queries.getNodeNamesAmong(keys);
   const callable = queries.getNodeNamesAmong(keys.filter((k) => named.has(k)), MATLAB_CALLABLE_NODES);
-  const answersAll = (tail: string): boolean => matlabNameKeys(tail).some((k) => callable.has(k));
+  const member = queries.getNodeNamesAmong(keys.filter((k) => callable.has(k)), MATLAB_MEMBER_NODES);
+  const carried = (tail: string, by: ReadonlySet<string>): boolean => matlabNameKeys(tail).some((k) => by.has(k));
+  const answersAll = (tail: string): boolean => carried(tail, member);
   const relinked = new Set(change.relinked);
-  const asleep = queries.getMatlabCallRefsByTail(change.judged.filter((t) => matlabNameKeys(t).some((k) => named.has(k))), DORMANT_REF_STATUS);
-  const failed = queries.getMatlabCallRefsByTail(change.judged.filter((t) => relinked.has(t) || !answersAll(t)), 'failed');
+  const asleep = queries.getMatlabCallRefsByTail(change.judged.filter((t) => carried(t, named)), DORMANT_REF_STATUS);
+  const failed = queries.getMatlabCallRefsByTail(change.judged.filter((t) => relinked.has(t) || !carried(t, callable)), 'failed');
   if (asleep.length === 0 && failed.length === 0) return { wake: [], sleep: [], reopen: [] };
   const judgeable = failed.filter((ref) => !answersAll(ref.nameTail));
   const { dormant } = unanswerableMatlabFailures([...asleep, ...judgeable], undefined, null, queries);
