@@ -297,7 +297,7 @@ function searchPathOf(context: ResolutionContext): MatlabSearchPath | null {
 }
 
 /** The folder a caller runs from when it is off the path: its own (a class folder's or a package's parent, a `private/` folder's parent). */
-function callerFolder(callerFile: string): string {
+export function callerFolder(callerFile: string): string {
   const folder = matlabLookupFolder(callerFile);
   return folder ?? dirOf(dirOf(callerFile));
 }
@@ -336,6 +336,33 @@ function choose(candidates: Node[], callerFile: string, context: ResolutionConte
   if (own.length > 0) return nearest(own, callerFile);
   const visible = firstOnPath(searchPath, reached, callerFile);
   return visible ?? (builtin ? undefined : nearest(candidates, callerFile));
+}
+
+/**
+ * Whether a project's `.m` file `copyFile` of a built-in's name may be what
+ * MATLAB runs for a bare call of the name from `callerFile`, ahead of
+ * MATLAB's own function, by the rules `choose` applies to a built-in's name:
+ * a copy in the folder the caller runs from (the current folder, for a
+ * caller off the path; for one on it, a folder the current one may be), one
+ * ahead of MATLAB's own folders on the path, a `private/` one in reach. With
+ * no path in force, any copy may be. A copy in a package or a class folder
+ * never is (no bare call reaches it). A call that failed while such a copy
+ * stands failed for another reason than MATLAB's own function winning: a
+ * script called with arguments, a nearer case variant, a stub (the help of
+ * a MEX function MATLAB runs instead): see ./matlab-failures.
+ */
+export function matlabBuiltinCopyMayWin(callerFile: string, copyFile: string, context: ResolutionContext): boolean {
+  const scope = matlabPathScope(copyFile);
+  if (scope.packages.length > 0 || scope.classFolder !== undefined) return false;
+  const dir = dirOf(copyFile);
+  if (/(?:^|\/)private$/.test(dir)) {
+    const callerDir = dirOf(callerFile);
+    return callerDir === dir || callerDir === dirOf(dir);
+  }
+  const searchPath = searchPathOf(context);
+  if (!searchPath) return true;
+  if (dir === callerFolder(callerFile)) return true;
+  return searchPath.isBeforeMatlab(copyFile);
 }
 
 /** `candidates` a caller the path runs can see; all of them for any other caller, or with no path. */

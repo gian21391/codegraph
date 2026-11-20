@@ -6,18 +6,29 @@
  * A call of a built-in's name (`disp(3)`, `@beep`) is kept only while the
  * project could answer it: its row is dropped at extraction unless a `.m`
  * file of that name exists (or the file imports, or defines the name
- * itself), and deleted at resolution unless a project symbol carries the
- * name (see ../extraction/languages/matlab-builtins). Those rows are written
- * and judged only when their own file is extracted. So a sync that gives a
+ * itself), and deleted at resolution unless a MATLAB symbol that could
+ * answer a bare call carries the name (MATLAB_CALLABLE_NODES: no property,
+ * constant, enumeration member or field, nothing of another language; see
+ * ../extraction/languages/matlab-builtins). Those rows are written and
+ * judged only when their own file is extracted. So a sync that gives a
  * built-in's name its first carrier — the first `.m` file of that name, or
- * the first symbol of it anywhere — extracts again the MATLAB files that
- * name it, and one that takes the last carrier away, or the last `.m` file
- * of the name, deletes the rows a fresh index would not keep. (A `.m` file
- * of Octave or binary text carries no name: one whose text turns to MATLAB
- * code, or from it, gives its name a carrier, or takes one, as one added or
- * removed does. An Objective-C `.m` carries its names, as any language's
- * symbol does, and reaches none: see classifyMatlabBuiltins.) A project
- * seldom names a file or a function after a built-in, so this seldom runs.
+ * the first such symbol of it anywhere (a property turned into a method of
+ * the name counts) — extracts again the MATLAB files that name it, and one
+ * that takes the last carrier away, or the last `.m` file of the name,
+ * deletes the rows a fresh index would not keep, dormant ones too. (A `.m`
+ * file of Octave or binary text carries no name: one whose text turns to
+ * MATLAB code, or from it, gives its name a carrier, or takes one, as one
+ * added or removed does. An Objective-C `.m` carries none and reaches none:
+ * see classifyMatlabBuiltins.) A project seldom names a file or a function
+ * after a built-in, so this seldom runs.
+ *
+ * A built-in's call that only the path could give a copy of is a dormant
+ * row (see ../resolution/matlab-failures), and is woken wherever a failed
+ * one would be re-opened, to be resolved again: every one when the path
+ * moves (see wakeMatlabBuiltinRows), those of a name whose MATLAB
+ * definitions a sync changed (matlabDormancyFlips), of a case variant come
+ * or gone and of a file turned into a script or a stub (see ./matlab-sync).
+ * Resolved again and failing, it is judged as a fresh index judges it.
  *
  * Any other call whose row is kept only while a symbol carries its name — a
  * bare read (`c = color;`), a command (`setup_paths`), a name code run at
@@ -79,14 +90,12 @@ import * as path from 'path';
 import { DORMANT_REF_STATUS, type QueryBuilder } from '../db/queries';
 import { MATLAB_BUILTINS, addMatlabReachableNames } from '../extraction/languages/matlab-builtins';
 import { isJavaImport } from '../extraction/languages/matlab-java';
-import { MATLAB_CALLABLE_NODES, MATLAB_CARRIER_NODES, MATLAB_MEMBER_NODES, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, isMatlabBuiltinCall, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
 
 /** What a sync changed of the project's symbols and files, as the extraction step of a sync knows it. */
 export interface MatlabCarrierInput {
   /** The names whose definition set the sync changed (added to or taken from a file), in any language. */
   deltaNames: ReadonlySet<string>;
-  /** `file\0name` of every node of the files the sync replaced or removed, read before it did. */
-  pairsBefore: ReadonlySet<string>;
   /** The files the sync extracted (their nodes are the new ones now). */
   extracted: ReadonlySet<string>;
   addedPaths: readonly string[];
@@ -95,7 +104,10 @@ export interface MatlabCarrierInput {
   matlabPairsBefore: ReadonlySet<string>;
   /** The same of the files the sync extracted, read after. */
   matlabPairsAfter: ReadonlySet<string>;
-  /** `file\0name` of every callable MATLAB node (MATLAB_CALLABLE_NODES) of those files, read before. */
+  /**
+   * `file\0name` of every callable MATLAB node (MATLAB_CALLABLE_NODES) of
+   * those files, read before: the carriers of a built-in's name among them.
+   */
   callablePairsBefore: ReadonlySet<string>;
   /** The same of the files the sync extracted, read after. */
   callablePairsAfter: ReadonlySet<string>;
@@ -110,9 +122,9 @@ export interface MatlabCarrierInput {
   memberPairsAfter: ReadonlySet<string>;
   /**
    * Of the files the sync replaced or removed, the ones whose text had been
-   * read as no MATLAB code (Octave, a binary: see MATLAB_CARRIER_NODES), read
-   * before it did. None of their nodes carried a name then, and no name is
-   * reached through them.
+   * read as no MATLAB code (Octave, a binary: see MATLAB_CARRIER_NODES in
+   * ./matlab-failures), read before it did. None of their nodes carried a
+   * name then, and no name is reached through them.
    */
   unreadBefore: ReadonlySet<string>;
   /**
@@ -167,7 +179,7 @@ function stemOf(name: string): string | null {
 
 const mPath = (p: string): boolean => p.toLowerCase().endsWith('.m');
 
-/** The built-ins' names among a node's (or a script file's: `beep.m`) names. */
+/** The built-in's name a node's (or a script file's: `beep.m`) name is, or null. */
 function builtinOf(name: string): string | null {
   if (MATLAB_BUILTINS.has(name)) return name;
   const stem = /^(.+)\.[mM]$/.exec(name)?.[1];
@@ -189,10 +201,14 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
     const stem = stemOf(name);
     if (stem !== null) judged.add(stem);
   };
-  const addChanged = (a: ReadonlySet<string>, b: ReadonlySet<string>, into: Set<string> | null): void => {
+  const addChanged = (a: ReadonlySet<string>, b: ReadonlySet<string>, into: Set<string> | null, carriers = false): void => {
     for (const [x, y] of [[a, b], [b, a]] as const) {
       for (const pair of x) {
         if (y.has(pair)) continue;
+        // A built-in's carrier come or gone (a property turned into a method
+        // of its name changes no definition set): a candidate below.
+        const builtin = carriers ? builtinOf(nameOf(pair)) : null;
+        if (builtin !== null) candidates.add(builtin);
         const stem = stemOf(nameOf(pair));
         if (stem === null) continue;
         judged.add(stem);
@@ -201,7 +217,7 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
     }
   };
   addChanged(input.matlabPairsBefore, input.matlabPairsAfter, relinked);
-  addChanged(input.callablePairsBefore, input.callablePairsAfter, relinked);
+  addChanged(input.callablePairsBefore, input.callablePairsAfter, relinked, true);
   addChanged(input.memberPairsBefore, input.memberPairsAfter, relinked);
   for (const name of input.deltaNames) {
     judge(name);
@@ -230,17 +246,20 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
   change.relinked = [...relinked];
   if (candidates.size === 0) return change;
   const changed = new Set([...input.extracted, ...input.removedPaths]);
+  // The callable pairs were read with MATLAB_CALLABLE_NODES before the sync
+  // changed the files: none of a file whose text was read as no MATLAB code.
   const carriedBefore = new Set<string>();
-  for (const pair of input.pairsBefore) if (!input.unreadBefore.has(pair.slice(0, pair.indexOf('\0')))) carriedBefore.add(nameOf(pair));
+  for (const pair of input.callablePairsBefore) carriedBefore.add(nameOf(pair));
   classifyMatlabBuiltins(queries, candidates, { changed, carriedBefore, reachingBefore: [...input.reachingBefore] }, change);
   return change;
 }
 
 /**
  * What the project held before a change, of the files it changed, for
- * classifyMatlabBuiltins: the names their nodes carried (none of a file
- * whose text was read as no MATLAB code), and the ones of them that were
- * `.m` files of MATLAB code. The index holds the rest as they were.
+ * classifyMatlabBuiltins: the names their callable MATLAB nodes carried
+ * (MATLAB_CALLABLE_NODES: none of a file whose text was read as no MATLAB
+ * code), and the ones of them that were `.m` files of MATLAB code. The index
+ * holds the rest as they were.
  */
 interface MatlabBuiltinsBefore {
   changed: ReadonlySet<string>;
@@ -252,15 +271,16 @@ interface MatlabBuiltinsBefore {
  * Which of the built-ins' names `candidates` a change gave a first carrier
  * or reach, or took them from, into `change` (gained, lost, unreached), by
  * the rules a fresh index keeps a built-in's call by, before and now:
- * carried, some node is named for it (the resolver's, MATLAB_CARRIER_NODES:
- * a function, a class, a script's `.m`, in any language, none of a file
- * whose text is no MATLAB code); reached, a `.m` file of MATLAB code is
+ * carried, some callable MATLAB node is named for it (the resolver's,
+ * MATLAB_CALLABLE_NODES: a function, a method, a class, a script's `.m`;
+ * no property, nothing of another language, none of a file whose text is no
+ * MATLAB code); reached, a `.m` file of MATLAB code is
  * named for it (the extraction's, see MatlabInsertFilter: an Objective-C
  * `.m` reaches none), which keeps its calls at extraction. A candidate
  * whose carriers and reach did not change is none of the three.
  */
 function classifyMatlabBuiltins(queries: QueryBuilder, candidates: ReadonlySet<string>, before: MatlabBuiltinsBefore, change: MatlabCarrierChange): void {
-  const carriers = queries.getFilesCarryingNames([...candidates].flatMap(matlabNameKeys), MATLAB_CARRIER_NODES);
+  const carriers = queries.getFilesCarryingNames([...candidates].flatMap(matlabNameKeys), MATLAB_CALLABLE_NODES);
   const carriedBefore = (keys: string[]): boolean =>
     keys.some((k) => before.carriedBefore.has(k) || [...(carriers.get(k) ?? [])].some((f) => !before.changed.has(f)));
   const carriedNow = (keys: string[]): boolean => keys.some((k) => carriers.has(k));
@@ -284,8 +304,9 @@ function classifyMatlabBuiltins(queries: QueryBuilder, candidates: ReadonlySet<s
 /**
  * What a sync's carrier step is worked out from, recorded before the sync
  * replaces or removes a file (see MATLAB_CARRIER_INPUTS_KEY): the files it
- * changes; the names their nodes carried (see MatlabBuiltinsBefore: none of
- * a file whose text was read as no MATLAB code); and the ones of them that
+ * changes; the names their nodes carried (none of a file whose text was
+ * read as no MATLAB code), and the ones of them their callable MATLAB nodes
+ * carried (`callable`, see MatlabBuiltinsBefore); and the ones of them that
  * were `.m` files of MATLAB code (`reaching`). A sync killed after it stored
  * the files and before its carrier step leaves it, and the next sync (or a
  * full index) works the step out from it (see replayedMatlabCarrierChanges).
@@ -293,6 +314,7 @@ function classifyMatlabBuiltins(queries: QueryBuilder, candidates: ReadonlySet<s
 export interface MatlabCarrierInputs {
   files: string[];
   names: string[];
+  callable: string[];
   reaching: string[];
 }
 
@@ -306,7 +328,9 @@ export const MATLAB_CARRIER_INPUTS_KEY = 'matlab_carrier_inputs_pending';
  * earlier build of this record) reads as one none of whose files reached a
  * name before: a built-in carried and reached now may then be called
  * gained, and the files naming it extracted again, which is more work and
- * never another answer.
+ * never another answer. One with no `callable` (written by a build that
+ * counted every node a carrier) reads its `names` for it, as that build
+ * would have.
  */
 export function readMatlabCarrierInputs(queries: QueryBuilder): MatlabCarrierInputs | null {
   const text = queries.getMetadata(MATLAB_CARRIER_INPUTS_KEY);
@@ -315,11 +339,12 @@ export function readMatlabCarrierInputs(queries: QueryBuilder): MatlabCarrierInp
     const v = JSON.parse(text) as Partial<MatlabCarrierInputs>;
     const strs = (x: unknown): x is string[] => Array.isArray(x) && x.every((f) => typeof f === 'string');
     const reaching = v.reaching ?? [];
-    if (strs(v.files) && strs(v.names) && strs(reaching)) return { files: v.files, names: v.names, reaching };
+    const callable = v.callable ?? v.names;
+    if (strs(v.files) && strs(v.names) && strs(callable) && strs(reaching)) return { files: v.files, names: v.names, callable, reaching };
   } catch {
     // Not JSON: as empty.
   }
-  return { files: [], names: [], reaching: [] };
+  return { files: [], names: [], callable: [], reaching: [] };
 }
 
 /** Records `inputs` (see MatlabCarrierInputs), or clears the record when given null. */
@@ -334,8 +359,9 @@ export function writeMatlabCarrierInputs(queries: QueryBuilder, inputs: MatlabCa
  * their `.m` names, all of them relinked: judging a name whose carriers did
  * not change, and resolving its failed rows again, changes nothing a fresh
  * index would not have. A built-in's name among them is classified as the
- * killed sync would have (classifyMatlabBuiltins), by its carriers and reach
- * before, from the record, and now: gained only if it had no carrier, or
+ * killed sync would have (classifyMatlabBuiltins), by its carriers (the
+ * record's `callable`) and reach before, from the record, and now: gained
+ * only if it had no carrier, or
  * no carrier and reach together, before and has now; lost only if it had
  * a carrier and has none.
  */
@@ -361,7 +387,7 @@ export function replayedMatlabCarrierChanges(queries: QueryBuilder, inputs: Matl
   change.relinked = [...judged];
   if (candidates.size === 0) return change;
   classifyMatlabBuiltins(queries, candidates, {
-    changed: new Set(inputs.files), carriedBefore: new Set(inputs.names), reachingBefore: inputs.reaching,
+    changed: new Set(inputs.files), carriedBefore: new Set(inputs.callable), reachingBefore: inputs.reaching,
   }, change);
   return change;
 }
@@ -412,7 +438,7 @@ export function matlabFilesNaming(
   return out;
 }
 
-/** The built-ins' rows a fresh index would not keep (see MatlabCarrierChange), by id. */
+/** The built-ins' rows a fresh index would not keep (see MatlabCarrierChange), dormant ones too, by id. */
 export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarrierChange): number[] {
   const ids: number[] = [];
   if (change.lost.length > 0) for (const row of queries.getMatlabCallRowsNamed(change.lost)) ids.push(row.id);
@@ -439,7 +465,12 @@ export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarri
  * answers now to sleep, dormant. And a failed one of a name whose MATLAB
  * definitions changed (MatlabCarrierChange.relinked) that stays answered to
  * reopen, to pending as well, every one: the symbol it links to may be
- * another now. A pending one is the sync's own passes' to judge. By id.
+ * another now. A built-in's call is no such judge's: whether it sleeps asks
+ * where its copies stand, which only resolving it tells, so its dormant and
+ * failed rows of a relinked name are woken and reopened, every one, and
+ * judged once the sweep has failed them again (a carrier gone is the
+ * classification's: see uncarriedMatlabRowIds). A pending one is the sync's
+ * own passes' to judge. By id.
  */
 export function matlabDormancyFlips(queries: QueryBuilder, change: MatlabCarrierChange): { wake: number[]; sleep: number[]; reopen: number[] } {
   if (change.judged.length === 0) return { wake: [], sleep: [], reopen: [] };
@@ -465,13 +496,31 @@ export function matlabDormancyFlips(queries: QueryBuilder, change: MatlabCarrier
   const asleep = queries.getMatlabCallRefsByTail(change.judged.filter((t) => carried(t, named)), DORMANT_REF_STATUS);
   const failed = queries.getMatlabCallRefsByTail(change.judged.filter((t) => relinked.has(t) || !carried(t, callable)), 'failed');
   if (asleep.length === 0 && failed.length === 0) return { wake: [], sleep: [], reopen: [] };
-  const judgeable = failed.filter((ref) => !answersAll(ref.nameTail));
-  const { dormant } = unanswerableMatlabFailures([...asleep, ...judgeable], undefined, null, queries);
+  const judgeable = failed.filter((ref) => !isMatlabBuiltinCall(ref) && !answersAll(ref.nameTail));
+  const { dormant } = unanswerableMatlabFailures([...asleep.filter((ref) => !isMatlabBuiltinCall(ref)), ...judgeable], undefined, null, queries);
   return {
-    wake: asleep.filter((ref) => !dormant.has(ref)).map((ref) => ref.rowId),
+    wake: asleep.filter((ref) => (isMatlabBuiltinCall(ref) ? relinked.has(ref.nameTail) : !dormant.has(ref))).map((ref) => ref.rowId),
     sleep: judgeable.filter((ref) => dormant.has(ref)).map((ref) => ref.rowId),
     reopen: failed.filter((ref) => relinked.has(ref.nameTail) && !dormant.has(ref)).map((ref) => ref.rowId),
   };
+}
+
+/**
+ * Wakes the dormant rows of a built-in's call (see ../resolution/matlab-failures)
+ * named one of `names`, or every one when `names` is null, outside the files
+ * in `skip`: back to pending, for the sync's sweep to resolve again where a
+ * failed one is re-opened (a path that moved, a case variant come or gone, a
+ * file turned into a script or a stub: see ./matlab-sync). Only such a row
+ * asks where a project copy stands; the other dormant classes go by
+ * carriers alone. Returns the rows woken.
+ */
+export function wakeMatlabBuiltinRows(queries: QueryBuilder, names: Iterable<string> | null, skip?: ReadonlySet<string>): number {
+  const tails = names === null ? [...MATLAB_BUILTINS] : [...names].filter((n) => MATLAB_BUILTINS.has(n));
+  if (tails.length === 0) return 0;
+  const ids = queries.getMatlabCallRefsByTail(tails, DORMANT_REF_STATUS)
+    .filter((ref) => isMatlabBuiltinCall(ref) && !skip?.has(ref.filePath))
+    .map((ref) => ref.rowId);
+  return ids.length > 0 ? queries.setMatlabDormancy(ids, []) : 0;
 }
 
 /**

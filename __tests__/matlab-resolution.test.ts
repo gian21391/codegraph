@@ -689,7 +689,7 @@ describe('MATLAB function precedence', () => {
       // On its own object, inside a method file.
       '@AccObj/bump.m': 'function obj = bump(obj)\nobj = set(obj, \'v\', 2);\nend\n',
       // `set(h, …)` on a parameter, `plot`, `uicontrol`, `strtrim`, `fclose`: the built-ins, which leave no row.
-      'useAcc.m': 'function useAcc(h, fid)\na = AccObj(1);\na = set(a, \'v\', 2);\nv = get(a, \'v\');\nset(h, \'Visible\', \'off\');\nplot(1:3);\nuicontrol(\'Style\', \'text\');\ns = strtrim(\' x \');\nfclose(fid);\nmissing(h);\nend\n',
+      'useAcc.m': 'function useAcc(h, fid)\na = AccObj(1);\na = set(a, \'v\', 2);\nv = get(a, \'v\');\nset(h, \'Visible\', \'off\');\nplot(1:3);\nuicontrol(\'Style\', \'text\');\ns = strtrim(\' x \');\nfclose(fid);\nnotdefined(h);\nend\n',
     });
     expect(edges.filter((e) => e.includes(' -calls-> '))).toEqual([
       '@AccObj/bump.m AccObj::bump -calls-> AccObj::set @ @AccObj/set.m',
@@ -700,7 +700,7 @@ describe('MATLAB function precedence', () => {
     // built-in's name is kept, for a later sync to retry. `class(obj, …)` on the method's own object
     // is `AccObj::class`, which AccObj does not define and no symbol is named: the built-in's, no row either.
     expect(edges.filter((e) => e.includes(' -instantiates-> '))).toEqual(['useAcc.m useAcc -instantiates-> AccObj @ @AccObj/AccObj.m']);
-    expect(unresolved).toEqual(['useAcc.m:10 calls:missing']);
+    expect(unresolved).toEqual(['useAcc.m:10 calls:notdefined']);
   });
 
   it('reaches a project function named like a built-in — on the path, in private/, local to the file — and keeps no row for one it does not define', async () => {
@@ -731,13 +731,13 @@ describe('MATLAB function precedence', () => {
 
   it('keeps no row for a call of MATLAB\'s own functions that real code leaves unlinked, in MATLAB or a toolbox, and links a project copy of one', async () => {
     const { edges, unresolved } = await indexOfProject({
-      'useMore.m': 'function useMore(x, d)\nn = nextpow2(numel(x));\nt = seconds(d);\ns = resize(x, 3);\nh = histogram(x);\nB = bwareaopen(x > 0, 4);\nT = table(x);\nmissing(x);\nend\n',
+      'useMore.m': 'function useMore(x, d)\nn = nextpow2(numel(x));\nt = seconds(d);\ns = resize(x, 3);\nh = histogram(x);\nB = bwareaopen(x > 0, 4);\nT = table(x);\nnotdefined(x);\nend\n',
       // A project's own copy of one, on the path, as a shipped toolbox carries.
       'cot.m': 'function y = cot(x)\ny = 1 ./ tan(x);\nend\n',
       'useCot.m': 'function useCot(x)\ny = cot(x);\nend\n',
     });
     expect(edges).toEqual(['useCot.m useCot -calls-> cot @ cot.m']);
-    expect(unresolved).toEqual(['useMore.m:8 calls:missing']);
+    expect(unresolved).toEqual(['useMore.m:8 calls:notdefined']);
   });
 
   it('takes a classdef file\'s local function before the method of the same name, and a script\'s local function before the built-in', async () => {
@@ -756,7 +756,7 @@ describe('MATLAB function precedence', () => {
   });
 
   it('never resolves a bare call in a package file to the package function itself, only to the file\'s local functions', async () => {
-    const { edges, unresolved } = await indexOfProject({
+    const { edges, unresolved, dormant } = await indexOfProject({
       '+util/size.m': 'function n = size(x)\nn = size(x, 1) + helper(x);\nend\nfunction h = helper(x)\nh = 0;\nend\n',
       '+util/plot.m': 'function plot(x)\nplot(x);\nend\n',
       'useUtil.m': 'function useUtil(x)\nn = util.size(x);\nutil.plot(x);\nend\n',
@@ -767,9 +767,11 @@ describe('MATLAB function precedence', () => {
       'useUtil.m useUtil -calls-> util::size @ +util/size.m',
     ]);
     // The built-ins those are. A project symbol carries each name (the
-    // package's own size and plot), so the failed rows are kept: a sync that
+    // package's own size and plot), so the rows are kept, dormant: only an
+    // import reaches a package's function by its bare name, and a sync that
     // changes the search path re-resolves them as a fresh index would.
-    expect(unresolved).toEqual(['+util/plot.m:2 calls:plot', '+util/size.m:2 calls:size']);
+    expect(unresolved).toEqual([]);
+    expect(dormant).toEqual(['+util/plot.m:2 calls:plot', '+util/size.m:2 calls:size']);
   });
 
   it('on a sync, links a call of a built-in\'s name to a function added beside it in every file, as a full index does', async () => {
@@ -1000,7 +1002,7 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
   });
 
   it('answers nothing under a built-in\'s name, as Octave or binary text, in a package or a class folder, or in a private folder out of reach', async () => {
-    const { edges, unresolved } = await indexOfProject({
+    const { edges, unresolved, dormant } = await indexOfProject({
       'help/input.m': HELP('input'),
       'oct/octstub.m': '## OCTSTUB  help in Octave\n## more help\n',
       'bin/binstub.m': 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 encrypted\n',
@@ -1025,6 +1027,7 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
     // calls of the names a package's, a class folder's or an out-of-reach
     // private file carries stay calls that link nowhere.
     expect(unresolved).toEqual(expect.arrayContaining(['main.m:2 calls:input', 'main.m:5 calls:pkgstub', 'main.m:6 calls:clsstub', 'main.m:7 calls:privstub']));
+    expect(dormant).not.toContain('main.m:2 calls:input');
   });
 
   it('takes the nearest of two copies, then genpath order, and a nearer case variant vetoes it', async () => {
@@ -1445,5 +1448,81 @@ describe('MATLAB unresolved rows', () => {
       'byColon.m byColon -calls-> a @ a.m',
       'script.m script.m -calls-> a @ a.m',
     ]);
+  });
+});
+
+describe('MATLAB\'s names that are only methods of its classes are no built-ins', () => {
+  // physbase-style: the startup's aoinit adds tools/ with '-end'. MATLAB has no
+  // function `update`, `setup`, `time`, `add`, `keys` or `read` (only methods
+  // of its classes), so MATLAB runs the project's copies wherever the path
+  // puts them, MEX help stubs included.
+  const AOINIT = (where: string): string =>
+    `function aoinit\nDirectory = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'tools');\nif exist(Directory, 'dir')\n    addpath(Directory, '${where}');\nend\nend\n`;
+  const F1: Record<string, string> = {
+    'app/main.m': "function main()\nupdate(1);\nsetup('for', 'users');\nt = time(3);\nr = add(1, 2);\nk = keys(7);\nd = read('f.bin');\nend\n",
+    'tools/update.m': 'function update(x)\ndisp(x);\nend\n',
+    'tools/setup.m': 'function setup(varargin)\ndisp(1);\nend\n',
+    'tools/time.m': 'function t = time(x)\nt = x;\nend\n',
+    'tools/add.m': 'function r = add(a, b)\nr = a + b;\nend\n',
+    'tools/keys.m': 'function r = keys(a)\nr = a;\nend\n',
+    'tools/read.m': '% READ  Help text of a MEX function.\n',
+  };
+  const STARTUP = { 'startup.m': "addpath(fullfile(pwd, 'app'));\naddpath(fullfile(pwd, 'mml'));\naoinit;\n" };
+  const F1_EDGES = [
+    'app/main.m main -calls-> add @ tools/add.m',
+    'app/main.m main -calls-> keys @ tools/keys.m',
+    'app/main.m main -calls-> setup @ tools/setup.m',
+    'app/main.m main -calls-> time @ tools/time.m',
+    'app/main.m main -calls-> tools/read.m @ tools/read.m',
+    'app/main.m main -calls-> update @ tools/update.m',
+  ];
+
+  it('links a call of one to the project\'s copy behind MATLAB\'s own folders, ahead of them, and with no path, its MEX stub too', async () => {
+    for (const files of [{ ...F1, ...STARTUP, 'mml/aoinit.m': AOINIT('-end') }, { ...F1, ...STARTUP, 'mml/aoinit.m': AOINIT('-begin') }, F1]) {
+      const r = await indexOfProject(files);
+      const what = files['mml/aoinit.m'] ?? 'no startup';
+      expect(r.edges.filter((e) => e.startsWith('app/')), what).toEqual(F1_EDGES);
+      expect([r.unresolved, r.dormant], what).toEqual([[], []]);
+    }
+  }, 120_000);
+
+  it('follows what a project function of the name passes on, and takes a statement of a project script of the name for a script run', async () => {
+    const r = await indexOfProject({
+      // MEX stubs of method-only names, with no path: their calls link to them.
+      'app/main2.m': "function main2()\nd = read('f.bin');\nwrite(d);\nend\n",
+      'tools/read.m': '% READ  Help text of a MEX function.\n',
+      'tools/write.m': '% WRITE  Help text of a MEX function.\n',
+      // The project's update runs the callback it is given, as plain_runner does.
+      'app/main4.m': "function main4()\nupdate('handler');\nplain_runner('handler2');\nend\n",
+      'lib/update.m': 'function update(cb)\nfeval(cb);\nend\n',
+      'lib/plain_runner.m': 'function plain_runner(cb)\nfeval(cb);\nend\n',
+      'lib/handler.m': 'function handler()\ndisp(1);\nend\n',
+      'lib/handler2.m': 'function handler2()\ndisp(2);\nend\n',
+      // setup is a script that sets `name`: what runner calls is not what it was passed.
+      'app/main3.m': "function main3()\nrunner('alpha');\nend\n",
+      'app/runner.m': 'function runner(name)\nsetup\nfeval(name);\nend\n',
+      'lib/setup.m': "name = 'other';\n",
+      'lib/alpha.m': 'function alpha()\ndisp(1);\nend\n',
+      'lib/other.m': 'function other()\ndisp(2);\nend\n',
+    });
+    expect(r.edges).toEqual(expect.arrayContaining([
+      'app/main2.m main2 -calls-> tools/read.m @ tools/read.m',
+      'app/main2.m main2 -calls-> tools/write.m @ tools/write.m',
+      'app/main4.m main4 -calls-> update @ lib/update.m',
+      'lib/update.m update -calls-> handler @ lib/handler.m',
+      'lib/plain_runner.m plain_runner -calls-> handler2 @ lib/handler2.m',
+      'app/runner.m runner -calls-> lib/setup.m @ lib/setup.m',
+    ]));
+    expect(r.edges.filter((e) => e.includes(' -calls-> alpha '))).toEqual([]);
+  }, 120_000);
+
+  it('keeps a live row of one that a project class\'s method carries, called on an object resolution cannot type', async () => {
+    // fieldtrip: ft_write_cifti.m builds an xmltree and adds to it with function syntax.
+    const r = await indexOfProject({
+      'external/gifti/@xmltree/xmltree.m': "function t = xmltree(f)\nt = class(struct('f', f), 'xmltree');\nend\n",
+      'external/gifti/@xmltree/add.m': 'function t = add(t, uid, kind, name)\nend\n',
+      'fileio/ft_write_cifti.m': "function ft_write_cifti(f)\ntree = xmltree(f);\ntree = add(tree, 1, 'element', 'New_Node');\nend\n",
+    });
+    expect(r.unresolved).toEqual(['fileio/ft_write_cifti.m:3 calls:add']);
   });
 });

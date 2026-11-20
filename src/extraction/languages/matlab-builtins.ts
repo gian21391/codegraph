@@ -2,9 +2,15 @@ import type { ExtractionResult, Language } from '../../types';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { isJavaImport } from './matlab-java';
 import { matlabUnreadReason } from './matlab-syntax';
+import { MATLAB_BASE_NAMES, MATLAB_METHOD_NAMES } from './matlab-builtin-names';
 
 /**
- * MATLAB built-in, GUI, graphics and common toolbox functions. A bare call of
+ * MATLAB built-in, GUI, graphics and common toolbox functions: every function
+ * and class base MATLAB has (MATLAB_BASE_NAMES, generated from a MATLAB
+ * install: see ./matlab-builtin-names; not a name MATLAB has only as a
+ * method, MATLAB_METHOD_ONLY_NAMES below), and the names written here by
+ * hand — toolboxes' functions, and MATLAB's own that it has since removed
+ * (`wavread`, `nargchk`), which old code still calls. A bare call of
  * one of these names is extracted like any other call, and the resolver links
  * it when the project has a function of that name in reach (a `normpdf.m`
  * stand-in, a `private/strsplit.m` shim, a local function named `grid`): MATLAB
@@ -14,7 +20,7 @@ import { matlabUnreadReason } from './matlab-syntax';
  * answer is never written at all (see MatlabInsertFilter). Drawn from the
  * names most often left unresolved across PlatEMO, the Robotics Toolbox,
  * fieldtrip, DeepLearnToolbox, PRMLT and a 17k-file accelerator-physics
- * codebase.
+ * codebase (the hand-written names).
  *
  * A bare call goes by its name alone: `numel(obj)` on a method's own object
  * is `Cls::numel` (a class's overload), and so is `set(c, …)` on a variable
@@ -24,6 +30,7 @@ import { matlabUnreadReason } from './matlab-syntax';
  * ../../resolution/matlab-failures.
  */
 export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
+  ...MATLAB_BASE_NAMES,
   // constants and argument counts
   'pi', 'true', 'false', 'Inf', 'inf', 'NaN', 'nan', 'eps', 'nargin', 'nargout',
   // array construction and shape
@@ -163,6 +170,19 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
   'regionprops', 'roundn', 'series', 'simsizes', 'ss2tf', 'str2sym', 'tf2ss', 'tf2zp', 'tformfwd',
   'tforminv', 'tiedrank', 'wiener2', 'zp2ss',
 ]);
+
+/**
+ * The names base MATLAB has only as a method of one of its own classes
+ * (MATLAB_METHOD_NAMES: `parse` of `inputParser`, `keys` of `containers.Map`,
+ * `numedges` of `graph`), and that no hand-written name above makes a
+ * built-in. No built-ins: MATLAB has no function of the name, so a project's
+ * copy is reached as any function is, and nothing here treats a call of one
+ * as MATLAB's. One rule alone reads it: a bare call of one that no symbol
+ * carries the name of is kept dormant rather than live, as the only code of
+ * the name MATLAB has is its class's method (see
+ * ../../resolution/matlab-failures).
+ */
+export const MATLAB_METHOD_ONLY_NAMES: ReadonlySet<string> = new Set(MATLAB_METHOD_NAMES.filter((n) => !MATLAB_BUILTINS.has(n)));
 
 /**
  * MATLAB functions whose first argument may name a function as text

@@ -3238,7 +3238,12 @@ export class QueryBuilder {
     return found;
   }
 
-  /** The MATLAB rows, pending or failed, of a bare call or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe over `idx_unresolved_name`. */
+  /**
+   * The MATLAB rows, pending, failed or dormant (a built-in's call only the
+   * path gives a copy of: see ../resolution/matlab-failures), of a bare call
+   * or a handle (`calls`, `function_ref`) named one of `names`. Chunked probe
+   * over `idx_unresolved_name`.
+   */
   getMatlabCallRowsNamed(names: Iterable<string>): Array<{ id: number; filePath: string; name: string }> {
     const unique = [...new Set(names)];
     const out: Array<{ id: number; filePath: string; name: string }> = [];
@@ -3247,7 +3252,7 @@ export class QueryBuilder {
       const rows = this.db
         .prepare(`SELECT id, file_path, reference_name FROM unresolved_refs
                    WHERE reference_name IN (${chunk.map(() => '?').join(',')})
-                     AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref') AND ${LIVE_REF_SQL}`)
+                     AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref')`)
         .all(...chunk) as Array<{ id: number; file_path: string; reference_name: string }>;
       for (const row of rows) out.push({ id: row.id, filePath: row.file_path, name: row.reference_name });
     }

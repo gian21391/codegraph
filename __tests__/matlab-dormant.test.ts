@@ -1437,3 +1437,177 @@ describe('MATLAB dormant rows: a member call written with arguments is kept only
     expect(run[1]!.synced.filter((e) => e.includes(' -calls-> M::X @ M.m')).length).toBe(USERS);
   }, 600_000);
 });
+
+describe('MATLAB dormant rows: a built-in\'s call that only the path could give a project copy of', () => {
+  // physbase: aoinit.m adds matlab/chris/commands with addpath(…, '-end'), so
+  // MATLAB's own `sound` runs ahead of the project's copy there: no edge, and
+  // the row is kept for a sync that moves the copy, but not counted.
+  const SOUND = 'function sound(y)\nend\n';
+  const startup = (where: string): string => `addpath('app');\naddpath('tools');\naddpath('lib');\naddpath('extra'${where});\n`;
+  const FILES = {
+    'startup.m': startup(", '-end'"),
+    'app/play.m': 'function play(y)\nsound(y);\nend\n',
+    'app/beepit.m': 'function beepit()\nsound\nend\n',
+    'lib/tone.m': 'function tone()\nend\n',
+    'tools/util.m': 'function util()\nend\n',
+    'extra/sound.m': SOUND,
+  };
+  const DORMANT = ['app/beepit.m:2 calls:sound', 'app/play.m:2 calls:sound'];
+
+  it('is dormant while the copy stands after MATLAB\'s own folders or off the path, and linked once it stands ahead of them', async () => {
+    const after = await indexOfProject(FILES);
+    expect(after.edges.filter((e) => e.startsWith('app/'))).toEqual([]);
+    expect(after.unresolved).toEqual([]);
+    expect(after.dormant).toEqual(DORMANT);
+    const ahead = await indexOfProject({ ...FILES, 'startup.m': startup(", '-begin'") });
+    expect(ahead.edges.filter((e) => e.startsWith('app/'))).toEqual([
+      'app/beepit.m beepit -calls-> sound @ extra/sound.m',
+      'app/play.m play -calls-> sound @ extra/sound.m',
+    ]);
+    expect([...ahead.unresolved, ...ahead.dormant]).toEqual([]);
+    const off = await indexOfProject({ ...FILES, 'extra/sound.m': 'function other()\nend\n', 'old/sound.m': SOUND });
+    expect([off.unresolved, off.dormant]).toEqual([[], DORMANT]);
+  }, 120_000);
+
+  it('stays live when a method carries the name, or when the copy is in the caller\'s own folder, which the current folder may put first', async () => {
+    const r = await indexOfProject({
+      ...FILES,
+      // A method of the caller's own class: `sound(y)` there is MATLAB's, as resolution says, unless resolution missed an overload.
+      'app/Spk.m': 'classdef Spk < handle\n    methods\n        function sound(obj)\n        end\n        function go(obj, y)\n            sound(y);\n        end\n    end\nend\n',
+      // A caller beside the copy, in a folder the startup adds with '-end': run from that folder, MATLAB runs the copy.
+      'extra/near.m': 'function near(y)\nsound(y);\nend\n',
+      'extra/split.m': 'function split(s)\nend\n',
+      'extra/cut.m': 'function cut(s)\nsplit(s);\nend\n',
+      'app/cutter.m': 'function cutter(s)\nsplit(s);\nend\n',
+    });
+    expect(r.edges.filter((e) => / -calls-> (sound|split) /.test(e))).toEqual([]);
+    // Spk's method carries `sound`: every call of it stays live.
+    expect(r.unresolved).toEqual(['app/Spk.m:6 calls:sound', 'app/beepit.m:2 calls:sound', 'app/play.m:2 calls:sound', 'extra/cut.m:2 calls:split', 'extra/near.m:2 calls:sound']);
+    // split: only a function file carries it; the caller in another folder is dormant, the one beside it live.
+    expect(r.dormant).toEqual(['app/cutter.m:2 calls:split']);
+  }, 120_000);
+
+  it('a sync ends where a fresh index ends: the path flipped from -end to -begin and back, the copy moved onto and off the path, deleted, restored, behind a case variant, turned into a stub and a script', async () => {
+    const steps: Files[] = [
+      { 'startup.m': startup(", '-begin'") },
+      { 'startup.m': startup(", '-end'") },
+      { 'extra/sound.m': null, 'lib/sound.m': SOUND },
+      { 'lib/sound.m': null, 'extra/sound.m': SOUND },
+      { 'extra/sound.m': null, 'old/sound.m': SOUND },
+      { 'old/sound.m': null },
+      { 'extra/sound.m': SOUND },
+      { 'startup.m': startup(", '-begin'") },
+      // lib comes before tools on the path: its case variant vetoes the copy in tools, and stops when it goes.
+      { 'extra/sound.m': null, 'tools/sound.m': SOUND },
+      { 'lib/Sound.m': 'function Sound(y)\nend\n' },
+      { 'lib/Sound.m': null },
+      { 'tools/sound.m': null, 'extra/sound.m': SOUND },
+      { 'extra/sound.m': '% SOUND  Help text of a MEX function.\n' },
+      { 'extra/sound.m': 'y = 1;\n' },
+      { 'extra/sound.m': SOUND },
+    ];
+    const run = await expectSyncsFresh(FILES, steps);
+    const linked = run.map((s) => s.synced.filter((e) => e.startsWith('app/')).map((e) => e.slice(0, e.indexOf(' '))).join(','));
+    const both = 'app/beepit.m,app/play.m';
+    expect(linked).toEqual([both, '', both, '', '', '', '', both, both, '', both, both, '', 'app/beepit.m', both]);
+    // Dormant only where MATLAB's own function wins: the copy after MATLAB's own folders, off the path or gone. A copy
+    // ahead of them that the call still did not link (vetoed by a case variant, a stub of a MEX function, a script
+    // called with arguments) leaves the row live.
+    expect(run.map((s) => s.syncedDormant.length)).toEqual([0, 2, 0, 2, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(run.map((s) => s.syncedRows.length)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 1, 0]);
+  }, 600_000);
+});
+
+describe('MATLAB dormant rows: a built-in\'s call stays live where a project copy, not MATLAB\'s own function, comes first', () => {
+  it('a script ahead on the path called with arguments: MATLAB errors, and the row stays live', async () => {
+    const r = await indexOfProject({
+      'startup.m': "addpath(fullfile(pwd, 'app'));\naddpath(fullfile(pwd, 'lib'));\n",
+      'app/p.m': 'function p()\nsound(1, 8192);\nend\n',
+      'lib/sound.m': 'y = 1;\n',
+    });
+    expect([r.unresolved, r.dormant]).toEqual([['app/p.m:2 calls:sound'], []]);
+  });
+
+  it('a name MATLAB has only as a method, its only copy out of reach: no built-in, the row stays live', async () => {
+    // fieldtrip: ft_sensorrealign.m calls scale and translate on doubles; the copies are in private/ folders it cannot reach.
+    const r = await indexOfProject({
+      'compat/obsolete/ft_sensorrealign.m': 'function ft_sensorrealign(s)\nT = translate([1 2 3]);\nS = scale([2 2 2]);\nend\n',
+      'utilities/private/scale.m': 'function S = scale(f)\nS = diag([f 1]);\nend\n',
+      'private/translate.m': 'function T = translate(f)\nT = eye(4);\nend\n',
+    });
+    expect([r.unresolved, r.dormant]).toEqual([['compat/obsolete/ft_sensorrealign.m:2 calls:translate', 'compat/obsolete/ft_sensorrealign.m:3 calls:scale'], []]);
+  });
+});
+
+describe('MATLAB dormant rows: a name MATLAB has only as a method of one of its classes', () => {
+  // physbase's FirstTurnMonitoring.m: `p = inputParser; … parse(p, varargin{:})`; fieldtrip's jdatadecode.m: keys(m).
+  const USER = { 'u.m': 'function u(varargin)\np = inputParser;\nparse(p, varargin{:});\nk = keys(varargin{1});\nnosuch_fn(k);\nend\n' };
+  const PARSE = 'function r = parse(p, varargin)\nr = p;\nend\n';
+
+  it('keeps a call of one no project symbol carries dormant, a call leaving the index for MATLAB\'s class', async () => {
+    const r = await indexOfProject(USER);
+    expect(r.edges.filter((e) => e.startsWith('u.m '))).toEqual([]);
+    expect(r.unresolved).toEqual(['u.m:5 calls:nosuch_fn']);
+    expect(r.dormant).toEqual(['u.m:3 calls:parse', 'u.m:4 calls:keys']);
+  });
+
+  it('keeps one dormant when only a MATLAB property, a Java method or a C++ method is named for it: none answers a bare MATLAB call', async () => {
+    const files = {
+      'app/uk.m': 'function uk(m, d)\nk = keys(m);\nv = values(m);\nr = read(d, 3, \'uint8\');\nend\n',
+      'lib/K.m': cls('K', props('keys')),
+      'tools/Store.java': 'public class Store {\n  public int values() { return 0; }\n}\n',
+      'realtime/dev.cpp': 'class Dev {\npublic:\n  int read(int n) { return n; }\n};\n',
+    };
+    const r = await indexOfProject(files);
+    expect([r.unresolved, r.dormant]).toEqual([[], ['app/uk.m:2 calls:keys', 'app/uk.m:3 calls:values', 'app/uk.m:4 calls:read']]);
+    // The property turned into a method carries `keys`: that row is live while it does.
+    const steps: Files[] = [{ 'lib/K.m': cls('K', methods('keys')) }, { 'lib/K.m': cls('K', props('keys')) }, { 'lib/K.m': null }, { 'tools/Store.java': null }];
+    const run = await expectSyncsFresh(files, steps);
+    expect(run.map((s) => s.syncedRows)).toEqual([['app/uk.m:2 calls:keys'], [], [], []]);
+  }, 300_000);
+
+  it('a sync ends where a fresh index ends: a project parse.m added, then removed', async () => {
+    const steps: Files[] = [{ 'lib/parse.m': PARSE }, { 'lib/parse.m': null }, { 'lib/parse.m': PARSE }];
+    const run = await expectSyncsFresh(USER, steps);
+    expect(run.map((s) => s.synced.includes('u.m u -calls-> parse @ lib/parse.m'))).toEqual([true, false, true]);
+    expect(run.map((s) => s.syncedDormant)).toEqual([['u.m:4 calls:keys'], ['u.m:3 calls:parse', 'u.m:4 calls:keys'], ['u.m:4 calls:keys']]);
+    expect(run.every((s) => s.syncedRows.length === 1)).toBe(true);
+  }, 300_000);
+});
+
+describe('MATLAB dormant rows: only a MATLAB symbol that could answer a bare call keeps a built-in\'s call', () => {
+  // fieldtrip: a C++ method `error` (AmpServerClient.cpp) kept calls of
+  // `error` live in files whose imports keep every bare call at extraction;
+  // the Robotics Toolbox: a property `grid` kept calls of `grid`. A MATLAB
+  // call resolves to MATLAB alone, and a bare one never runs a property.
+  const FILES = {
+    'realtime/Amp.cpp': 'class AmpServerClient {\npublic:\n  void error(const char* m) {}\n};\n',
+    'brain/progress.m': "function progress()\nimport org.brainstorm.icon.*;\nerror('x');\nend\n",
+    'Plotter.m': cls('Plotter', props('grid') + '    methods\n        function draw(obj)\n            grid(\'on\');\n        end\n    end\n'),
+    'useGrid.m': "function useGrid()\nimport org.foo.*;\ngrid('on');\nend\n",
+  };
+  const withMethod = cls('Plotter', '    methods\n        function grid(obj, v)\n        end\n        function draw(obj)\n            grid(\'on\');\n        end\n    end\n');
+
+  it('keeps no row of a built-in\'s call that only a C++ method or a MATLAB property is named for', async () => {
+    const r = await indexOfProject(FILES);
+    expect([r.unresolved, r.dormant]).toEqual([[], []]);
+    expect(r.edges.filter((e) => / -calls-> (error|grid) /.test(e))).toEqual([]);
+  });
+
+  it('a sync ends where a fresh index ends: a MATLAB function of the name added and removed, the property turned into a method and back', async () => {
+    const steps: Files[] = [
+      { 'lib/error.m': 'function error(m)\nend\n' },
+      { 'lib/error.m': null },
+      { 'lib/grid.m': 'function grid(v)\nend\n' },
+      { 'lib/grid.m': null },
+      { 'Plotter.m': withMethod },
+      { 'Plotter.m': FILES['Plotter.m'] },
+    ];
+    const run = await expectSyncsFresh(FILES, steps);
+    expect(run[0]!.synced).toContain('brain/progress.m progress -calls-> error @ lib/error.m');
+    expect(run[2]!.synced).toEqual(expect.arrayContaining(['useGrid.m useGrid -calls-> grid @ lib/grid.m', 'Plotter.m Plotter::draw -calls-> grid @ lib/grid.m']));
+    // The method carries `grid`: both calls stay live, the class's overload possibly missed.
+    expect(run[4]!.syncedRows).toEqual(['Plotter.m:6 calls:grid', 'useGrid.m:3 calls:grid']);
+    expect(run.filter((_, i) => i !== 4).every((s) => s.syncedRows.length === 0 && s.syncedDormant.length === 0)).toBe(true);
+  }, 600_000);
+});

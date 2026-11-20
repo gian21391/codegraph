@@ -22,6 +22,7 @@ import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { isMatlabPathScript, isMatlabPathStub, matlabAncestorClasses, matlabSuperclassNames } from './matlab-lookup';
 import { matlabFileNames, matlabFileStem } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { wakeMatlabBuiltinRows } from './matlab-builtin-carriers';
 
 /** What a script runs before, or a stub comes after: a function file's function, or a class on the path. */
 const NAMESAKE_KINDS: ReadonlySet<string> = new Set(['function', 'class', 'enum']);
@@ -55,7 +56,8 @@ export function matlabScriptCandidates(queries: QueryBuilder, changedFilePaths: 
  * be a farther function's now (a stub comes last), and the reverse. The calls
  * linked to another copy of the file's name, and those parked as failed under
  * the name of one that is a script or a stub (`setup_paths` for
- * `setup_paths.m`), go back too: it may answer them now; for a script, so do
+ * `setup_paths.m`), or kept dormant as a built-in's call only the path gave a
+ * copy of (`sound` for `sound.m`), go back too: it may answer them now; for a script, so do
  * the statements linked to a farther function or class of its name. Calls in
  * `changedFilePaths` are left alone: the sync resolved them already.
  * `matlabFilePaths` are the ones matlabScriptCandidates picks out of them.
@@ -134,7 +136,8 @@ export function reopenMatlabScriptRuns(
   if (copyEdges.size > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds([...copyEdges], copyRefs);
   const rowIds = stems.size === 0 ? [] : queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
     ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
-  return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds), fromEdges };
+  const woken = stems.size === 0 ? 0 : wakeMatlabBuiltinRows(queries, stems, fresh);
+  return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds) + woken, fromEdges };
 }
 
 /**
@@ -153,7 +156,9 @@ export function reopenMatlabScriptRuns(
  *     removed): a nearer case variant vetoes them (nearerInexactMatch in
  *     ./matlab-lookup), and they are no edge of the delta's names; and the
  *     failed calls of those names, which a case variant that went no longer
- *     vetoes. Nodes of the delta's exact names are the rebind's.
+ *     vetoes, and the dormant ones of a built-in's (`sound` for a `Sound.m`
+ *     gone: see wakeMatlabBuiltinRows). Nodes of the delta's exact names are
+ *     the rebind's.
  *
  * Read through the file nodes and the nodes of each name, not by target name,
  * so no name is too common to be reopened (a script with six copies). The
@@ -212,7 +217,8 @@ export function reopenMatlabNamesakes(
   // No per-name ceiling: the veto of every row of these names just changed, however many there are.
   const rowIds = variants.size === 0 ? [] : queries.getRetryableFailedReferences([...variants], Number.MAX_SAFE_INTEGER).flatMap((ref) =>
     ref.language === 'matlab' && variants.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
-  return refs.length + queries.reopenFailedReferences(rowIds);
+  const woken = variants.size === 0 ? 0 : wakeMatlabBuiltinRows(queries, variants, fresh);
+  return refs.length + queries.reopenFailedReferences(rowIds) + woken;
 }
 
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];

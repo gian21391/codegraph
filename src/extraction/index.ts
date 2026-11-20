@@ -44,6 +44,7 @@ import {
   matlabFilesNaming,
   readMatlabCarrierInputs,
   readMatlabCarrierStep,
+  wakeMatlabBuiltinRows,
   replayedMatlabCarrierChanges,
   uncarriedMatlabRowIds,
   writeMatlabCarrierInputs,
@@ -3826,14 +3827,17 @@ export class ExtractionOrchestrator {
    * package roots are that kind of input: an added `__init__.py` or an edited
    * `pyproject.toml` moves where modules start for importers in files the
    * sync never touched, and CG-33's per-name rebind can't see it. Parked
-   * failures are re-queued too, since some of them now resolve. Same
-   * conservatism as {@link resurrectStaleResolutionEdges}: an edge without a
-   * refName stamp is never deleted.
+   * failures are re-queued too, since some of them now resolve, and for
+   * MATLAB the dormant calls of a built-in's name that only the path gave a
+   * copy of (see wakeMatlabBuiltinRows), which a moved path may make the one
+   * MATLAB runs. Same conservatism as {@link resurrectStaleResolutionEdges}:
+   * an edge without a refName stamp is never deleted.
    */
   resurrectResolutionEdgesForLanguage(language: Language): number {
     return (
       this.reopenEdges(this.queries.getResolutionEdgesBySourceLanguage(language)) +
-      this.queries.requeueFailedReferencesByLanguage(language)
+      this.queries.requeueFailedReferencesByLanguage(language) +
+      (language === 'matlab' ? wakeMatlabBuiltinRows(this.queries, null) : 0)
     );
   }
 
@@ -4124,9 +4128,10 @@ export class ExtractionOrchestrator {
     // file is replaced or removed (see MatlabCarrierInputs): the files, as
     // the index holds them (`tracked`, none for a file it adds); the names
     // their nodes carried (`pairs`, read before; none of a file whose text
-    // was read as no MATLAB code); and which were `.m` files of MATLAB code.
-    // The last is MatlabCarrierInput.reachingBefore too.
-    const carrierInputs = { files: new Set<string>(), names: new Set<string>(), reaching: new Set<string>() };
+    // was read as no MATLAB code), and their callable MATLAB nodes, a
+    // built-in's carriers; and which were `.m` files of MATLAB code. The
+    // last is MatlabCarrierInput.reachingBefore too.
+    const carrierInputs = { files: new Set<string>(), names: new Set<string>(), callable: new Set<string>(), reaching: new Set<string>() };
     let carrierInputsRecorded = false;
     const recordCarrierInputs = (files: readonly string[], tracked: (filePath: string) => FileRecord | undefined, pairs: Iterable<string>): void => {
       if (!trackMatlab || files.length === 0) return;
@@ -4137,7 +4142,10 @@ export class ExtractionOrchestrator {
       for (const pair of pairs) {
         if (!unreadBefore.has(pair.slice(0, pair.indexOf('\0')))) carrierInputs.names.add(pair.slice(pair.indexOf('\0') + 1));
       }
-      writeMatlabCarrierInputs(this.queries, { files: [...carrierInputs.files], names: [...carrierInputs.names], reaching: [...carrierInputs.reaching] });
+      for (const pair of this.queries.getNodeNamePairsByFiles([...files], MATLAB_CALLABLE_NODES)) carrierInputs.callable.add(pair.slice(pair.indexOf('\0') + 1));
+      writeMatlabCarrierInputs(this.queries, {
+        files: [...carrierInputs.files], names: [...carrierInputs.names], callable: [...carrierInputs.callable], reaching: [...carrierInputs.reaching],
+      });
       carrierInputsRecorded = true;
     };
     // Importers' import statements, read once per sync for the files it removes.
@@ -4472,7 +4480,7 @@ export class ExtractionOrchestrator {
     // again, every one, past the retry's ceiling (MatlabCarrierChange.relinked).
     const watchMatlab = trackMatlab || this.queries.hasFilesOfLanguage('matlab');
     const carriers = matlabCarrierChanges(this.queries, {
-      deltaNames, pairsBefore, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
+      deltaNames, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
       matlabPairsBefore,
       matlabPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_NODES) : new Set(),
       callablePairsBefore,

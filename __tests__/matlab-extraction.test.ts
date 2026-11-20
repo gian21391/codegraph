@@ -12,7 +12,8 @@ import { CodeGraph } from '../src';
 import { extractFromSource, preloadLanguagesForFiles } from '../src/extraction';
 import { detectLanguage, getParser, isLanguageSupported } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
-import { MATLAB_BUILTINS, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
+import { MATLAB_BASE_NAMES, MATLAB_METHOD_NAMES } from '../src/extraction/languages/matlab-builtin-names';
 import { edgesFrom, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
@@ -860,6 +861,55 @@ end
     // A notes file read as MATLAB: the parse recovers with something between the name and the list.
     const notes = extractFromSource('readme.m', 'b. test bpms/correctors data rates (monrates);\n', 'matlab');
     expect(notes.unresolvedReferences.filter((u) => u.referenceName === 'correctors').map((u) => JSON.stringify(u.candidates ?? null))).toEqual(['["bare"]']);
+  });
+});
+
+describe('MATLAB built-ins: base MATLAB\'s names, generated from a MATLAB install', () => {
+  const plainIdentifiersSortedOnce = (names: readonly string[]): void => {
+    expect(names).toEqual([...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.filter((n) => !/^[A-Za-z]\w*$/.test(n))).toEqual([]);
+  };
+
+  it('are two lists, each sorted, holding each name once, and only plain identifiers, with no name in both', () => {
+    plainIdentifiersSortedOnce(MATLAB_BASE_NAMES);
+    plainIdentifiersSortedOnce(MATLAB_METHOD_NAMES);
+    const base = new Set(MATLAB_BASE_NAMES);
+    expect(MATLAB_METHOD_NAMES.filter((n) => base.has(n))).toEqual([]);
+  });
+
+  it('list as functions MATLAB has its functions and demos, never a method, a keyword, a hook, a user\'s script, a removed function or Contents', () => {
+    for (const name of ['humps', 'sound', 'num2str', 'rms', 'vdp1']) expect(MATLAB_BASE_NAMES, name).toContain(name);
+    for (const name of ['parse', 'add', 'startup', 'function', 'loadobj', 'printopt', 'Contents', 'SolarPanelEstimator', 'Combine']) {
+      expect(MATLAB_BASE_NAMES, name).not.toContain(name);
+    }
+  });
+
+  it('count a plain type\'s documented methods as functions, never a method a plain page documents for one class\'s objects', () => {
+    // `double.acosd`, `cospi`, `isequaln`: they run on a number. `table.varfun`, `timetable.retime`: on their objects alone.
+    for (const name of ['acosd', 'cospi', 'cummax', 'isequaln', 'pow2', 'uplus']) expect(MATLAB_BASE_NAMES, name).toContain(name);
+    for (const name of ['varfun', 'retime', 'innerjoin', 'between']) expect(MATLAB_METHOD_NAMES, name).toContain(name);
+    // A System object's, a HeatmapChart's and a C++ enumeration object's methods, and a class's indexing hook.
+    for (const name of ['isDone', 'sortx', 'sorty', 'underlyingValue', 'listLength']) expect(MATLAB_BASE_NAMES, name).not.toContain(name);
+    for (const name of ['isDone', 'sortx', 'sorty', 'underlyingValue']) expect(MATLAB_METHOD_NAMES, name).toContain(name);
+  });
+
+  it('list apart the names MATLAB has only as a method of one of its classes, which are no built-ins', () => {
+    for (const name of ['parse', 'isKey', 'numedges', 'add', 'setup', 'update']) {
+      expect(MATLAB_METHOD_NAMES, name).toContain(name);
+      expect(MATLAB_BUILTINS.has(name), name).toBe(false);
+      expect(MATLAB_METHOD_ONLY_NAMES.has(name), name).toBe(true);
+    }
+  });
+
+  it('make MATLAB_BUILTINS with the names written by hand: toolboxes\' and ones MATLAB has removed', () => {
+    for (const name of MATLAB_BASE_NAMES) expect(MATLAB_BUILTINS.has(name), name).toBe(true);
+    for (const name of ['normpdf', 'wavread', 'fmins', 'finite', 'get_param']) {
+      expect(MATLAB_BASE_NAMES, name).not.toContain(name);
+      expect(MATLAB_BUILTINS.has(name), name).toBe(true);
+    }
+    // A hand-written name that is also only a method somewhere stays a built-in.
+    expect(MATLAB_METHOD_ONLY_NAMES.has('reset')).toBe(false);
   });
 });
 

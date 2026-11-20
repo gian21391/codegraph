@@ -375,7 +375,7 @@ end
   it('a clear that may remove every variable ends what a load before it made, where it runs whenever the read does', () => {
     expect(inF('load(fname)\nclear all\nd = afterclear(1);')).toEqual(['4 calls:afterclear']);
     expect(inF('load(fname)\nclear\nd = AfterBare(1);\nload(fname)\ne = Reloaded(1);')).toEqual(['4 calls:AfterBare', '6 calls:Reloaded runtime']);
-    expect(inF('load(fname)\nclearvars\nd = AfterVars(1);')).toEqual(['3 calls:clearvars', '4 calls:AfterVars']);
+    expect(inF('load(fname)\nclearvars\nd = AfterVars(1);')).toEqual(['4 calls:AfterVars']);
     // One that names what it removes leaves the rest.
     expect(inF('load(fname)\nclear x\nd = AfterNamed(1);')).toEqual(['4 calls:AfterNamed runtime']);
     // One that may not have run does not end it; one in the same clause does.
@@ -614,7 +614,7 @@ describe('MATLAB code eval runs, followed for what it changes', () => {
 m = 'fn_alpha'; eval('setup_vars'); feval(m);
 n = 'fn_beta'; eval('load cfg.mat'); feval(n);
 k = 'fn_gamma'; eval('eval(''k = ''''fn_delta'''';'')'); feval(k);
-j = 'fn_eps'; eval('run(''setup'')'); feval(j);
+j = 'fn_eps'; eval('run(''setup_all'')'); feval(j);
 q = 'fn_keep'; eval('y = 1;'); feval(q);
 w = 'fn_w'; eval('w = 1;'); feval(w);
 a = 'fn_a';
@@ -629,7 +629,7 @@ feval(d);
 end
 `;
     // Only q survives: the code given as text sets y alone.
-    expect(called(code, 'ev.m')).toEqual(['fn_keep', 'setup', 'setup_vars']);
+    expect(called(code, 'ev.m')).toEqual(['fn_keep', 'setup_all', 'setup_vars']);
   });
 });
 
@@ -637,11 +637,11 @@ describe('MATLAB variables nested functions share', () => {
   it('knows none a nested function may set, from a sibling or through eval; a nested function\'s own are followed', () => {
     const code = `function ne(f)
 m = 'fn_alpha';
-reload(f);
+reloadit(f);
 feval(m);
 mode = [];
 a();
-  function reload(f)
+  function reloadit(f)
     eval('m = ''fn_beta'';');
   end
   function a()
@@ -656,7 +656,7 @@ a();
   end
 end
 `;
-    expect(called(code, 'ne.m')).toEqual(['a', 'b', 'fn_own', 'reload']);
+    expect(called(code, 'ne.m')).toEqual(['a', 'b', 'fn_own', 'reloadit']);
   });
 });
 

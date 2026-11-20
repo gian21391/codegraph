@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
-import { allEdges, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
+import { allEdges, dormantRows, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -290,7 +290,8 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
   // physbase keeps Octave's `datestr.m` off the path and MATLAB Compiler's
   // encrypted `pause.m` in a deployed tree. Neither answers a call, so the
   // built-in calls of their names keep no row; the help text of a MEX
-  // function (`input.m`, comments only) and a script (`now.m`) still do.
+  // function (`input.m`, comments only) and a script (`now.m`) still do:
+  // with no path, either may be what MATLAB runs first.
   const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\nfunction s = datestr(t)\n  s = t;\nendfunction\n';
   const MATLAB = 'function s = datestr(t)\n  s = sprintf(\'%d\', t);\nend\n';
   const BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1) encrypted\n';
@@ -311,6 +312,7 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
       const cg = await CodeGraph.init(root, { index: true });
       cg.close();
       expect(names(unresolvedRows(root))).toEqual(['input', 'now']);
+      expect(names(dormantRows(root))).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -329,6 +331,7 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
       run.forEach((step, i) => {
         expect(step.synced, `${JSON.stringify(steps[i])} edges`).toEqual(step.fresh);
         expect(step.syncedRows, `${JSON.stringify(steps[i])} rows`).toEqual(step.freshRows);
+        expect(step.syncedDormant, `${JSON.stringify(steps[i])} dormant rows`).toEqual(step.freshDormant);
       });
       runs.push(run);
     }

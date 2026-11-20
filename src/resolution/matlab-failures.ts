@@ -8,11 +8,29 @@
  * ./matlab-builtin-carriers).
  *
  *   - A bare call of a built-in's name (`plot(x)`, `set(h, …)`, `@isempty`)
- *     that no project function answered, and no project symbol carries the
- *     name of: MATLAB's own. One that a project symbol carries is kept: where
- *     that definition stands (off the search path, behind a nearer case
- *     variant) may change with the path, and a sync that changes it must
- *     link the call as a fresh index would.
+ *     that no project function answered, and no symbol that could answer a
+ *     bare MATLAB call carries the name of (MATLAB_CALLABLE_NODES: a MATLAB
+ *     symbol, no property, constant, enumeration member or field, which a
+ *     bare call never runs; a C++ method or a Java one never answers a
+ *     MATLAB call): MATLAB's own, deleted. One that such a symbol carries is
+ *     kept: where that definition stands (off the search path, after
+ *     MATLAB's own folders, behind a nearer case variant) may change with
+ *     the path, and a sync that changes it must link the call as a fresh
+ *     index would. It is dormant only where MATLAB's own function wins: every
+ *     such carrier is one MATLAB runs by that bare name only through the
+ *     path (MATLAB_PATH_CARRIER_KINDS: a function file, a script, a plain
+ *     function of another file), and no `.m` file of the name is one MATLAB
+ *     may run ahead of its own from the caller (matlabBuiltinCopyMayWin in
+ *     ./matlab-lookup: physbase's `sound`, whose project copy its startup
+ *     adds with `addpath(…, '-end')`, and a copy off the path or out of
+ *     reach, are not). It stays failed when a method, a class or an
+ *     enumeration carries the name (a call of the class's own overload that
+ *     resolution missed is worth counting), and when a copy that may win
+ *     still left the call unlinked: a script called with arguments (MATLAB
+ *     errors), a stub (MATLAB runs the MEX file), a nearer case variant's
+ *     veto, or a copy in the caller's folder, where which copy runs is the
+ *     current folder's to say. A sync wakes such a dormant row wherever it
+ *     would re-open a failed one (see ./matlab-builtin-carriers).
  *   - A member or qualified call (`v.f(x)`, `Cls.m`, `pkg.f`, `obj@Base(x)`;
  *     see matlabMemberCall) whose member no symbol could answer: written with
  *     arguments, no symbol of the member's name that a dotted call can reach
@@ -43,19 +61,28 @@
  *     unless it is of a name code run at runtime makes (the `runtime` fact:
  *     `eval('x = 3;'); x(2)`, a `load`ed name, anything a callback given as
  *     text or `evalin` runs), most often a variable there; such a handle
- *     reference (a callback's) goes the same way. Nor is one of a name a
+ *     reference (a callback's) goes the same way. Nor is one of a name base
+ *     MATLAB has only as a method of one of its own classes
+ *     (MATLAB_METHOD_ONLY_NAMES: `parse(p, …)` on an `inputParser`,
+ *     `keys(m)`) that no symbol able to answer a bare MATLAB call carries
+ *     the name of (MATLAB_CALLABLE_NODES, as a built-in's: a property, a
+ *     Java field or a C++ method keeps none): no project code answers it,
+ *     and the only code of the name MATLAB has is its class's method; kept
+ *     dormant under its name, which the carrier step wakes when such a
+ *     symbol of the name comes. Nor is one of a name a
  *     script makes that the call's scope ran before it (`alsglobe` declaring
  *     `global IDXgolden`, then `IDXgolden(k)`): a variable that script left
  *     in the scope's workspace. That one is judged after resolution, by a
  *     pass of its own over every such call (see isMatlabPlainCall and
  *     ./matlab-script-workspace), which keeps it dormant.
  *
- * Every class but the built-ins' is kept dormant, and judged wherever its
- * file is, fresh or not: the rule reads the project's symbols alone, so a
- * failure in a file a sync left alone goes dormant as a fresh index's does.
+ * Every class is kept dormant, and judged wherever its file is, fresh or
+ * not: the rule reads the project's symbols alone (and, for a built-in's,
+ * where its copies stand on the search path), so a failure in a file a sync
+ * left alone goes dormant as a fresh index's does.
  * Each dormant row is stored under its tail (the name of a bare read, a
  * command or a name made at runtime; the member of `v.f` or `T::size`), the
- * one key its carriers are looked up by. A built-in's call is judged only
+ * one key its carriers are looked up by. A built-in's call is deleted only
  * where its file was extracted afresh (see MatlabFreshReferences): its rule
  * asks where the project's `.m` files are as well (see
  * ../extraction/languages/matlab-builtins), and a sync that gives the name
@@ -64,7 +91,7 @@
 
 import type { NodeFilter, QueryBuilder } from '../db/queries';
 import type { UnresolvedRef } from './types';
-import { MATLAB_BUILTINS, callsByName } from '../extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, callsByName } from '../extraction/languages/matlab-builtins';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { referenceNameTail } from '../db/reference-tail';
@@ -101,8 +128,19 @@ function isFreshReference(ref: UnresolvedRef, fresh: MatlabFreshReferences | und
 }
 
 /** Whether `ref` is a bare MATLAB call of a built-in's name, or a handle to one (`plot(x)`, `@plot`; not `Cls::plot` or `obj.plot`). */
-function isMatlabBuiltinCall(ref: { referenceName: string; referenceKind: string; language?: string }): boolean {
+export function isMatlabBuiltinCall(ref: { referenceName: string; referenceKind: string; language?: string }): boolean {
   return ref.language === 'matlab' && callsByName(ref.referenceKind) && MATLAB_BUILTINS.has(ref.referenceName);
+}
+
+/**
+ * Whether `ref` is a bare MATLAB call of a name base MATLAB has only as a
+ * method of one of its own classes (MATLAB_METHOD_ONLY_NAMES: `parse` of
+ * `inputParser`, `keys` of `containers.Map`): no built-in, a call like any
+ * other in every other respect, but one that no callable MATLAB symbol
+ * carries the name of is kept dormant, not live (see the top of this file).
+ */
+function isMatlabMethodNameCall(ref: { referenceName: string; referenceKind: string; language?: string }): boolean {
+  return ref.language === 'matlab' && ref.referenceKind === 'calls' && MATLAB_METHOD_ONLY_NAMES.has(ref.referenceName);
 }
 
 /** Whether a MATLAB reference name is a member or qualified one (`v.f`, `pkg::f`), not a bare name. */
@@ -117,8 +155,9 @@ function isDottedMatlabName(name: string): boolean {
 export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'enum_member', 'field'];
 
 /**
- * The nodes that carry a name for a MATLAB call: any but the file node of a
- * `.m` file whose text extraction read as no MATLAB code (Octave source, an
+ * The nodes that carry a name for a MATLAB call that is no built-in's (a
+ * built-in's are MATLAB_CALLABLE_NODES): any but the file node of a `.m`
+ * file whose text extraction read as no MATLAB code (Octave source, an
  * encrypted MATLAB Compiler file: see matlabUnreadReason), which answers no
  * call. A file of comments only (the help of a MEX function) and a script
  * carry their names.
@@ -126,8 +165,22 @@ export const MATLAB_VALUE_KINDS: readonly string[] = ['property', 'constant', 'e
 export const MATLAB_CARRIER_NODES: NodeFilter = { readable: true };
 /** The MATLAB nodes: a sync diffs their names, file by file, for the member calls' carriers (see ./matlab-builtin-carriers). */
 export const MATLAB_NODES: NodeFilter = { language: 'matlab', readable: true };
-/** The MATLAB nodes that carry a member's name for a call written without an argument list: the callable ones. */
+/**
+ * The MATLAB nodes that carry a member's name for a call written without an
+ * argument list: the callable ones. And the ones that carry a built-in's
+ * name for its bare call (see the top of this file).
+ */
 export const MATLAB_CALLABLE_NODES: NodeFilter = { language: 'matlab', exceptKinds: MATLAB_VALUE_KINDS, readable: true };
+/**
+ * The kinds of the callable MATLAB nodes that MATLAB runs by a bare name only
+ * through the search path, if at all: a function (a function file's, a local
+ * or nested one of another file, a package's) and a file node (a script, the
+ * help text of a MEX function). A built-in's call that only these carry is
+ * kept dormant (see the top of this file).
+ */
+export const MATLAB_PATH_CARRIER_KINDS: readonly string[] = ['function', 'file'];
+/** The callable MATLAB nodes of any other kind: a method, a class, an enumeration. */
+const MATLAB_OVERLOAD_CARRIER_NODES: NodeFilter = { ...MATLAB_CALLABLE_NODES, exceptKinds: [...MATLAB_VALUE_KINDS, ...MATLAB_PATH_CARRIER_KINDS] };
 /**
  * The MATLAB nodes that carry a member's name for a call written with
  * arguments (`v.f(x)`, `pkg.f(x)`, `Cls.m(x)`, `obj@Base(x)`): the ones such
@@ -224,30 +277,81 @@ export function matlabCarriedKeys(keys: Iterable<string>, known: ReadonlySet<str
  * dormant, when nothing carries its name: a MATLAB `calls` row of a bare
  * name (no member, no qualifier) that is no built-in's, written with
  * arguments (no `form` fact), with no `runtime`, `dispatch` or `computed`
- * fact — `IDXgolden(k)`. When a script its scope ran before it makes the
+ * fact, and no name MATLAB has only as a method (see isMatlabMethodNameCall)
+ * — `IDXgolden(k)`. When a script its scope ran before it makes the
  * name, it is one of the variables that script left in the scope's workspace,
  * and kept dormant instead (see ./matlab-script-workspace). Its carriers are
  * not asked here.
  */
 export function isMatlabPlainCall(ref: { referenceName: string; referenceKind: string; language?: string; candidates?: readonly string[] }): boolean {
   if (ref.language !== 'matlab' || ref.referenceKind !== 'calls' || isDottedMatlabName(ref.referenceName)) return false;
-  if (MATLAB_BUILTINS.has(ref.referenceName)) return false;
+  if (MATLAB_BUILTINS.has(ref.referenceName) || MATLAB_METHOD_ONLY_NAMES.has(ref.referenceName)) return false;
   const facts = matlabRefFacts(ref);
   return facts.form === undefined && !facts.runtime && facts.dispatch === undefined && !facts.computed;
 }
 
 /** The failures a resolution pass does not park as failed (see the top of this file). */
 export interface UnanswerableMatlabFailures {
-  /** A built-in's calls, deleted. */
+  /** A built-in's calls no symbol could answer, deleted. */
   deleted: Set<UnresolvedRef>;
-  /** Every other class's, kept dormant. */
+  /** Every other class's, and a built-in's call only the path could give a copy of, kept dormant. */
   dormant: Set<UnresolvedRef>;
 }
 
 /**
+ * Whether MATLAB's own function is what a bare call of a built-in's name
+ * runs from `ref`'s caller, as far as the project's copies of the name tell:
+ * no `.m` file of the name (`carriers`, the files carrying each name:
+ * MATLAB_CALLABLE_NODES) is one MATLAB may run ahead of its own there
+ * (`mayWin`: see matlabBuiltinCopyMayWin in ./matlab-lookup). One that may,
+ * and that the call still failed to link, is a script called with
+ * arguments (MATLAB errors), a stub (MATLAB runs the MEX file), a copy a
+ * nearer case variant vetoes, or one in a folder the current one may be:
+ * the call is no call of MATLAB's, and stays live.
+ */
+function matlabOwnFunctionWins(
+  ref: UnresolvedRef,
+  carriers: ReadonlyMap<string, ReadonlySet<string>>,
+  mayWin: (callerFile: string, copyFile: string) => boolean,
+): boolean {
+  return !matlabFileNames(ref.referenceName).some((k) => [...(carriers.get(k) ?? [])].some((f) => mayWin(ref.filePath, f)));
+}
+
+/**
+ * Of `list`, a built-in's failures, the ones to delete (no symbol carries
+ * the name that could answer the call: only a fresh one, see
+ * MatlabFreshReferences) and the ones to keep dormant (every carrier one
+ * that only the path gives, none in the caller's folder: see the top of
+ * this file), into `deleted` and `dormant`; the rest stay failed. Whether a
+ * symbol carries a name is asked of `known` first, when the caller has it.
+ */
+function judgeMatlabBuiltinFailures(
+  list: ReadonlyArray<{ ref: UnresolvedRef; keys: string[]; fresh: boolean }>,
+  known: ReadonlySet<string> | null,
+  queries: QueryBuilder,
+  out: UnanswerableMatlabFailures,
+  mayWin: (callerFile: string, copyFile: string) => boolean,
+): void {
+  if (list.length === 0) return;
+  const keys = new Set(list.flatMap((p) => p.keys).filter((k) => known === null || known.has(k)));
+  const carriers = keys.size > 0 ? queries.getFilesCarryingNames(keys, MATLAB_CALLABLE_NODES) : new Map<string, Set<string>>();
+  const overloads = carriers.size > 0 ? queries.getNodeNamesAmong(carriers.keys(), MATLAB_OVERLOAD_CARRIER_NODES) : new Set<string>();
+  for (const { ref, keys: own, fresh } of list) {
+    const carried = own.filter((k) => carriers.has(k));
+    if (carried.length === 0) {
+      if (fresh) out.deleted.add(ref);
+    } else if (!carried.some((k) => overloads.has(k)) && matlabOwnFunctionWins(ref, carriers, mayWin)) {
+      out.dormant.add(ref);
+    }
+  }
+}
+
+/**
  * The failures among `failures` not to park as failed (see the top of this
- * file): a built-in's call, only when fresh, to delete; any other, wherever
- * it is, to keep dormant (a member call with the `computed` fact never).
+ * file): a built-in's call no symbol could answer, only when fresh, to
+ * delete, and one only the path gives copies of, wherever it is, to keep
+ * dormant; any other, wherever it is, to keep dormant (a member call with
+ * the `computed` fact never).
  * Whether a symbol carries a name is asked of
  * `known`, the names every node carries (read when the pass began, after its
  * definitions were stored), or, when the pass has none (its caches dropped
@@ -259,22 +363,27 @@ export interface UnanswerableMatlabFailures {
  * name (MATLAB_CARRIER_NODES): Octave's `datestr.m`, MATLAB Compiler's
  * encrypted `pause.m` answer no call, and their names keep no row.
  *
- * A built-in's name that a project symbol carries is kept too, with a MATLAB
- * search path in force or not: the call failed because of where the
- * project's definition is (off the path, or behind a nearer case variant),
+ * A built-in's name that a symbol able to answer the call carries (one of
+ * MATLAB_CALLABLE_NODES) is kept too, with a MATLAB search path in force or
+ * not: the call failed because of where the project's definition is (off
+ * the path, after MATLAB's own folders, or behind a nearer case variant),
  * and a path that comes, changes or goes later (a sync re-resolves every
- * MATLAB reference then) may make it the one MATLAB runs, as a fresh index
- * would find it.
+ * MATLAB reference then, its dormant built-in calls with them) may make it
+ * the one MATLAB runs, as a fresh index would find it. Kept dormant or
+ * failed, by its carriers (see judgeMatlabBuiltinFailures).
  */
 export function unanswerableMatlabFailures(
   failures: readonly UnresolvedRef[],
   fresh: MatlabFreshReferences | undefined,
   known: ReadonlySet<string> | null,
   queries: QueryBuilder,
+  mayWin: (callerFile: string, copyFile: string) => boolean = () => true,
 ): UnanswerableMatlabFailures {
   const deleted = new Set<UnresolvedRef>();
   const dormant = new Set<UnresolvedRef>();
-  const pending: Array<{ ref: UnresolvedRef; keys: string[]; builtin: boolean }> = [];
+  const pending: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+  const methodNames: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+  const builtins: Array<{ ref: UnresolvedRef; keys: string[]; fresh: boolean }> = [];
   const bareMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   const calledMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   for (const ref of failures) {
@@ -288,10 +397,12 @@ export function unanswerableMatlabFailures(
       continue;
     }
     if (isMatlabBuiltinCall(ref)) {
-      if (isFreshReference(ref, fresh)) pending.push({ ref, keys: matlabNameKeys(ref.referenceName), builtin: true });
+      builtins.push({ ref, keys: matlabNameKeys(ref.referenceName), fresh: isFreshReference(ref, fresh) });
+    } else if (isMatlabMethodNameCall(ref)) {
+      methodNames.push({ ref, keys: matlabNameKeys(ref.referenceName) });
     } else {
       const keys = matlabUnmatchableKeys(ref);
-      if (keys) pending.push({ ref, keys, builtin: false });
+      if (keys) pending.push({ ref, keys });
     }
   }
   const dropUncarried = (list: Array<{ ref: UnresolvedRef; keys: string[] }>, filter: NodeFilter): void => {
@@ -301,13 +412,17 @@ export function unanswerableMatlabFailures(
   };
   dropUncarried(bareMembers, MATLAB_CALLABLE_NODES);
   dropUncarried(calledMembers, MATLAB_MEMBER_NODES);
+  // A name MATLAB has only as a method: only a symbol that can answer a bare
+  // MATLAB call keeps it live, as a built-in's (no property, nothing of
+  // another language).
+  dropUncarried(methodNames, MATLAB_CALLABLE_NODES);
+  judgeMatlabBuiltinFailures(builtins, known, queries, { deleted, dormant }, mayWin);
   if (pending.length === 0) return { deleted, dormant };
   const carried = matlabCarriedKeys(pending.flatMap((p) => p.keys), known, queries);
-  for (const { ref, keys, builtin } of pending) {
+  for (const { ref, keys } of pending) {
     if (keys.some(carried)) continue;
     const facts = matlabRefFacts(ref);
-    if (builtin) deleted.add(ref);
-    else if (isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) dormant.add(ref);
+    if (isDottedMatlabName(ref.referenceName) || facts.form !== undefined || facts.runtime) dormant.add(ref);
   }
   return { deleted, dormant };
 }

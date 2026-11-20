@@ -66,7 +66,7 @@ import { lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
-import { clearMatlabLookupMemos, matchMatlabReference } from './matlab-lookup';
+import { clearMatlabLookupMemos, matchMatlabReference, matlabBuiltinCopyMayWin } from './matlab-lookup';
 import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
 import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabNamesakes, reopenMatlabScriptRuns } from './matlab-sync';
@@ -2343,7 +2343,10 @@ export class ReferenceResolver {
     deleted: { rowIds: number[]; legacyKeys: Array<{ fromNodeId: string; referenceName: string; referenceKind: string }> };
     dormant: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }>;
   } {
-    const { deleted: builtins, dormant } = unanswerableMatlabFailures(failures, matlabFresh, this.knownNames, this.queries);
+    const { deleted: builtins, dormant } = unanswerableMatlabFailures(
+      failures, matlabFresh, this.knownNames, this.queries,
+      (callerFile, copyFile) => matlabBuiltinCopyMayWin(callerFile, copyFile, this.context),
+    );
     if (builtins.size === 0 && dormant.size === 0) return { kept: failures, deleted: { rowIds: [], legacyKeys: [] }, dormant: [] };
     const asleep: Array<{ rowId: number; referenceName: string; referenceKind: string; nameTail?: string }> = [];
     const discarded = new Set(builtins);
