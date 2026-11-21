@@ -67,6 +67,8 @@ export function describeSynthesizedHop(edge: Edge | null | undefined, opts: Synt
     // A resolution edge its resolver marked a guess: MATLAB's `Problem.Evaluation(x)`
     // on a parameter `Problem`, taken for the class `PROBLEM`.
     if (m.via === 'receiver-name') return { summary: 'receiver named after its class', detail: '' };
+    // MATLAB's `children(tree, uid)` in `@xmltree/`'s code, taken for the class's method.
+    if (m.via === 'caller-class') return { summary: "argument taken for the caller's class", detail: '' };
     return null;
   }
   const registeredAt = typeof m.registeredAt === 'string' ? m.registeredAt : undefined;

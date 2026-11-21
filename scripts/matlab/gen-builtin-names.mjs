@@ -10,7 +10,7 @@
  * MATLAB's documentation catalog (<matlabroot>/help/docCatalog/referenceapi/
  * matlab.json) and the default search path (<matlabroot>/toolbox/local/
  * pathdef.m), of which the folders under `toolbox/matlab/` (base MATLAB,
- * installed with every MATLAB), each read alone. It writes two lists:
+ * installed with every MATLAB), each read alone. It writes three lists:
  *
  *   MATLAB_BASE_NAMES — the functions and classes base MATLAB has, which a
  *   bare call of the name runs wherever MATLAB's own folders come first:
@@ -48,8 +48,21 @@
  *   MATLAB, so not built-ins; a bare call of one that no project symbol
  *   answers runs MATLAB's method on MATLAB's object, or fails.
  *
- * Both are sorted (by code unit), without duplicates, of plain identifiers
- * alone, and disjoint; the module is written whole.
+ *   MATLAB_DOCUMENTED_METHOD_NAMES — every method base MATLAB documents: each
+ *   catalog entity of type "method", by the last part of each of its names
+ *   (`matlab.mixin.Copyable.copy` → `copy`, `matlab.io.xml.dom.Node.getChildren`
+ *   → `getChildren`), a parenthesised note after it dropped
+ *   (`matlab.System.release (System object)` → `release`). The two lists
+ *   above take no entity whose name is dotted, which most methods' are (a
+ *   namespaced class's, a class's documented on a page of its own): this
+ *   one does. It may share names with both. A call of one in a class
+ *   folder's code may be meant for MATLAB's object of that class, so the
+ *   resolver takes no such call for the class's own method on that evidence
+ *   alone (classMethodGuess in src/resolution/matlab-lookup.ts, its only
+ *   reader).
+ *
+ * Each is sorted (by code unit), without duplicates, of plain identifiers
+ * alone; the first two are disjoint. The module is written whole.
  */
 
 import * as fs from 'node:fs';
@@ -168,6 +181,18 @@ function isExample(file) {
   return sig !== null && /^(?:src|source|hObject|h|obj|object|hSrc)$/i.test(sig[1]) && /^(?:event|eventdata|evt|eventData|e|ed)$/i.test(sig[2]);
 }
 
+// Every documented method, by the last part of each of its names (see MATLAB_DOCUMENTED_METHOD_NAMES).
+const documented = new Set();
+for (const item of catalog.refItems ?? []) {
+  for (const entity of item.refentity ?? []) {
+    if (entity.type !== 'method') continue;
+    for (const full of String(entity.name).split(/,\s*/)) {
+      const tail = full.replace(/\s*\([^)]*\)\s*$/, '').split('.').pop();
+      if (IDENTIFIER.test(tail)) documented.add(tail);
+    }
+  }
+}
+
 const drops = { removed: 0, method: 0, package: 0, keyword: 0, hook: 0, example: 0, Contents: 0 };
 const base = [];
 const methods = [];
@@ -194,6 +219,7 @@ for (const name of new Set([...entries.keys(), ...files.keys()])) {
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 base.sort(byCodeUnit);
 methods.sort(byCodeUnit);
+const documentedMethods = [...documented].sort(byCodeUnit);
 
 const lines = (names) => {
   const out = [];
@@ -218,7 +244,7 @@ const text = `/**
  * From help/docCatalog/referenceapi/matlab.json (base MATLAB's documented
  * functions, classes and methods) and the default-path folders under
  * toolbox/matlab/ in toolbox/local/pathdef.m (their function files and
- * \`@Class\` folders). Sorted, no duplicates, the two lists disjoint.
+ * \`@Class\` folders). Sorted, no duplicates, the first two lists disjoint.
  */
 
 /**
@@ -242,7 +268,18 @@ ${lines(base)}
 export const MATLAB_METHOD_NAMES: readonly string[] = [
 ${lines(methods)}
 ];
+
+/**
+ * Every method base MATLAB documents, by the last part of its name
+ * (\`matlab.mixin.Copyable.copy\` → \`copy\`, \`getChildren\` of
+ * \`matlab.io.xml.dom.Node\`), whatever else has the name: it may share names
+ * with both lists above. Read by classMethodGuess
+ * (../../resolution/matlab-lookup) alone.
+ */
+export const MATLAB_DOCUMENTED_METHOD_NAMES: readonly string[] = [
+${lines(documentedMethods)}
+];
 `;
 fs.writeFileSync(MODULE, text);
-console.log(`${release}: ${base.length} base names, ${methods.length} method names (${read} of ${folders.size} path folders read) -> ${path.relative(ROOT, MODULE)}`);
+console.log(`${release}: ${base.length} base names, ${methods.length} method names, ${documentedMethods.length} documented method names (${read} of ${folders.size} path folders read) -> ${path.relative(ROOT, MODULE)}`);
 console.log(`dropped from the base names: ${Object.entries(drops).map(([k, v]) => `${k} ${v}`).join(', ')}`);

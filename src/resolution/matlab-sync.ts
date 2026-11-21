@@ -20,7 +20,8 @@ import type { QueryBuilder } from '../db/queries';
 import type { ResolutionContext } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { isMatlabPathScript, isMatlabPathStub, matlabAncestorClasses, matlabSuperclassNames } from './matlab-lookup';
-import { matlabFileNames, matlabFileStem } from '../extraction/languages/matlab-path';
+import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
+import { dirOf } from '../graph/matlab-search-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { wakeMatlabBuiltinRows } from './matlab-builtin-carriers';
 
@@ -91,6 +92,25 @@ export function reopenMatlabScriptRuns(
       if (!ref) continue;
       edgeIds.push(edge.edgeId);
       refs.push(ref);
+    }
+    // A class folder's file `m.m` that holds no method `m` (Octave, help
+    // text, nothing) is what a call of `m` on an object of the class runs:
+    // the calls in the folder's other files that a guess took for an
+    // inherited method `m` (classMethodGuess in ./matlab-lookup) go back,
+    // though no definition of `m` came or went. One that holds the method
+    // again is the delta's.
+    if (matlabPathScope(filePath).classFolder !== undefined && !queries.getNodesByFileOfKinds(filePath, ['method'], 'matlab').some((n) => n.name === stem)) {
+      const dir = dirOf(filePath);
+      for (const method of queries.getNodesByName(stem)) {
+        if (method.language !== 'matlab' || method.kind !== 'method') continue;
+        for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(method.id, method.filePath, 'matlab')) {
+          if (fresh.has(edge.sourceFilePath) || dirOf(edge.sourceFilePath) !== dir || copyEdges.has(edge.edgeId)) continue;
+          const ref = resurrectRefFromDroppedEdge(edge);
+          if (!ref) continue;
+          copyEdges.add(edge.edgeId);
+          copyRefs.push(ref);
+        }
+      }
     }
     const script = isMatlabPathScript(filePath, context);
     if (script || isMatlabPathStub(filePath, context)) {
@@ -250,7 +270,15 @@ function classesIn(queries: QueryBuilder, file: string): Map<string, { bases: st
  * the names it defines (the definition delta has those): it can be the link
  * another class's chain was missing (`Sub < Mid`, `Mid.m` new) or a nearer
  * copy of a class, and either changes what an inherited call or a `v.m`
- * common root already answers.
+ * common root already answers. So it re-opens, too, the names of the
+ * methods its class folder holds (a call of one may hang on the class
+ * standing: see classMethodGuess in ./matlab-lookup; its classdef's own are
+ * the delta's), and the lists of the other copies of its qualified name
+ * that stand after the sync, with their ancestors and their own methods: a
+ * superclass written `Mid` resolves to the first copy of `Mid` on the path,
+ * so a copy that comes ahead of another (`lib/Mid.m < handle` put before
+ * `app/Mid.m < Node`), or goes, moves every class written `< Mid` from one
+ * copy's chain to the other's, with no list changed that reaches either.
  *
  * `before` is told each file the sync is about to change or remove, while its
  * rows are there to read (as the parameter-flow pass is); `changedNames` is
@@ -267,24 +295,41 @@ export class MatlabSuperclassChange {
   }
 
   changedNames(context: ResolutionContext): string[] {
-    const reached = new Map<string, { bases: string[]; filePath: string }[]>();
+    const reached: { bases: string[]; filePath: string }[] = [];
+    const names = new Set<string>();
+    /** The qualified names that gained or lost a copy. */
+    const moved = new Set<string>();
+    let matlabFiles: string[] | undefined;
     for (const [file, before] of this.classesBefore) {
       const after = classesIn(this.queries, file);
       for (const qn of new Set([...before.keys(), ...after.keys()])) {
         const was = before.get(qn);
         const now = after.get(qn);
         if (was && now && was.bases.join('&') === now.bases.join('&')) continue;
-        const lists = [was, now].filter((c): c is { bases: string[]; filePath: string } => c !== undefined && c.bases.length > 0);
-        if (lists.length > 0) reached.set(qn, lists);
+        for (const c of [was, now]) if (c !== undefined && c.bases.length > 0) reached.push(c);
+        if (was && now) continue;
+        moved.add(qn);
+        // A class folder's methods, which the folder's files are named after: its `contains` edges come later, from synthesis.
+        if (/(?:^|\/)@[^/]+\/[^/]+$/.test(file)) {
+          const dir = dirOf(file);
+          matlabFiles ??= this.queries.getFilePathsOfLanguage('matlab');
+          for (const f of matlabFiles) {
+            const stem = dirOf(f) === dir ? matlabFileStem(f) : null;
+            if (stem !== null) names.add(stem);
+          }
+        }
       }
     }
-    if (reached.size === 0) return [];
-    const names = new Set<string>();
-    for (const lists of reached.values()) {
-      for (const { bases, filePath } of lists) {
-        for (const cls of matlabAncestorClasses(bases, filePath, context)) {
-          for (const n of this.methodsOf(cls)) names.add(n);
-        }
+    for (const qn of moved) {
+      for (const copy of context.getNodesByQualifiedName(qn)) {
+        if (copy.language !== 'matlab' || !CLASS_KINDS.includes(copy.kind)) continue;
+        reached.push({ bases: matlabSuperclassNames(copy), filePath: copy.filePath });
+        for (const n of this.methodsOf(copy)) names.add(n);
+      }
+    }
+    for (const { bases, filePath } of reached) {
+      for (const cls of matlabAncestorClasses(bases, filePath, context)) {
+        for (const n of this.methodsOf(cls)) names.add(n);
       }
     }
     return [...names];

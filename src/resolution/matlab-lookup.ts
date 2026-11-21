@@ -87,7 +87,8 @@ import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
-import { MATLAB_BUILTINS } from '../extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES } from '../extraction/languages/matlab-builtins';
+import { MATLAB_DOCUMENTED_METHOD_NAMES } from '../extraction/languages/matlab-builtin-names';
 import { isMatlabScriptFile, isMatlabStubFile } from '../graph/matlab-scripts';
 import { dirOf, matlabLookupFolder, type MatlabSearchPath } from '../graph/matlab-search-path';
 
@@ -807,6 +808,135 @@ function hierarchyRoots(chosen: ReadonlyMap<string, Node>, context: ResolutionCo
 }
 
 /**
+ * `m(x, …)` in a class folder's function file (`@C/f.m`, never the classdef
+ * `@C/C.m`: the extractor writes the `objectArg` fact there alone) that
+ * nothing else answers, on a variable that may hold an object (the
+ * `objectArg` fact, see ../extraction/languages/matlab-ref-facts): the
+ * method of the caller's own copy of `C` (see homeMethod) that a call on an
+ * object of it runs, taken for the call: the class's code calls its own
+ * methods on its objects in function syntax (`ConcatenateTPSbyVPS(q(i), p,
+ * 1)` in `@tps/BCH99.m`, `children(tree, uid)` in `@xmltree/editor.m`). A
+ * guess — the argument's class is not stated —, which the edge says it is
+ * (`via: 'caller-class'`).
+ *
+ * None for
+ *   - a name MATLAB has: a built-in's, one of its classes' methods' (step 8's
+ *     lists), or any method base MATLAB documents
+ *     (MATLAB_DOCUMENTED_METHOD_NAMES: `copy` of `matlab.mixin.Copyable`);
+ *   - a name any MATLAB function, class or property of the project carries
+ *     (the call may be meant for it, or the name read as a field);
+ *   - a name a class outside the caller's copy's hierarchy defines a method
+ *     of (otherClassDefines: `friction` of a `Link` beside
+ *     `@Robot/friction.m`), whose object the argument may as well be;
+ *   - a method named after its class in another case (`@tps/TPS.m`, which a
+ *     case-blind file system once took for the constructor).
+ * Every input is a definition of `m` (its definition delta), a file `m.m`
+ * in the caller's folder (reopenMatlabScriptRuns in ./matlab-sync), a
+ * superclass list or a copy of a class coming or going (MatlabSuperclassChange
+ * in ./matlab-sync: one that takes a class into the hierarchy or out of it
+ * reaches it before or after, and the method found with it), or the path; a
+ * sync re-opens the call for each.
+ */
+function classMethodGuess(name: string, caller: Caller, context: ResolutionContext): Node | undefined {
+  if (MATLAB_BUILTINS.has(name) || MATLAB_METHOD_ONLY_NAMES.has(name) || DOCUMENTED_METHODS.has(name)) return undefined;
+  const cls = callerClass(caller);
+  if (!cls || cls === name || cls.endsWith(`::${name}`)) return undefined;
+  const named = matlab(context.getNodesByName(name));
+  if (named.some((n) => GUESS_BLOCKING_KINDS.has(n.kind))) return undefined;
+  const home = homeClass(cls, caller.file, context);
+  const method = homeMethod(cls, name, caller, home, context);
+  if (!method) return undefined;
+  const owner = ownerOf(method);
+  if (owner.slice(owner.lastIndexOf(':') + 1).toLowerCase() === name.toLowerCase()) return undefined;
+  return otherClassDefines(named, cls, home, context) ? undefined : method;
+}
+
+/** What a name a guess is not made for carries (see classMethodGuess). */
+const GUESS_BLOCKING_KINDS: ReadonlySet<string> = new Set(['function', 'class', 'enum', 'property', 'constant']);
+
+/** classMethodGuess's third list (see ../extraction/languages/matlab-builtin-names): read nowhere else. */
+const DOCUMENTED_METHODS: ReadonlySet<string> = new Set(MATLAB_DOCUMENTED_METHOD_NAMES);
+
+/** The copy of class `cls` the caller's class folder holds (`@C/C.m`, a classdef or an old-style constructor), if any. */
+function homeClass(cls: string, callerFile: string, context: ResolutionContext): Node | undefined {
+  const dir = dirOf(callerFile);
+  return matlab(context.getNodesByQualifiedName(cls)).find((n) => TYPE_KINDS.has(n.kind) && dirOf(n.filePath) === dir);
+}
+
+/**
+ * The method `name` that a call on an object of the caller's own copy of
+ * `cls` runs: the one its class folder holds (a method file `@C/m.m`, or
+ * the classdef's own), else the one the copy `home` inherits through its
+ * superclass list. Never a method of another copy of `cls` (robotics'
+ * `Octave/@SerialLink/rne.m` is Octave code, and `@SerialLink/rne.m` is
+ * another implementation's): none when the caller's folder has a file
+ * `m.m` with no method in it, which is what runs.
+ */
+function homeMethod(cls: string, name: string, caller: Caller, home: Node | undefined, context: ResolutionContext): Node | undefined {
+  const dir = dirOf(caller.file);
+  const own = preferBodies(matlab(context.getNodesByQualifiedName(`${cls}::${name}`)).filter((n) => n.kind === 'method' && dirOf(n.filePath) === dir));
+  if (own.length > 0) return choose(own, caller.file, context);
+  if (matlabFileNames(name).some((f) => context.getNodesInFile(`${dir}/${f}`).length > 0)) return undefined;
+  if (!home) return undefined;
+  for (const sup of superclassesOf(home, context)) {
+    const hit = methodOnHierarchy(sup, name, caller.file, context);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * Whether a class outside the hierarchy of `home` — the caller's copy of
+ * `cls` (homeClass) — owns one of the methods among `named` (a name's
+ * MATLAB nodes), anywhere in the project, on the path or off it. Each
+ * method counts with the copy of its class that holds it (the classdef in
+ * its file, or the class of its class folder): that copy must descend from
+ * `home` or be one of its ancestors, every superclass resolved as MATLAB
+ * would (superclassesOf); a method no copy holds, or any method at all when
+ * there is no `home`, blocks. A class whose name is `cls`'s in any case does
+ * not count (pb's `@tps` beside a copy `@TPS`, another copy of `cls`): it
+ * stops no guess, and homeMethod never links to it.
+ */
+function otherClassDefines(named: readonly Node[], cls: string, home: Node | undefined, context: ResolutionContext): boolean {
+  const lower = cls.toLowerCase();
+  let above: Set<string> | undefined;
+  for (const m of named) {
+    if (m.kind !== 'method') continue;
+    const owner = ownerOf(m);
+    if (owner === '' || owner.toLowerCase() === lower) continue;
+    if (!home) return true;
+    above ??= ancestorIds(home, context);
+    const copies = matlab(context.getNodesByQualifiedName(owner)).filter(
+      (c) => TYPE_KINDS.has(c.kind) && (c.filePath === m.filePath || (inClassFolder(m) && dirOf(c.filePath) === dirOf(m.filePath))),
+    );
+    if (copies.length === 0) return true;
+    for (const c of copies) if (!above.has(c.id) && !ancestorIds(c, context).has(home.id)) return true;
+  }
+  return false;
+}
+
+/** The ids of `cls` and of every class it inherits from, each superclass resolved as MATLAB would (superclassesOf). */
+function ancestorIds(cls: Node, context: ResolutionContext): Set<string> {
+  const seen = new Set<string>();
+  const walk = (c: Node): void => {
+    if (seen.has(c.id)) return;
+    seen.add(c.id);
+    for (const sup of superclassesOf(c, context)) walk(sup);
+  };
+  walk(cls);
+  return seen;
+}
+
+/**
+ * The class whose folder the caller's file is in (`@Cls/f.m`,
+ * `+pkg/@Cls/f.m`), for classMethodGuess; undefined for any other file.
+ */
+function callerClass(caller: Caller): string | undefined {
+  const scope = matlabPathScope(caller.file);
+  return scope.classFolder === undefined ? undefined : [...scope.packages, scope.classFolder].join('::');
+}
+
+/**
  * Whether `cls` is an old-style class: an `@Cls` folder whose `Cls.m` is a
  * constructor function (`class(s, 'Cls')`), not a `classdef`. Its object is
  * a struct: `obj.f` reads a field of it, never a method.
@@ -822,10 +952,11 @@ export function matchMatlabReference(ref: UnresolvedRef, context: ResolutionCont
   return {
     original: ref,
     targetNodeId: target.id,
-    confidence: via.includes('.') && !via.includes('::') ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
+    confidence: found.byCallerClass || (via.includes('.') && !via.includes('::')) ? 0.7 : target.filePath === ref.filePath ? 0.95 : 0.9,
     resolvedBy: ref.referenceKind === 'function_ref' ? 'function-ref' : via.includes('::') ? 'qualified-name' : 'exact-match',
-    // A guess from the parameter's name: marked one (see ../graph/synthesized-hop).
+    // A guess from the parameter's name, or from the caller's class: marked one (see ../graph/synthesized-hop).
     ...(found.byReceiverName ? { metadata: { via: 'receiver-name' }, provenance: 'heuristic' as const } : {}),
+    ...(found.byCallerClass ? { metadata: { via: 'caller-class' }, provenance: 'heuristic' as const } : {}),
   };
 }
 
@@ -835,6 +966,8 @@ interface Found {
   via: string;
   /** A `v.m()` whose class the parameter's name gave (see resolveVariableMethod). */
   byReceiverName?: boolean;
+  /** An `m(x, …)` taken for a method of the caller's class (see classMethodGuess). */
+  byCallerClass?: boolean;
 }
 
 function foundBy(target: Node | undefined, via: string): Found | null {
@@ -885,7 +1018,10 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
       return foundByVariable(resolveVariableMethod(name, ref.filePath, context, facts.param === true), name);
     }
     // A statement runs a script: a call written as one, or a callback given as text that is one (`'Callback', 'refresh_plots'`).
-    return foundBy(resolveBare(name, callerHere(), context, undefined, facts.form === 'statement'), name);
+    const hit = resolveBare(name, callerHere(), context, undefined, facts.form === 'statement');
+    if (hit || !facts.objectArg || ref.referenceKind !== 'calls') return foundBy(hit, name);
+    const guess = classMethodGuess(name, callerHere(), context);
+    return guess ? { target: guess, via: name, byCallerClass: true } : null;
   }
   const owner = name.slice(0, name.lastIndexOf('::'));
   // `this.path` on an old-style class's object is a field of its struct, not

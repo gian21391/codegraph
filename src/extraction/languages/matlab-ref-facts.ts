@@ -52,6 +52,17 @@
  *     handle `str2func` made of a built text. No text spells the name, so its
  *     row is kept whatever carries the member (see
  *     ../../resolution/matlab-failures.ts);
+ *   - `objectArg` — a call of a name that is no built-in's, written with
+ *     arguments, whose first argument is a variable of the calling function
+ *     that may hold an object (a parameter, or a variable written only with
+ *     calls' results, copies and elements; not a lambda's parameter: see
+ *     objectArgument in matlab.ts), as it is or indexed with parentheses
+ *     (`children(tree, uid)`, `f(q(i), p)`), and no class the code states,
+ *     in a class folder's function file (`@Cls/f.m`, not the classdef
+ *     `@Cls/Cls.m`), in a function whose first parameter is not `~`: where
+ *     nothing else answers, it is taken for a call of the class's method
+ *     (see classMethodGuess in ../../resolution/matlab-lookup.ts), a guess
+ *     the edge says it is;
  *   - `args:<json>` — what a call written with arguments (`dacefit(S, Y,
  *     'regpoly0')`, `gui('LoadLattice', h)` in callback code) passes, where
  *     the code says (see MatlabCallArgs): read by nothing in resolution, it
@@ -114,6 +125,7 @@ export interface MatlabRefFacts {
   self?: boolean;
   param?: boolean;
   computed?: boolean;
+  objectArg?: boolean;
   args?: MatlabCallArgs;
 }
 
@@ -129,6 +141,8 @@ const SELF_TAG = 'self';
 const PARAM_TAG = 'param';
 /** The `computed` fact's tag. */
 export const COMPUTED_TAG = 'computed';
+/** The `objectArg` fact's tag. */
+const OBJECT_ARG_TAG = 'objectArg';
 
 /** `facts` as a reference's `candidates`, or undefined when there are none. */
 export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined {
@@ -140,6 +154,7 @@ export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined
   if (facts.self) out.push(SELF_TAG);
   if (facts.param) out.push(PARAM_TAG);
   if (facts.computed) out.push(COMPUTED_TAG);
+  if (facts.objectArg) out.push(OBJECT_ARG_TAG);
   if (facts.args) out.push(ARGS + JSON.stringify(facts.args));
   return out.length > 0 ? out : undefined;
 }
@@ -190,6 +205,7 @@ export function matlabRefFacts(ref: { candidates?: readonly string[] }): MatlabR
     else if (c === SELF_TAG) facts.self = true;
     else if (c === PARAM_TAG) facts.param = true;
     else if (c === COMPUTED_TAG) facts.computed = true;
+    else if (c === OBJECT_ARG_TAG) facts.objectArg = true;
     // `args` is resolution's to carry, not to read: see splitMatlabArgs.
   }
   return facts;
