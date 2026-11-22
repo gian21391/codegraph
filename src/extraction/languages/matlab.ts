@@ -1,6 +1,6 @@
 import type { Node as SyntaxNode, Tree } from 'web-tree-sitter';
 import type { Node, NodeKind, UnresolvedReference } from '../../types';
-import { getNodeText, getChildByField } from '../tree-sitter-helpers';
+import { getNodeText } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { getParser } from '../grammars';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
@@ -18,14 +18,17 @@ import {
   callArgs,
   callersUnknown,
   chainHead,
+  childField,
   commandItems,
   errorVariable,
   evaluate,
   fieldOf,
   isColonIndex,
+  isCutName,
   isOneBuiltStruct,
   literalIndex,
   namedChildren,
+  noteParsedText,
   parseSymPath,
   stringLiteral,
   templateOf,
@@ -171,9 +174,8 @@ function identifiersIn(node: SyntaxNode, source: string, into: Set<string>): voi
 
 /** The leading `attributes` child of a classdef / properties / methods node (comments aside). */
 function leadingAttributes(node: SyntaxNode): SyntaxNode | null {
-  for (let i = 0; i < node.namedChildCount; i++) {
-    const c = node.namedChild(i);
-    if (!c || c.type === 'comment') continue;
+  for (const c of namedChildren(node)) {
+    if (c.type === 'comment') continue;
     return c.type === 'attributes' ? c : null;
   }
   return null;
@@ -190,6 +192,8 @@ function attributesOf(node: SyntaxNode, source: string): Map<string, string> {
   for (const attr of namedChildren(attrs)) {
     if (attr.type !== 'attribute') continue;
     const parts = namedChildren(attr);
+    // A name the parser cut out of a word says nothing (see isCutName).
+    if (parts.some(isCutName)) continue;
     const key = parts[0] ? getNodeText(parts[0], source).toLowerCase() : '';
     if (!key) continue;
     const value = parts[1] ? getNodeText(parts[1], source).replace(/^['"]|['"]$/g, '').toLowerCase() : 'true';
@@ -287,9 +291,9 @@ function isStatement(node: SyntaxNode): boolean {
 function isAssignmentTarget(node: SyntaxNode): boolean {
   let n = node;
   for (let p = n.parent; p; n = p, p = p.parent) {
-    if (p.type === 'assignment') return getChildByField(p, 'left')?.id === n.id;
+    if (p.type === 'assignment') return childField(p, 'left')?.id === n.id;
     if (p.type === 'field_expression' || p.type === 'multioutput_variable') continue;
-    if (p.type === 'function_call' && getChildByField(p, 'name')?.id === n.id) continue;
+    if (p.type === 'function_call' && childField(p, 'name')?.id === n.id) continue;
     return false;
   }
   return false;
@@ -302,9 +306,9 @@ function isAssignmentTarget(node: SyntaxNode): boolean {
  */
 function isInnerChain(node: SyntaxNode): boolean {
   const call = node.parent;
-  if (call?.type !== 'function_call' || getChildByField(call, 'name')?.id !== node.id) return false;
+  if (call?.type !== 'function_call' || childField(call, 'name')?.id !== node.id) return false;
   const outer = call.parent;
-  return outer?.type === 'field_expression' && getChildByField(outer, 'object')?.id !== call.id;
+  return outer?.type === 'field_expression' && childField(outer, 'object')?.id !== call.id;
 }
 
 /** A dotted name's identifiers (`pkg.Base` in a `superclass`, `@pkg.f`), or null when anything else is in it. */
@@ -566,7 +570,7 @@ function objectArgument(args: readonly SyntaxNode[], source: string): boolean {
   let v: string | null = null;
   if (a?.type === 'identifier') v = getNodeText(a, source);
   else if (a?.type === 'function_call' && !bracesIndex(a) && !namedChildren(a).some((c) => c.type === 'superclass')) {
-    const callee = getChildByField(a, 'name');
+    const callee = childField(a, 'name');
     if (callee?.type === 'identifier') v = getNodeText(callee, source);
   }
   return v !== null && isLocal(f, v) && v !== f.self?.name && mayHoldObject(f, v);
@@ -725,7 +729,7 @@ const NO_INDEX_ARGS: ReadonlySet<string> = new Set(['string', 'handle_operator',
 function readsAsCall(call: SyntaxNode, args: MatlabCallArgs | undefined): boolean {
   if (isStatement(call) && (call.nextSibling?.type === ';' || callArgs(call).length > 0)) return true;
   const p = call.parent;
-  if (p?.type === 'assignment' && getChildByField(p, 'right')?.id === call.id && getChildByField(p, 'left')?.type === 'multioutput_variable') return true;
+  if (p?.type === 'assignment' && childField(p, 'right')?.id === call.id && childField(p, 'left')?.type === 'multioutput_variable') return true;
   if (callArgs(call).some((a) => NO_INDEX_ARGS.has(a.type))) return true;
   if (!args) return false;
   return Object.values(args).some((v) => argItemsOf(v).some((x) => (typeof x === 'string' && (x.startsWith("'") || x.startsWith('@'))) || (typeof x === 'object' && 'o' in x)));
@@ -834,7 +838,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const copiedFrom = (rhs: SyntaxNode | null): string | null => {
     if (rhs?.type === 'identifier') return getNodeText(rhs, source);
     if (rhs?.type !== 'function_call' || bracesIndex(rhs) || namedChildren(rhs).some((c) => c.type === 'superclass')) return null;
-    const name = getChildByField(rhs, 'name');
+    const name = childField(rhs, 'name');
     return name?.type === 'identifier' ? getNodeText(name, source) : null;
   };
   const structFields = new Set<string>();
@@ -892,7 +896,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
       case 'matrix':
         return /['"]/.test(getNodeText(rhs, source)) ? 'value' : null;
       case 'function_call': {
-        const name = getChildByField(rhs, 'name');
+        const name = childField(rhs, 'name');
         if (name?.type !== 'identifier') return null;
         if (VALUE_CALLS.test(getNodeText(name, source))) return 'value';
         return arrayEvidence(rhs) === 'variable' ? name : null;
@@ -929,7 +933,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
       return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
     }
     if (rhs?.type === 'function_call') {
-      const name = getChildByField(rhs, 'name');
+      const name = childField(rhs, 'name');
       const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
       return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
     }
@@ -942,7 +946,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         if (p.type !== 'identifier') return null;
         path.push(getNodeText(p, source));
       }
-      const name = getChildByField(last, 'name');
+      const name = childField(last, 'name');
       const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
       return /^[A-Z]/.test(text) ? [path[0]!, [...path, text].join('::')] : null;
     }
@@ -951,25 +955,24 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
 
   /** `x(k) = …` makes x a variable. */
   const indexAssigned = (left: SyntaxNode): void => {
-    const name = getChildByField(left, 'name');
+    const name = childField(left, 'name');
     if (name) local(getNodeText(name, source));
   };
   /** `v.f = …` / `v.f(k) = …`: v is a variable, and f a field the scope fills in; `s(k).f = …` makes s one. */
   const fieldAssigned = (left: SyntaxNode): void => {
-    const obj = getChildByField(left, 'object');
+    const obj = childField(left, 'object');
     if (obj?.type === 'identifier') {
       const v = getNodeText(obj, source);
       local(v);
-      const field = obj.nextNamedSibling;
-      const fieldName = field?.type === 'function_call' ? getChildByField(field, 'name') : field;
+      const parts = namedChildren(left);
+      const field = parts[parts.findIndex((p) => p.id === obj.id) + 1];
+      const fieldName = field?.type === 'function_call' ? childField(field, 'name') : field;
       if (fieldName?.type === 'identifier') structFields.add(`${v}.${getNodeText(fieldName, source)}`);
     } else if (obj?.type === 'function_call') indexAssigned(obj);
   };
 
   const walk = (n: SyntaxNode): void => {
-    for (let i = 0; i < n.namedChildCount; i++) {
-      const c = n.namedChild(i);
-      if (!c) continue;
+    for (const c of namedChildren(n)) {
       switch (c.type) {
         case 'function_definition':
           nested = true;
@@ -1002,17 +1005,17 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           if ((n.type === 'block' || n.type === 'source_file') && /^clear(?:vars)?$/.test(getNodeText(c, source))) clears.push(c);
           break;
         case 'assignment': {
-          const left = getChildByField(c, 'left');
-          const right = getChildByField(c, 'right');
+          const left = childField(c, 'left');
+          const right = childField(c, 'right');
           if (left?.type === 'multioutput_variable') for (const out of namedChildren(left)) written(out, null);
           else written(left, right);
           if (left?.type === 'identifier') {
             const v = getNodeText(left, source);
             local(v);
-            const right = getChildByField(c, 'right');
+            const right = childField(c, 'right');
             const made = constructed(right);
             if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier' });
-            else if (right?.type === 'function_call' && /^(?:struct|load)$/.test(getNodeText(getChildByField(right, 'name') ?? right, source))) {
+            else if (right?.type === 'function_call' && /^(?:struct|load)$/.test(getNodeText(childField(right, 'name') ?? right, source))) {
               structFields.add(v);
             }
             const from = copiedFrom(right);
@@ -1029,11 +1032,11 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           break;
         }
         case 'iterator': {
-          const v = c.namedChild(0);
+          const [v = null, range = null] = namedChildren(c);
           if (v?.type === 'identifier') local(getNodeText(v, source));
-          written(v, c.namedChild(1));
+          written(v, range);
           // `for e = ets`: each column of the array ets, an object of its class.
-          const from = v?.type === 'identifier' ? copiedFrom(c.namedChild(1)) : null;
+          const from = v?.type === 'identifier' ? copiedFrom(range) : null;
           if (from !== null && from !== getNodeText(v!, source)) objectCopies.push({ v: getNodeText(v!, source), from, element: true });
           break;
         }
@@ -1046,10 +1049,10 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           break;
         }
         case 'function_call': {
-          const callee = getChildByField(c, 'name');
+          const callee = childField(c, 'name');
           if (callee?.type !== 'identifier') break;
           // Not a chain's field (`s.c{k}`, `obj.load(f)`).
-          if (n.type === 'field_expression' && getChildByField(n, 'object')?.id !== c.id) break;
+          if (n.type === 'field_expression' && childField(n, 'object')?.id !== c.id) break;
           const name = getNodeText(callee, source);
           if (name === 'load' && isStatement(c)) {
             loadStatement(c, callArgs(c).map((a) => stringLiteral(a, source)));
@@ -1073,7 +1076,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
         }
         case 'command': {
           const cmd = namedChildren(c).find((a) => a.type === 'command_name');
-          const name = cmd ? getNodeText(cmd, source) : '';
+          // A command whose name the parser cut out of a word (see isCutName) says nothing.
+          if (!cmd) break;
+          const name = getNodeText(cmd, source);
           if (CLOBBERING_CALL.test(name) || !MATLAB_BUILTINS.has(name)) clobbers = true;
           if (HIDDEN_WRITER.test(name) || !MATLAB_BUILTINS.has(name)) hiddenWrites = true;
           if (name === 'clear' || name === 'clearvars') cleared(c, name, commandItems(c, source));
@@ -1204,7 +1209,7 @@ function parameterList(children: readonly SyntaxNode[], source: string): (string
 /** A function's first parameter, when it is a name (`~` ignores the object: no self). */
 function firstParameter(children: readonly SyntaxNode[], source: string): string | null {
   const args = children.find((c) => c.type === 'function_arguments');
-  const first = args?.namedChild(0);
+  const first = args ? namedChildren(args)[0] : undefined;
   return first?.type === 'identifier' ? getNodeText(first, source) : null;
 }
 
@@ -1305,18 +1310,16 @@ interface MemberRef {
  * and so is a first call that can only be indexing (`s.data(end)`, `obj.c{k}`).
  */
 function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: SyntaxNode; bare?: true }) | null {
-  const object = getChildByField(node, 'object');
+  const object = childField(node, 'object');
   if (object?.type !== 'identifier') return null;
   const path = [getNodeText(object, source)];
-  for (let i = 1; i < node.namedChildCount; i++) {
-    const f = node.namedChild(i);
-    if (!f) continue;
+  for (const f of namedChildren(node).slice(1)) {
     if (f.type === 'identifier') {
       path.push(getNodeText(f, source));
       continue;
     }
     if (f.type !== 'function_call') return null;
-    const callee = getChildByField(f, 'name');
+    const callee = childField(f, 'name');
     if (callee?.type !== 'identifier' || indexesLikeArray(f)) return null;
     const ref = memberRef(path, getNodeText(callee, source));
     return ref ? { ...ref, at: f } : null;
@@ -1462,7 +1465,8 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
   if (isLocal(f, name)) return null;
   // `ArrayList()` where the file imports `java.util.ArrayList`: Java's constructor.
   if (javaImported.has(name)) return null;
-  const cls = dispatchClass(children.find((c) => c.type === 'arguments')?.namedChild(0), source) ?? (MATLAB_BUILTINS.has(name) ? undefined : argumentDispatchClass(callArgs(node), source));
+  const argList = children.find((c) => c.type === 'arguments');
+  const cls = dispatchClass(argList ? namedChildren(argList)[0] : undefined, source) ?? (MATLAB_BUILTINS.has(name) ? undefined : argumentDispatchClass(callArgs(node), source));
   if (cls) return { name: `${cls}::${name}`, dispatch: true };
   return { name, dispatch: false };
 }
@@ -1502,7 +1506,7 @@ function argumentDispatchClass(args: readonly SyntaxNode[], source: string): str
   let cls: string | undefined;
   if (arg.type === 'identifier') cls = copyHintOf(f, getNodeText(arg, source))?.cls;
   else if (arg.type === 'function_call' && !bracesIndex(arg) && !namedChildren(arg).some((c) => c.type === 'superclass')) {
-    const callee = getChildByField(arg, 'name');
+    const callee = childField(arg, 'name');
     const v = callee?.type === 'identifier' ? getNodeText(callee, source) : null;
     if (v !== null) cls = copyHintOf(f, v, true)?.cls;
   }
@@ -1583,7 +1587,7 @@ function fileMethodsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
     for (const section of namedChildren(cls)) {
       if (section.type !== 'methods') continue;
       for (const m of namedChildren(section)) {
-        const name = m.type === 'function_definition' || m.type === 'function_signature' ? getChildByField(m, 'name') : null;
+        const name = m.type === 'function_definition' || m.type === 'function_signature' ? childField(m, 'name') : null;
         if (!name || /^[gs]et\.$/.test(source.slice(Math.max(0, name.startIndex - 4), name.startIndex))) continue;
         names.add(getNodeText(name, source));
       }
@@ -1613,7 +1617,7 @@ function inStaticWorkspace(f: Frame): boolean {
 function fileFunctionsOf(root: SyntaxNode, source: string): ReadonlySet<string> {
   const names = new Set<string>();
   const add = (fn: SyntaxNode): void => {
-    const name = getChildByField(fn, 'name');
+    const name = childField(fn, 'name');
     if (name) names.add(getNodeText(name, source));
     const body = namedChildren(fn).find((c) => c.type === 'block');
     for (const c of body ? namedChildren(body) : []) if (c.type === 'function_definition') add(c);
@@ -1646,6 +1650,7 @@ function parseCode(code: string): ParsedText | null {
     let tree: Tree | null = null;
     try {
       tree = getParser('matlab')?.parse(text) ?? null;
+      if (tree) noteParsedText(tree, text);
     } catch (e) {
       // A corrupted wasm heap must reach the worker, which restarts with a fresh one.
       if (isWasmMemoryError(e)) throw e;
@@ -2064,7 +2069,7 @@ function forwardedArg(arg: SyntaxNode, source: string): ReturnType<typeof argVal
   const f = frame();
   if (f.kind !== 'function' || !f.params || !f.forwards || f.forwards.size === 0) return null;
   const spread = arg.type === 'function_call' && bracesIndex(arg) && isColonIndex(arg);
-  const head = arg.type === 'identifier' ? arg : spread ? getChildByField(arg, 'name') : null;
+  const head = arg.type === 'identifier' ? arg : spread ? childField(arg, 'name') : null;
   const name = head?.type === 'identifier' ? getNodeText(head, source) : null;
   if (!name || !f.forwards.has(name)) return null;
   const k = f.params.indexOf(name);
@@ -2349,7 +2354,7 @@ export const CALLEE = 'matlab-param-sink:callee';
  */
 function functionSignature(node: SyntaxNode, children: readonly SyntaxNode[], source: string): string {
   const args = children.find((c) => c.type === 'function_arguments');
-  const name = getChildByField(node, 'name');
+  const name = childField(node, 'name');
   const head = source.slice(node.startIndex, args?.startIndex ?? name?.endIndex ?? node.endIndex).replace(/\s+/g, ' ').trim();
   const params = args ? `(${parameterList(children, source).map((p) => p ?? '~').join(', ')})` : '';
   const text = head + params;
@@ -2394,7 +2399,7 @@ function untouched(params: readonly (string | null)[], facts: ScopeFacts): Reado
 
 function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: MethodsBlock | null = null): void {
   const source = ctx.source;
-  const nameNode = getChildByField(node, 'name');
+  const nameNode = childField(node, 'name');
   if (!nameNode) return;
   let name = getNodeText(nameNode, source);
   const accessor = source.slice(Math.max(0, nameNode.startIndex - 4), nameNode.startIndex);
@@ -2512,7 +2517,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
 
 function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   const source = ctx.source;
-  const nameNode = getChildByField(node, 'name');
+  const nameNode = childField(node, 'name');
   if (!nameNode) return;
   const name = getNodeText(nameNode, source);
   const children = namedChildren(node);
@@ -2523,7 +2528,7 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   const supers = children.find((c) => c.type === 'superclasses');
   const bases = supers
     ? namedChildren(supers)
-        .filter((c) => c.type === 'property_name')
+        .filter((c) => c.type === 'property_name' && !namedChildren(c).some(isCutName))
         .map((c) => namedChildren(c).map((i) => getNodeText(i, source)).join('.'))
     : [];
   // Written from the AST, so a superclass list over several lines (with
@@ -2559,7 +2564,7 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
         const vis = visibilityFrom(sectionAttrs);
         for (const prop of namedChildren(section)) {
           if (prop.type !== 'property') continue;
-          const propName = getChildByField(prop, 'name');
+          const propName = childField(prop, 'name');
           if (!propName) continue;
           const pname = getNodeText(propName, source);
           ctx.createNode(constant ? 'constant' : 'property', pname, prop, {
@@ -2612,6 +2617,7 @@ function extractFile(node: SyntaxNode, ctx: ExtractorContext): void {
 
 /** Runs `body` with what the walk keeps of the file `root` is (its Java imports, its functions, its name), all of it dropped after. */
 function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () => T): T {
+  noteParsedText(root.tree, source);
   javaImported = javaImportsOf(root, source);
   fileFunctions = fileFunctionsOf(root, source);
   fileMethods = fileMethodsOf(root, source);
@@ -2683,6 +2689,11 @@ export const matlabExtractor: LanguageExtractor = {
       if (matlabUnreadReason(source) === null) extractFile(node, ctx);
       return true;
     }
+    // A name the parser cut out of a word (`igure` of `figure(1);` in a region
+    // it could not read) is no name: nothing is read from it. The tree walk
+    // hands this hook its nodes itself; every other reader takes them through
+    // namedChildren and childField, which never hand one out (see isCutName).
+    if (isCutName(node)) return true;
     switch (node.type) {
       case 'class_definition':
         extractClass(node, ctx);
@@ -2712,10 +2723,10 @@ export const matlabExtractor: LanguageExtractor = {
       case 'function_call': {
         const parent = node.parent;
         // A field of a chain (`pkg.f(x)`, `obj.m()`): the field_expression owns it.
-        if (parent?.type === 'field_expression' && getChildByField(parent, 'object')?.id !== node.id) return false;
+        if (parent?.type === 'field_expression' && childField(parent, 'object')?.id !== node.id) return false;
         // `x(k) = …`, `[y, x(k)] = …` assign into x.
         if (isAssignmentTarget(node)) return false;
-        const callee = getChildByField(node, 'name');
+        const callee = childField(node, 'name');
         // `x(:, 2)`, `a(end)`, `c{k}`: x, a and c hold arrays.
         if (callee?.type !== 'identifier' || indexesLikeArray(node)) return false;
         const written = getNodeText(callee, source);
@@ -2751,8 +2762,8 @@ export const matlabExtractor: LanguageExtractor = {
 
       case 'assignment': {
         // `h.Callback = 'go'`, `s(k).KeyPressFcn = …`: callback code given as text.
-        const left = getChildByField(node, 'left');
-        const right = getChildByField(node, 'right');
+        const left = childField(node, 'left');
+        const right = childField(node, 'right');
         if (left?.type === 'field_expression' && right) {
           const parts = namedChildren(left);
           const last = parts[parts.length - 1];
@@ -2765,7 +2776,7 @@ export const matlabExtractor: LanguageExtractor = {
         // `s.f(k) = …` writes a field; `Q2.Setpoint.P` in `AO.Q2.Setpoint.P{1}(6, :)` is no chain of its own.
         if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
-        const head = getChildByField(node, 'object');
+        const head = childField(node, 'object');
         if (ref) {
           addRef(ctx, ref.name, 'calls', ref.at, {
             ...(ref.variable ? { variable: ref.variable } : {}),
@@ -2787,9 +2798,9 @@ export const matlabExtractor: LanguageExtractor = {
         const asValue =
           statement ||
           VALUE_PARENTS.has(parent.type) ||
-          (parent.type === 'assignment' && getChildByField(parent, 'right')?.id === node.id) ||
+          (parent.type === 'assignment' && childField(parent, 'right')?.id === node.id) ||
           // `if isReady`, `while keepGoing`, `switch mode`, `case modeA`: the condition.
-          (CONDITION_PARENTS.has(parent.type) && getChildByField(parent, 'condition')?.id === node.id) ||
+          (CONDITION_PARENTS.has(parent.type) && childField(parent, 'condition')?.id === node.id) ||
           // `for k = getRange`: the range, not the loop variable.
           (parent.type === 'iterator' && parent.namedChild(0)?.id !== node.id) ||
           // `go(x, Solver=1)`: `Solver` names the argument.

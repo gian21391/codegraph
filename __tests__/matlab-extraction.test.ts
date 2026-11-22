@@ -8,13 +8,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
+import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { CodeGraph } from '../src';
 import { extractFromSource, preloadLanguagesForFiles } from '../src/extraction';
 import { detectLanguage, getParser, isLanguageSupported } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
 import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
 import { MATLAB_BASE_NAMES, MATLAB_METHOD_NAMES } from '../src/extraction/languages/matlab-builtin-names';
-import { edgesFrom, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
+import { edgesFrom, indexOfProject, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -285,6 +286,76 @@ describe('MATLAB text the parser cannot read', () => {
       'source_not_read pause.m: not MATLAB text (a binary or encrypted file) — the file is indexed, but none of its code is in the graph',
     ]);
     expect(warnings('broken.py', 'def (:\n', 'python')[0]).toContain('parse produced no symbols (tree has errors)');
+  });
+});
+
+describe('MATLAB names the parser cut out of a word', () => {
+  /** `type:text` of every identifier in `code`'s parse with a word character right before or after it: the pieces. */
+  const pieces = (code: string): string[] => {
+    const tree = getParser('matlab')!.parse(code)!;
+    const out: string[] = [];
+    const walk = (n: SyntaxNode): void => {
+      if (n.type === 'identifier' && (/\w/.test(code[n.startIndex - 1] ?? '') || /\w/.test(code[n.endIndex] ?? ''))) out.push(`${n.parent?.type}:${code.slice(n.startIndex, n.endIndex)}`);
+      for (let i = 0; i < n.childCount; i++) walk(n.child(i)!);
+    };
+    walk(tree.rootNode);
+    tree.delete();
+    return out;
+  };
+  /** The names of `rows` (`file:line kind:name`). */
+  const names = (rows: string[]): string[] => rows.map((r) => r.slice(r.lastIndexOf(':') + 1));
+  const fn = (name: string): string => `function y = ${name}(x)\ny = x;\nend\n`;
+
+  // physbase's arplot_leda.m: after bare PV names on lines of their own the
+  // rest of the file is one `ERROR`, whose recovery skips a character or two
+  // of each word and reads the rest as a name.
+  const PVS = ['SR02S:ID1:TAPER_CALC:RBV', 'SR02S:ID1:TAPER_LIMIT:RBV', 'SR02S:ID1:TAPER_MAX:RBV', 'SR02S:ID1:TAPER_MIN:RBV'];
+  const CALLS = ["arplot('SR02S:ID1:TAPER_CALC:RBV');", "arplot('SR02S:ID1:TAPER_MAX:RBV');  % Constant", 'figure(1);', 'clf reset', "arread('x');", "arplot('y');", 'subplot(2,1,1);'];
+  const BROKEN = [...PVS, ...CALLS, ''].join('\n');
+  const FIXED = [...PVS.map((l) => `% ${l}`), ...CALLS, ''].join('\n');
+
+  it('links nothing to a piece of a word and leaves no row of one, and keeps every call of the same code where it parses', async () => {
+    // The shape is what the grammar makes of it: `figure` is `f` and a call of `igure`, `clf` is `cl` and `f`.
+    expect(pieces(BROKEN)).toEqual(['function_call:plot', 'function_call:igure', 'ERROR:f', 'function_call:read', 'function_call:plot', 'function_call:ubplot']);
+    expect(pieces(FIXED)).toEqual([]);
+    const r = await indexOfProject({
+      'arplot_leda.m': BROKEN,
+      'arplot_ok.m': FIXED,
+      ...Object.fromEntries(['read', 'plot', 'igure', 'f', 'ubplot', 'arread', 'arplot'].map((n) => [`${n}.m`, fn(n)])),
+    });
+    // The broken file's calls of the project's functions are its own pieces: none links. The same calls that parse do.
+    expect(r.edges.filter((e) => e.startsWith('arplot_'))).toEqual([
+      ...Array<string>(3).fill('arplot_ok.m arplot_ok.m -calls-> arplot @ arplot.m'),
+      'arplot_ok.m arplot_ok.m -calls-> arread @ arread.m',
+    ]);
+    const cut = new Set(['igure', 'read', 'plot', 'f', 'ubplot']);
+    expect(names([...r.unresolved, ...r.dormant]).filter((n) => cut.has(n))).toEqual([]);
+  });
+
+  it('links nothing to a piece of a word in prose saved as `.m`', async () => {
+    // `2mon1` lexes as the number 2 and the name `mon1`, `1_5prod` as 1 and `_5prod`, outside any `ERROR` of their own.
+    const README = 'see 2mon1 and 1.5prod\nmonbpm(Sun) -> 2mon1    (errors were small)\norb3.mat  -> 1_5prod.str\n';
+    expect(pieces(README)).toEqual(['function_call:mon1', 'field_expression:_5prod']);
+    const r = await indexOfProject({ 'readme.m': README, 'mon1.m': fn('mon1'), '_5prod.m': fn('x5prod') });
+    expect(r.edges.filter((e) => e.startsWith('readme.m'))).toEqual([]);
+    expect(names([...r.unresolved, ...r.dormant]).filter((n) => n === 'mon1' || n === '_5prod')).toEqual([]);
+  });
+
+  it('takes no assignment from a piece of a word: the name it would write is still called, before it and after it', async () => {
+    // `ax = 1` after a run of `*` lines: an `ERROR` holding `a`, then `x = 1`.
+    const SCRIPT = '*****\n*****\nax = 1\nx(1)\n';
+    // In a function an assignment makes a name its variable everywhere in it, before the assignment too.
+    const FUNCTION = 'function r = notes2(v)\nx(v);\n*****\n*****\nax = 1\nr = 1;\nend\n';
+    expect(pieces(SCRIPT)).toEqual(['assignment:x']);
+    expect(pieces(FUNCTION)).toEqual(['assignment:x']);
+    const r = await indexOfProject({ 'notes.m': SCRIPT, 'notes2.m': FUNCTION, 'x.m': fn('x') });
+    expect(r.edges.filter((e) => e.startsWith('notes'))).toEqual(['notes.m notes.m -calls-> x @ x.m', 'notes2.m notes2 -calls-> x @ x.m']);
+  });
+
+  it('takes no command from a piece of a word: a `load` cut out of `aload` makes no variable of the name it lists', async () => {
+    // `aload data.mat x` after a run of `*` lines: an `ERROR` holding `a`, then a command `load data.mat x`.
+    const r = await indexOfProject({ 'notes3.m': '*****\n*****\naload data.mat x\nx(1)\n', 'x.m': fn('x') });
+    expect(r.edges.filter((e) => e.startsWith('notes3'))).toEqual(['notes3.m notes3.m -calls-> x @ x.m']);
   });
 });
 

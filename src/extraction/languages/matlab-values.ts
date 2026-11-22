@@ -1,4 +1,4 @@
-import type { Node as SyntaxNode } from 'web-tree-sitter';
+import type { Node as SyntaxNode, Tree } from 'web-tree-sitter';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { MatlabArgItem, MatlabArgValue } from './matlab-ref-facts';
 
@@ -727,6 +727,96 @@ export function withCellPart(v: Val | undefined, fresh: boolean, k: number | nul
 // Syntax helpers shared with the interpreter and the extractor
 // ---------------------------------------------------------------------------
 
+/*
+ * Names the parser cut out of a word. Where the grammar's error recovery meets
+ * text it cannot read, it skips a character or two and reads the rest of a
+ * word as an identifier: `figure(1);` after a run of bare PV names is an
+ * `ERROR` "f" and a call of `igure`, `arread(…)` an `ERROR` "ar" and a call of
+ * `read`, and in a readme saved as `.m`, `621mon2` is the number 621 and the
+ * name `mon2`. In MATLAB a name never touches another word character (a
+ * number such as `1e5`, `3i` or `0x1F` is one token), so an identifier or a
+ * command's name with a character of `[A-Za-z0-9_]` right before or right
+ * after it is a piece of a word, and no name: nothing is read from it.
+ *
+ * The check sits in the two accessors every MATLAB reader takes a node's
+ * children through, namedChildren and childField: a field holding a piece
+ * holds no name (null), and in a child list a piece stands in its place as an
+ * `ERROR` leaf (see cutStandIn), so that the list's positions hold. The
+ * extractor's walk checks the one node it is handed directly (see
+ * isCutName). A tree's pieces are found once, when the extractor notes the
+ * text it was parsed from (see noteParsedText); a clean parse holds none.
+ */
+
+/** The node ids of each noted tree's pieces of words, for a tree that has any (see noteParsedText). */
+const PIECES = new WeakMap<Tree, ReadonlySet<number>>();
+
+/** The stand-ins cutStandIn made. */
+const STAND_INS = new WeakSet<SyntaxNode>();
+
+/**
+ * Notes the text `tree` was parsed from, and so its pieces of words: the
+ * identifiers and commands' names a character of `[A-Za-z0-9_]` touches. A
+ * tree without a parse error has none (two tokens touch only where the
+ * parser recovered from an error) and is not walked.
+ */
+export function noteParsedText(tree: Tree, text: string): void {
+  if (PIECES.has(tree) || !tree.rootNode.hasError) return;
+  const pieces = new Set<number>();
+  const cursor = tree.walk();
+  try {
+    for (;;) {
+      const type = cursor.nodeType;
+      if ((type === 'identifier' || type === 'command_name') && (isWordCode(text.charCodeAt(cursor.startIndex - 1)) || isWordCode(text.charCodeAt(cursor.endIndex)))) {
+        pieces.add(cursor.nodeId);
+      }
+      if (cursor.gotoFirstChild()) continue;
+      while (!cursor.gotoNextSibling()) if (!cursor.gotoParent()) return;
+    }
+  } finally {
+    cursor.delete();
+    if (pieces.size > 0) PIECES.set(tree, pieces);
+  }
+}
+
+/** Whether a character code is one of `[A-Za-z0-9_]` (NaN, past either end of the text, is not). */
+function isWordCode(c: number): boolean {
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95;
+}
+
+/**
+ * Whether `node` is a name the parser cut out of a word (see the top of this
+ * section): a node the tree walk hands the extractor itself, or one of the
+ * stand-ins namedChildren hands out.
+ */
+export function isCutName(node: SyntaxNode): boolean {
+  return STAND_INS.has(node) || PIECES.get(node.tree)?.has(node.id) === true;
+}
+
+/**
+ * A piece in a child list, as the list's readers take it: an `ERROR` leaf,
+ * the text the parser could not read that it is, in the piece's place (its
+ * id, its position and its text are the piece's own), so that no reader
+ * takes it for an identifier or a command's name.
+ */
+function cutStandIn(node: SyntaxNode): SyntaxNode {
+  const standIn = Object.create(node, { type: { value: 'ERROR', enumerable: true } }) as SyntaxNode;
+  STAND_INS.add(standIn);
+  return standIn;
+}
+
+/** `node`'s named children as its readers take them: none null, a piece of a word as its stand-in. */
+function readChildren(node: SyntaxNode): SyntaxNode[] {
+  const kids = node.namedChildren.filter((c): c is SyntaxNode => c !== null);
+  const pieces = PIECES.get(node.tree);
+  return pieces === undefined ? kids : kids.map((c) => (pieces.has(c.id) ? cutStandIn(c) : c));
+}
+
+/** `node`'s child in field `name` as its readers take it: null for none, or for a piece of a word. */
+function readField(node: SyntaxNode, name: string): SyntaxNode | null {
+  const child = getChildByField(node, name);
+  return child && PIECES.get(node.tree)?.has(child.id) ? null : child;
+}
+
 /**
  * Named children by node id, while an interpretation walks one tree (see
  * withChildrenMemo): its loops walk a body again each round, and each read
@@ -734,24 +824,24 @@ export function withCellPart(v: Val | undefined, fresh: boolean, k: number | nul
  */
 let childrenMemo: Map<number, SyntaxNode[]> | null = null;
 
-/** A node's named children, none null. */
+/** A node's named children, none null, a name the parser cut out of a word in its place as an `ERROR` leaf (see isCutName). */
 export function namedChildren(node: SyntaxNode): SyntaxNode[] {
-  if (!childrenMemo) return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
+  if (!childrenMemo) return readChildren(node);
   let kids = childrenMemo.get(node.id);
-  if (!kids) childrenMemo.set(node.id, (kids = node.namedChildren.filter((c): c is SyntaxNode => c !== null)));
+  if (!kids) childrenMemo.set(node.id, (kids = readChildren(node)));
   return kids;
 }
 
 /** A node's child by field name, by node id and field, beside childrenMemo. */
 let fieldMemo: Map<number, Map<string, SyntaxNode | null>> | null = null;
 
-/** A node's child in field `name` (`left`, `condition`, …), or null. */
+/** A node's child in field `name` (`left`, `condition`, …), or null: also for a name the parser cut out of a word (see isCutName). */
 export function childField(node: SyntaxNode, name: string): SyntaxNode | null {
-  if (!fieldMemo) return getChildByField(node, name);
+  if (!fieldMemo) return readField(node, name);
   let fields = fieldMemo.get(node.id);
   if (!fields) fieldMemo.set(node.id, (fields = new Map()));
   let child = fields.get(name);
-  if (child === undefined) fields.set(name, (child = getChildByField(node, name)));
+  if (child === undefined) fields.set(name, (child = readField(node, name)));
   return child;
 }
 
@@ -805,9 +895,8 @@ export function firstBlock(node: SyntaxNode): SyntaxNode | undefined {
 
 /** A `catch_clause`'s error variable: its identifier on the `catch` keyword's own row. */
 export function errorVariable(clause: SyntaxNode): SyntaxNode | null {
-  for (let i = 0; i < clause.namedChildCount; i++) {
-    const c = clause.namedChild(i);
-    if (!c || c.type === 'comment') continue;
+  for (const c of namedChildren(clause)) {
+    if (c.type === 'comment') continue;
     return c.type === 'identifier' && c.startPosition.row === clause.startPosition.row ? c : null;
   }
   return null;

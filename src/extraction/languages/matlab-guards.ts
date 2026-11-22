@@ -1,6 +1,6 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
-import { getNodeText, getChildByField } from '../tree-sitter-helpers';
-import { bracesIndex, callArgs, chainHead, firstBlock, literalIndex, namedChildren, stringLiteral } from './matlab-values';
+import { getNodeText } from '../tree-sitter-helpers';
+import { bracesIndex, callArgs, chainHead, childField, firstBlock, literalIndex, namedChildren, stringLiteral } from './matlab-values';
 
 /**
  * Whether what a caller passes decides that a parameter sink runs.
@@ -190,8 +190,8 @@ export class GuardScope {
             walk(c, true);
             continue;
           case 'assignment': {
-            const left = getChildByField(c, 'left');
-            const right = getChildByField(c, 'right');
+            const left = childField(c, 'left');
+            const right = childField(c, 'right');
             if (left?.type === 'multioutput_variable') for (const out of namedChildren(left)) wrote(chainHead(out), c);
             else wrote(chainHead(left), c);
             if (left?.type === 'identifier' && right) {
@@ -201,10 +201,10 @@ export class GuardScope {
             break;
           }
           case 'iterator':
-            wrote(c.namedChild(0), c);
+            wrote(namedChildren(c)[0] ?? null, c);
             break;
           case 'catch_clause': {
-            const v = c.namedChild(0);
+            const v = namedChildren(c)[0];
             if (v?.type === 'identifier' && v.startPosition.row === c.startPosition.row) wrote(v, c.parent);
             break;
           }
@@ -245,12 +245,12 @@ export class GuardScope {
     let name: SyntaxNode | null | undefined;
     if (s.type === 'function_call') {
       if (callArgs(s).length === 0) return false;
-      name = getChildByField(s, 'name');
+      name = childField(s, 'name');
     } else if (s.type === 'command') name = namedChildren(s).find((c) => c.type === 'command_name');
     else if (s.type === 'field_expression') {
       const parts = namedChildren(s);
       const last = parts[parts.length - 1];
-      name = parts.length === 2 && last?.type === 'function_call' ? getChildByField(last, 'name') : null;
+      name = parts.length === 2 && last?.type === 'function_call' ? childField(last, 'name') : null;
       return !!name && name.type === 'identifier' && getNodeText(name, this.source) !== 'error' && RAISES.has(getNodeText(name, this.source));
     }
     return !!name && RAISES.has(getNodeText(name, this.source)) && (s.parent?.type === 'block' || s.parent?.type === 'source_file');
@@ -266,7 +266,7 @@ export class GuardScope {
     const visit = (n: SyntaxNode): boolean => {
       if (n.type === 'identifier') return this.tainted.has(getNodeText(n, source));
       if (n.type === 'function_call') {
-        const name = getChildByField(n, 'name');
+        const name = childField(n, 'name');
         const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
         if (CALLER_CALLS.test(text)) return true;
         // `exist(x)`, `exist('x', 'var')`: whether the caller passed it.
@@ -304,7 +304,7 @@ export class GuardScope {
       switch (a.type) {
         case 'if_statement':
           if (child.type === 'block') {
-            const cond = getChildByField(a, 'condition');
+            const cond = childField(a, 'condition');
             if (cond) out.push({ kind: 'test', node: cond, neg: false });
           }
           break;
@@ -314,36 +314,36 @@ export class GuardScope {
           if (!ifs) break;
           const inCondition = a.type === 'elseif_clause' && child.type !== 'block';
           // Every condition above it is false; its own is true.
-          const first = getChildByField(ifs, 'condition');
+          const first = childField(ifs, 'condition');
           if (first) out.push({ kind: 'test', node: first, neg: true });
           for (const c of namedChildren(ifs)) {
             if (c.id === a.id) break;
-            const cond = c.type === 'elseif_clause' ? getChildByField(c, 'condition') : null;
+            const cond = c.type === 'elseif_clause' ? childField(c, 'condition') : null;
             if (cond) out.push({ kind: 'test', node: cond, neg: true });
           }
-          const own = a.type === 'elseif_clause' && !inCondition ? getChildByField(a, 'condition') : null;
+          const own = a.type === 'elseif_clause' && !inCondition ? childField(a, 'condition') : null;
           if (own) out.push({ kind: 'test', node: own, neg: false });
           break;
         }
         case 'case_clause':
         case 'otherwise_clause': {
           const sw = a.parent;
-          const subject = sw ? getChildByField(sw, 'condition') : null;
+          const subject = sw ? childField(sw, 'condition') : null;
           if (!sw || !subject) break;
           const before: SyntaxNode[] = [];
           for (const c of namedChildren(sw)) {
             if (c.id === a.id) break;
-            const labels = c.type === 'case_clause' ? getChildByField(c, 'condition') : null;
+            const labels = c.type === 'case_clause' ? childField(c, 'condition') : null;
             if (labels) before.push(labels);
           }
           if (a.type === 'otherwise_clause') out.push({ kind: 'case', subject, labels: null, before });
-          else if (child.type === 'block') out.push({ kind: 'case', subject, labels: getChildByField(a, 'condition'), before });
+          else if (child.type === 'block') out.push({ kind: 'case', subject, labels: childField(a, 'condition'), before });
           else if (before.length > 0) out.push({ kind: 'case', subject, labels: null, before }); // its labels: read when no case above matched
           break;
         }
         case 'while_statement':
           if (child.type === 'block') {
-            const cond = getChildByField(a, 'condition');
+            const cond = childField(a, 'condition');
             if (cond) out.push({ kind: 'test', node: cond, neg: false });
           }
           break;
@@ -353,7 +353,7 @@ export class GuardScope {
           break;
         }
         case 'boolean_operator': {
-          const left = getChildByField(a, 'left');
+          const left = childField(a, 'left');
           if (left && child.id !== left.id) out.push({ kind: 'test', node: left, neg: this.operator(a) === '||' });
           break;
         }
@@ -381,7 +381,7 @@ export class GuardScope {
     }
     const source = this.source;
     const calls = (n: SyntaxNode): boolean => {
-      if (n.type === 'function_call' && compact(getNodeText(n, source)) === key) return true;
+      if (n.type === 'function_call' && childField(n, 'name') && compact(getNodeText(n, source)) === key) return true;
       return !BRANCHES.has(n.type) && namedChildren(n).some(calls);
     };
     return last && blocks.length > 1 && blocks.every(calls);
@@ -441,7 +441,7 @@ export class GuardScope {
     const source = this.source;
     const visit = (n: SyntaxNode): boolean => {
       if (n.type === 'function_call') {
-        const name = getChildByField(n, 'name');
+        const name = childField(n, 'name');
         if (name?.type === 'identifier' && TEXT_TESTS.test(getNodeText(name, source)) && callArgs(n).some(hasText) && this.readsCaller(n)) return true;
       } else if (n.type === 'comparison_operator' && namedChildren(n).some((x) => x.type === 'string') && this.readsCaller(n)) return true;
       return namedChildren(n).some(visit);
@@ -539,12 +539,12 @@ export class GuardScope {
         const op = this.operator(n);
         const and = op === '&&' || op === '&';
         if (!and && op !== '||' && op !== '|') return null;
-        const left = getChildByField(n, 'left');
-        const right = getChildByField(n, 'right');
+        const left = childField(n, 'left');
+        const right = childField(n, 'right');
         return combine(and, left ? this.test(left, value) : null, right ? this.test(right, value) : null);
       }
       case 'function_call': {
-        const nameNode = getChildByField(n, 'name');
+        const nameNode = childField(n, 'name');
         const name = nameNode?.type === 'identifier' ? getNodeText(nameNode, source) : '';
         const args = callArgs(n);
         if (name === 'not' && args.length === 1) {
@@ -553,7 +553,7 @@ export class GuardScope {
         }
         if (name === 'any' && args.length === 1 && args[0]!.type === 'function_call') {
           const inner = args[0]!;
-          const innerName = getNodeText(getChildByField(inner, 'name') ?? inner, source);
+          const innerName = getNodeText(childField(inner, 'name') ?? inner, source);
           const innerArgs = callArgs(inner);
           if ((innerName === 'strcmp' || innerName === 'strcmpi') && innerArgs.length === 2) {
             return this.compared(innerArgs[0]!, innerArgs[1]!, value, innerName === 'strcmpi', true);
@@ -608,8 +608,8 @@ export class GuardScope {
     // The grammar reads `nargin < 1 | x` as `nargin < (1 | x)`; MATLAB, as `(nargin < 1) | x`.
     const logical = right.type === 'binary_operator' || right.type === 'boolean_operator' ? this.operator(right) : '';
     if (/^(?:\|\|?|&&?)$/.test(logical)) {
-      const inner = getChildByField(right, 'left');
-      const rest = getChildByField(right, 'right');
+      const inner = childField(right, 'left');
+      const rest = childField(right, 'right');
       return combine(logical.startsWith('&'), inner ? this.countTest(left, this.operator(n), inner, value) : null, rest ? this.test(rest, value) : null);
     }
     return this.countTest(left, this.operator(n), right, value);
@@ -626,7 +626,7 @@ export class GuardScope {
     let least: number | null = null;
     const text = getNodeText(left, this.source);
     if (left.type === 'identifier' && text === 'nargin') least = value.position + 1;
-    else if (left.type === 'function_call' && /^(?:numel|length)\(\s*varargin\s*\)$/.test(text)) {
+    else if (left.type === 'function_call' && childField(left, 'name') && /^(?:numel|length)\(\s*varargin\s*\)$/.test(text)) {
       const from = this.variadicFrom();
       least = from !== null && value.position >= from ? value.position - from + 1 : null;
     }
@@ -707,7 +707,7 @@ export class GuardScope {
         return k >= 0 && same && head !== 'varargin' && untouched(head!) ? {} : null;
       }
       case 'function_call': {
-        const nameNode = getChildByField(n, 'name');
+        const nameNode = childField(n, 'name');
         if (nameNode?.type !== 'identifier') return null;
         const name = getNodeText(nameNode, source);
         const args = callArgs(n);

@@ -394,7 +394,7 @@ class Interpreter implements Recorder {
         else if (this.values.has(arg.id)) this.record(arg, v);
         else this.unknownArgs.add(arg.id);
         // `s.f` passed: what `s` is, which tells one struct from an array whose field is several arguments.
-        const head = arg.type === 'field_expression' ? arg.namedChild(0) : null;
+        const head = arg.type === 'field_expression' ? namedChildren(arg)[0] : null;
         if (head?.type === 'identifier') {
           const owner = getNodeText(head, this.host.source);
           this.record(head, (!this.isUntracked(owner) && env.get(owner)) || OPEN);
@@ -799,8 +799,7 @@ class Interpreter implements Recorder {
    */
   private forStatement(s: SyntaxNode, env: Env): Env {
     const iter = namedChildren(s).find((c) => c.type === 'iterator');
-    const v = iter?.namedChild(0);
-    const range = iter?.namedChild(1);
+    const [v, range] = iter ? namedChildren(iter) : [];
     const r = this.expr(range, env);
     env = this.applyEffects(env);
     let each = OPEN;
@@ -1120,7 +1119,7 @@ function nestedFunctionWrites(fn: SyntaxNode, host: InterpHost): { names: Set<st
         const left = childField(c, 'left');
         if (left?.type === 'multioutput_variable') for (const o of namedChildren(left)) add(o);
         else add(left);
-      } else if (c.type === 'iterator') add(c.namedChild(0));
+      } else if (c.type === 'iterator') add(namedChildren(c)[0] ?? null);
       else if (c.type === 'global_operator') for (const g of namedChildren(c)) add(g);
       else if (c.type === 'function_call' || c.type === 'command') {
         const callee = c.type === 'command' ? namedChildren(c).find((a) => a.type === 'command_name') : childField(c, 'name');
