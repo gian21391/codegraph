@@ -1,0 +1,18 @@
+{
+  "why": "A `#` comment line marks Octave text: Octave syntax is no MATLAB: MATLAB cannot run the file, and codegraph reads none of its code (project rule, matlab-extraction.test.ts 'Octave files (unsupported)').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "f.m"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "f.m"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> computeIt @ computeIt.m"
+    ]
+  }
+}

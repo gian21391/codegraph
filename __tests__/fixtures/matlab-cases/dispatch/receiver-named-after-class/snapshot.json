@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "Easy.m Easy -extends-> TASK @ TASK.m",
+      "TASK.m TASK::score -calls-> Easy::score @ Easy.m",
+      "alg.m alg -calls-> TASK::score @ TASK.m"
+    ],
+    "rows": [
+      "fillit.m:3 calls:Task.score",
+      "low.m:2 calls:task.score"
+    ],
+    "dormant": []
+  }
+}

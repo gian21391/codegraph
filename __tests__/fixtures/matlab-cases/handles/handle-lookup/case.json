@@ -1,0 +1,20 @@
+{
+  "why": "`@name` takes the function the name reaches where the handle is written: a local function, a path, private or package function, a class's constructor (the class when it has none) or static method; another file's local function is out of reach (MATLAB doc 'Create Function Handle'; harvested from matlab-resolution.test.ts 'resolves handles by MATLAB lookup').",
+  "truth": {
+    "edges": [
+      "a.m a -references-> NoCtor @ NoCtor.m",
+      "a.m a -references-> Robot::Robot @ Robot.m",
+      "a.m a -references-> Robot::build @ Robot.m",
+      "a.m a -references-> pkg::area2 @ +pkg/area2.m",
+      "a.m a -references-> localA @ a.m",
+      "a.m a -references-> pathfn @ pathfn.m",
+      "a.m a -references-> privhelp @ private/privhelp.m"
+    ],
+    "noEdges": [
+      {
+        "from": "a.m",
+        "to": "helperB"
+      }
+    ]
+  }
+}

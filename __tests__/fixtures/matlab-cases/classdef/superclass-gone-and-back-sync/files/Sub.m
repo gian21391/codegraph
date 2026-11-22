@@ -1,0 +1,2 @@
+classdef Sub < Base
+end

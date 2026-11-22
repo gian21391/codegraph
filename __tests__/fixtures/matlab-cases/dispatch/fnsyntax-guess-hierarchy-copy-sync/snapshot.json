@@ -1,0 +1,48 @@
+{
+  "index": {
+    "edges": [
+      "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+      "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m",
+      "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m",
+      "lib/Base.m Base::kids -calls-> Other::kids @ lib/Other.m",
+      "lib/Other.m Other -extends-> Mid @ app/Mid.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m",
+        "lib/Other.m Other -extends-> Mid @ lib/Mid.m"
+      ],
+      "rows": [
+        "app/@Node/show.m:3 calls:kids"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m",
+        "lib/Base.m Base::kids -calls-> Other::kids @ lib/Other.m",
+        "lib/Other.m Other -extends-> Mid @ app/Mid.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m",
+        "lib/Other.m Other -extends-> Mid @ lib/Mid.m"
+      ],
+      "rows": [
+        "app/@Node/show.m:3 calls:kids"
+      ],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "w.m w -calls-> area @ private/area.m",
+      "w.m w -instantiates-> Shape @ Shape.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

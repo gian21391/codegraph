@@ -1,0 +1,20 @@
+{
+  "why": "A file with any statement before its first function line is a script whose functions are local to it: it runs by name and its functions are out of reach of other files (MATLAB Code Analyzer help: 'If any statements precede a function definition, MATLAB considers the file a script').",
+  "truth": {
+    "edges": [
+      "s1.m s1.m -calls-> help2 @ s1.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "help2"
+      }
+    ]
+  },
+  "known": [
+    {
+      "what": "The statement `s1` in main.m does not link to the script s1.m (MATLAB runs it); its call stays a live row.",
+      "why": "Accepted in step 2 (scripts) as conservative: a script with local functions (R2016b+) counts as no script."
+    }
+  ]
+}

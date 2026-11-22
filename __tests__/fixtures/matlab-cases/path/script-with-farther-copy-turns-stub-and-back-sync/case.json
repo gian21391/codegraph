@@ -1,0 +1,68 @@
+{
+  "why": "A statement naming a script reaches the nearer copy; when that copy becomes help text only or Octave the statement goes to the farther script, and it returns when the copy is a script again, and every sync ends where a fresh index does (harvested from matlab-sync.test.ts 'when a script with a farther copy becomes help text only, or Octave, and back: the call returns to the nearer copy'; lookup step 7: a statement takes a script before any stub).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> prep.m @ prep.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "Step 1 sends the statement past the nearer help text to the farther script.",
+      "why": "Project rule (matlab-lookup, step 7: a statement takes a script before any stub, as a help text may be a MEX file's). A `%` help text is read as MATLAB today; the user's ruling (step 11) settles how an empty or block-comment file is read, and the existing stub rule applies to help text unchanged."
+    }
+  ],
+  "steps": [
+    {
+      "edit": {
+        "prep.m": "% PREP  help for a MEX function\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> sub/prep.m @ sub/prep.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "prep.m": "x = 2;\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> prep.m @ prep.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "at": "sub/prep.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "prep.m": "# Octave\nx = 2;\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> sub/prep.m @ sub/prep.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "prep.m": "x = 2;\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> prep.m @ prep.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "at": "sub/prep.m"
+          }
+        ]
+      }
+    }
+  ]
+}

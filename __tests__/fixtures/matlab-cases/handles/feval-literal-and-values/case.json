@@ -1,0 +1,22 @@
+{
+  "why": "feval calls each function its first argument can name where the call is: a literal, either branch's value, a struct field's, each element of a loop over a cell, a handle, a dotted package name; not a value assigned after the call, nor a parameter (MATLAB doc 'feval'; harvested from matlab-dynamic.test.ts 'MATLAB feval').",
+  "truth": {
+    "edges": [
+      "runner.m runner -calls-> CellA @ CellA.m",
+      "runner.m runner -calls-> CellB @ CellB.m",
+      "runner.m runner -calls-> DriftStep @ DriftStep.m",
+      "runner.m runner -calls-> EStep @ EStep.m",
+      "runner.m runner -calls-> IdentStep @ IdentStep.m",
+      "runner.m runner -calls-> StepA @ StepA.m",
+      "runner.m runner -calls-> pkg::scale @ +pkg/scale.m",
+      "runner.m runner -calls-> solve @ solve.m",
+      "runner.m runner -references-> solve @ solve.m"
+    ],
+    "noEdges": [
+      {
+        "from": "runner.m",
+        "to": "LaterStep"
+      }
+    ]
+  }
+}

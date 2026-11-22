@@ -1,0 +1,36 @@
+{
+  "why": "genpath puts every subfolder of a root on the path, so a subfolder a sync adds under it is searched, and one it removes is not (MATLAB doc 'genpath'; harvested from matlab-path.test.ts 'after a folder is added under a genpath root, and removed').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib1/caller.m",
+        "to": "only"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib1/sub/only.m": "function only()\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib1/caller.m caller -calls-> only @ lib1/sub/only.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib1/sub/only.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "lib1/caller.m",
+            "to": "only"
+          }
+        ]
+      }
+    }
+  ]
+}

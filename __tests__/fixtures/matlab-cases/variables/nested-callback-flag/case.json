@@ -1,0 +1,14 @@
+{
+  "why": "A flag only a nested callback sets is a function name in the parent unless the parent initializes it, as the GUI idiom does (MATLAB doc 'Nested Functions', R2019b sharing rule; harvested from matlab-extraction.test.ts 'reads a condition the parent never assigns as a call').",
+  "truth": {
+    "edges": [
+      "wait1.m wait1 -calls-> done @ done.m"
+    ],
+    "noEdges": [
+      {
+        "from": "wait2.m",
+        "to": "done"
+      }
+    ]
+  }
+}

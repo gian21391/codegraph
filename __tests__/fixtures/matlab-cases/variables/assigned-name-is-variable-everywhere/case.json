@@ -1,0 +1,14 @@
+{
+  "why": "In a function an assigned name is a variable in the whole function, before the assignment too, so neither read calls the function of the name (MATLAB doc 'Function Precedence Order'; project rule pinned in matlab-extraction.test.ts 'takes no assignment from a piece of a word').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "helperS"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> helperS @ helperS.m"
+    ]
+  }
+}

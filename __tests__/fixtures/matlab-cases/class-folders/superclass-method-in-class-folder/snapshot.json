@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "S2.m S2 -extends-> B2 @ @B2/B2.m",
+      "u.m u -calls-> B2::vol @ @B2/vol.m",
+      "u.m u -instantiates-> S2 @ S2.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

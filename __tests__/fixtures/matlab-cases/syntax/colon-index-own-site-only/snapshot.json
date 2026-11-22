@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "f.m h -calls-> a @ a.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

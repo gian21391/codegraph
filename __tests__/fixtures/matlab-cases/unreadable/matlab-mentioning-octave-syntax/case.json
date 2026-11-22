@@ -1,0 +1,9 @@
+{
+  "why": "`#` and `endfunction` inside a block comment, nested block comments and a `#` inside a string leave the file MATLAB, and its calls link (MATLAB doc 'Add Comments to Code'; harvested from matlab-extraction.test.ts 'are not confused with MATLAB that only mentions their syntax').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperQ @ helperQ.m",
+      "g.m g -calls-> helperQ @ helperQ.m"
+    ]
+  }
+}

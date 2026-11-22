@@ -1,0 +1,44 @@
+{
+  "why": "A method file moved out of its class folder becomes a plain function, which the call on the object then reaches because the class has no such method; moved back it is the method again (harvested from matlab-resolution.test.ts 'passes a method's own object to a local or path function when its class has no such method'; project rule for sync).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Robot::step @ @Robot/step.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Robot/step.m": null,
+        "step.m": "function step(r, x)\n    r.Q = r.Q + x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> step @ step.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "Robot::step"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "step.m": null,
+        "@Robot/step.m": "function step(r, x)\n    r.Q = r.Q + x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Robot::step @ @Robot/step.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "at": "step.m"
+          }
+        ]
+      }
+    }
+  ]
+}

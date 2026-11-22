@@ -1,0 +1,51 @@
+{
+  "why": "A self call relinks when the first subclass defining the method is added, and when the base gains the method it calls the base's; a sync ends where a fresh index does (project rule; harvested from matlab-dispatch.test.ts 'when the base method comes later' and 'review case 2').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "Vehicle.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Bike.m": "classdef Bike < Vehicle\n    methods\n        function deriv(veh, t)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Vehicle.m": "classdef Vehicle < handle\n    methods\n        function run(veh)\n            veh.deriv(1);\n        end\n        function deriv(veh, t)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Vehicle.m Vehicle::deriv -calls-> Bike::deriv @ Bike.m",
+          "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+        ],
+        "noEdges": [
+          "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Bike.m": null
+      },
+      "truth": {
+        "edges": [
+          "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+        ],
+        "noEdges": [
+          {
+            "to": "Bike::deriv"
+          }
+        ]
+      }
+    }
+  ]
+}

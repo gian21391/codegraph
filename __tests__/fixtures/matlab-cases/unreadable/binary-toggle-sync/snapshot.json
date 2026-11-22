@@ -1,0 +1,39 @@
+{
+  "index": {
+    "edges": [
+      "user.m user -calls-> tintOf @ lib/tintOf.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "user.m:2 calls:tintOf"
+      ]
+    },
+    {
+      "edges": [
+        "user.m user -calls-> tintOf @ lib/tintOf.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "user.m user -calls-> tintOf @ other/tintOf.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "user.m:2 calls:tintOf"
+      ]
+    }
+  ]
+}

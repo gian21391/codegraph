@@ -1,0 +1,20 @@
+{
+  "why": "set and get on an object of an old-style class dispatch to its method files, on its own object inside a method too; set on a plain parameter is MATLAB's own and leaves no row, and only a call nothing defines stays a row (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'dispatches set/get on an object of a class-folder class to its method files').",
+  "truth": {
+    "edges": [
+      "@Acct/bump.m Acct::bump -calls-> Acct::set @ @Acct/set.m",
+      "useAcc.m useAcc -calls-> Acct::get @ @Acct/get.m",
+      "useAcc.m useAcc -calls-> Acct::set @ @Acct/set.m",
+      "useAcc.m useAcc -instantiates-> Acct @ @Acct/Acct.m"
+    ],
+    "rows": [
+      "useAcc.m:6 calls:notdefined"
+    ],
+    "noRows": [
+      {
+        "file": "useAcc.m",
+        "name": "set"
+      }
+    ]
+  }
+}

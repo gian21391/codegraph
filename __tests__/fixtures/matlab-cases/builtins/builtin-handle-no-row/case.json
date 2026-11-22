@@ -1,0 +1,16 @@
+{
+  "why": "A handle to a built-in's name goes the way its call does: no edge and no row; a handle to a project copy of one links (MATLAB doc 'Create Function Handle'; harvested from matlab-extraction.test.ts 'leaves unwritten only the built-in calls no project file … could answer').",
+  "truth": {
+    "edges": [
+      "h.m h -references-> normpdf @ normpdf.m"
+    ],
+    "noRows": [
+      {
+        "name": "plot"
+      },
+      {
+        "name": "isempty"
+      }
+    ]
+  }
+}

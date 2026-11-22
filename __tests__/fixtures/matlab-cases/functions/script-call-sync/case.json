@@ -1,0 +1,32 @@
+{
+  "why": "A script becomes a function and back; the call follows it, and a sync ends where a fresh index does (project rule).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setup_x.m @ setup_x.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "setup_x.m": "function setup_x()\ny = 1;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> setup_x @ setup_x.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "setup_x.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m"
+          }
+        ]
+      }
+    }
+  ]
+}

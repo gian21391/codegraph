@@ -1,0 +1,2 @@
+classdef Widget < Mid
+end

@@ -1,0 +1,18 @@
+{
+  "why": "In a condition the parser could not close, the call written with arguments still links (project rule; harvested from matlab-extraction.test.ts, 'a bare name read in a condition the parser could not close goes').",
+  "truth": {
+    "edges": [
+      "g.m g.m -calls-> getVal @ getVal.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "the error swallows the function, so no symbol g is made and the call is the file's (`g.m g.m -calls-> getVal`)",
+      "why": "pinned in matlab-extraction.test.ts \"keeps the calls written with arguments ... of a broken function file\": the call is read from the file, not from g"
+    },
+    {
+      "what": "the bare `isReady` in the broken condition is not read, so g has no edge to isReady",
+      "why": "its `if` is a token of the error; step 10 rules out repairing an error region (matlab-extraction.test.ts pins it)"
+    }
+  ]
+}

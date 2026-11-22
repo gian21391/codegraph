@@ -1,0 +1,8 @@
+{
+  "why": "A private/ folder at the project root serves the root's own files (MATLAB doc 'Private Functions'; harvested from matlab-resolution.test.ts 'reaches a class folder's private/ from its methods', r.m).",
+  "truth": {
+    "edges": [
+      "r.m r -calls-> top @ private/top.m"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "@Shape/draw.m Shape::draw -calls-> Shape::render @ @Shape/render.m"
+    ],
+    "rows": [
+      "@Shape/Shape.m:4 calls:render",
+      "@Shape/Shape.m:7 calls:render",
+      "@Shape/lam.m:2 calls:render"
+    ],
+    "dormant": []
+  }
+}

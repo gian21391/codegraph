@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [],
+    "dormant": [
+      "lib1/beeper.m:2 calls:sound"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib1/beeper.m beeper -calls-> sound @ extra/sound.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "lib1/beeper.m:2 calls:sound"
+      ]
+    }
+  ]
+}

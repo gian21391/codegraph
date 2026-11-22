@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "nest.m nest::inner -calls-> imp::onlyImp @ +imp/onlyImp.m",
+      "two.m two -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ],
+    "rows": [
+      "two.m:6 calls:onlyImp"
+    ],
+    "dormant": []
+  }
+}

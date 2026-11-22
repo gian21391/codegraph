@@ -1,0 +1,49 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> helperC @ helperC.m"
+    ],
+    "rows": [
+      "f.m:3 calls:missingC"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "f.m f -calls-> helperC @ helperC.m"
+      ],
+      "rows": [
+        "f.m:3 calls:missingC"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "f.m f -calls-> helperC @ helperC.m"
+      ],
+      "rows": [
+        "f.m:3 calls:missingC"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "f.m f -calls-> helperC @ helperC.m"
+      ],
+      "rows": [
+        "f.m:3 calls:missingC"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "f.m f -calls-> helperC @ helperC.m"
+      ],
+      "rows": [
+        "f.m:3 calls:missingC"
+      ],
+      "dormant": []
+    }
+  ]
+}

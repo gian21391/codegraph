@@ -1,0 +1,16 @@
+{
+  "why": "`catch ME` makes `ME` a variable; a statement on the line after a bare `catch` is code, not a catch variable (MATLAB doc 'try, catch'; harvested from matlab-extraction.test.ts 'takes a catch error variable only from the catch line').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> risky @ risky.m",
+      "f.m f -calls-> cleanupAll @ cleanupAll.m",
+      "f.m f -calls-> report @ report.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "ME"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "why": "evalin('base' or 'caller', code) runs the code in another workspace, so a name its script makes is not this function's and a later read stays a call; eval runs it here (MATLAB doc 'evalin'; harvested from matlab-dormant.test.ts 'a run in another workspace makes no name here').",
+  "truth": {
+    "edges": [
+      "f_base.m f_base -calls-> globs.m @ globs.m",
+      "f_caller.m f_caller -calls-> globs.m @ globs.m",
+      "f_eval.m f_eval -calls-> globs.m @ globs.m"
+    ],
+    "rows": [
+      "f_base.m:3 calls:G",
+      "f_caller.m:3 calls:G"
+    ],
+    "dormant": [
+      "f_eval.m:3 calls:G"
+    ]
+  }
+}

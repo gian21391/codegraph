@@ -1,0 +1,19 @@
+{
+  "why": "In `go(x, Solver=1, Tol=tolerance)` the names before `=` are argument names, the values after it are reads (MATLAB doc 'Name=Value in Function Calls', R2021a; harvested from matlab-extraction.test.ts 'reads Name=Value arguments as names').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> go @ go.m",
+      "f.m f -calls-> tolerance @ tolerance.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "Solver"
+      },
+      {
+        "from": "f.m",
+        "to": "Tol"
+      }
+    ]
+  }
+}

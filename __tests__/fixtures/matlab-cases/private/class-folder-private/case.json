@@ -1,0 +1,19 @@
+{
+  "why": "A class folder's private/ serves the class's method files, and a method file does not reach the private/ beside its class folder, nor an outside file the class folder's (MATLAB doc 'Private Functions'; harvested from matlab-resolution.test.ts 'reaches a class folder's private/ from its methods, and not the private/ beside the class folder').",
+  "truth": {
+    "edges": [
+      "@K/m2.m K::m2 -calls-> ph @ @K/private/ph.m",
+      "r.m r -calls-> top @ private/top.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@K/m2.m",
+        "to": "top"
+      },
+      {
+        "from": "r.m",
+        "to": "ph"
+      }
+    ]
+  }
+}

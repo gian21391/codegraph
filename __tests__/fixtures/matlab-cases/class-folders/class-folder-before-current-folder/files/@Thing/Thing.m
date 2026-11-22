@@ -1,0 +1,2 @@
+classdef Thing
+end

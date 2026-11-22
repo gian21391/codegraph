@@ -1,0 +1,11 @@
+{
+  "why": "Non-ASCII letters in comments and strings (two-, three- and four-byte UTF-8) change no call and no line count (MATLAB doc 'Characters and Strings': text is Unicode).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperN @ helperN.m"
+    ],
+    "rows": [
+      "f.m:5 calls:missingN"
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+function tool(n)
+end

@@ -1,0 +1,11 @@
+{
+  "why": "A superclass list continued over lines names every base, and an object reaches each base's methods (MATLAB doc 'Subclass Syntax', 'Continue Long Statements on Multiple Lines'; harvested from matlab-extraction.test.ts 'finds methods inherited from every base of a multi-line list').",
+  "truth": {
+    "edges": [
+      "Foo.m Foo -extends-> Bar @ Bar.m",
+      "Foo.m Foo -extends-> Baz @ Baz.m",
+      "Foo.m Foo::go -calls-> Bar::fromBar @ Bar.m",
+      "Foo.m Foo::go -calls-> Baz::fromBaz @ Baz.m"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "@K/m2.m:2 calls:ph"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "@K/m2.m K::m2 -calls-> ph @ @K/private/ph.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "@K/m2.m:2 calls:ph"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "@K/m2.m:2 calls:ph"
+      ],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "why": "A call of a name MATLAB has only as a method of its classes (`parse` of an inputParser, `keys` of a dictionary) that no project symbol carries is a call leaving the index, kept dormant; a project parse.m added links it and removed puts it back to sleep; a sync ends where a fresh index does (project rule; harvested from matlab-dormant.test.ts 'a name MATLAB has only as a method of one of its classes').",
+  "truth": {
+    "rows": [
+      "u.m:5 calls:nosuch_fn"
+    ],
+    "dormant": [
+      "u.m:3 calls:parse",
+      "u.m:4 calls:keys"
+    ],
+    "noEdges": [
+      {
+        "from": "u.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/parse.m": "function r = parse(p, varargin)\nr = p;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "u.m u -calls-> parse @ lib/parse.m"
+        ],
+        "dormant": [
+          "u.m:4 calls:keys"
+        ],
+        "noDormant": [
+          {
+            "name": "parse"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/parse.m": null
+      },
+      "truth": {
+        "dormant": [
+          "u.m:3 calls:parse",
+          "u.m:4 calls:keys"
+        ],
+        "noEdges": [
+          {
+            "from": "u.m"
+          }
+        ]
+      }
+    }
+  ]
+}

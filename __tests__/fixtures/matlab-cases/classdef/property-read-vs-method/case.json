@@ -1,0 +1,21 @@
+{
+  "why": "A member written without an argument list is a call when the class has a method of the name and a property read otherwise, which leaves no edge and no row (MATLAB doc 'Ordinary Methods'; harvested from matlab-dispatch.test.ts 'links a method on the method's own object, and leaves a read of its property no edge and no row').",
+  "truth": {
+    "edges": [
+      "Gen.m Gen::all -calls-> Gen::build @ Gen.m"
+    ],
+    "noEdges": [
+      {
+        "to": "Gain"
+      },
+      {
+        "to": "verbose"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "Gen.m"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "why": "A `.m` of help text only documents a MEX function of its name; a call of the name links to that help file as a last resort (project rule, step 3 'a call of a MEX function links to the help file that documents it').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> mexfn.m @ mexfn.m"
+    ],
+    "noRows": [
+      {
+        "file": "main.m"
+      }
+    ]
+  }
+}

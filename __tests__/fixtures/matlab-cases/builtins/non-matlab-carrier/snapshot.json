@@ -1,0 +1,21 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "prog.m prog -calls-> error @ lib/error.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

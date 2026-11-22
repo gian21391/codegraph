@@ -1,0 +1,33 @@
+{
+  "why": "An old-style constructor rewritten as a classdef in the same class folder keeps the class, its construction and its method file's call, and back again, as a fresh index has them (MATLAB doc 'Class Folders'; project rule for sync).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Poly::value @ @Poly/value.m",
+      "use.m use -instantiates-> Poly @ @Poly/Poly.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Poly/Poly.m": "classdef Poly\n    properties\n        c\n    end\n    methods\n        function p = Poly(c)\n            p.c = c;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Poly::value @ @Poly/value.m",
+          "use.m use -instantiates-> Poly @ @Poly/Poly.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Poly/Poly.m": "function p = Poly(c)\np.c = c;\np = class(p, 'Poly');\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Poly::value @ @Poly/value.m",
+          "use.m use -instantiates-> Poly @ @Poly/Poly.m"
+        ]
+      }
+    }
+  ]
+}

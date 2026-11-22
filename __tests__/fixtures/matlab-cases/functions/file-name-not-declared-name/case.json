@@ -1,0 +1,19 @@
+{
+  "why": "MATLAB calls a function file by its file name, not the name its function line declares, and a file name that is no identifier cannot be called at all (MATLAB doc 'Create Functions in Files'; harvested from matlab-resolution.test.ts 'calls a function file by its file name').",
+  "truth": {
+    "edges": [
+      "caller.m caller -calls-> foo @ foo.m",
+      "my-tool.m mytool -calls-> mytool @ my-tool.m"
+    ],
+    "noEdges": [
+      {
+        "from": "caller.m",
+        "to": "bar"
+      },
+      {
+        "from": "caller.m",
+        "to": "mytool"
+      }
+    ]
+  }
+}

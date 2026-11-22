@@ -1,0 +1,34 @@
+{
+  "why": "A function file that gains a statement before its function line becomes a script whose function is local to it (MATLAB doc 'Local Functions' / 'Scripts': a local function is out of reach of other files), so another file's call of the name must lose its edge, as a fresh index has it; a sync keeps it (found by the step 11 fuzzer).",
+  "truth": {
+    "edges": [
+      "user.m user.m -calls-> g @ g.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "The call of the script g.m (with an argument) gets no edge either: a fresh index keeps a failed row.",
+      "why": "Accepted in step 2 (scripts): a script with local functions counts as no script."
+    }
+  ],
+  "steps": [
+    {
+      "edit": {
+        "g.m": "x = 1;\nfunction y = g()\ny = 1;\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          "user.m user.m -calls-> g @ g.m"
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-2",
+    "fails": [
+      "step 1 (synced): unwanted edge user.m user.m -calls-> g @ g.m",
+      "step 1 (g.m): edges differ; only synced: [\"user.m user.m -calls-> g @ g.m\"]; only fresh: []",
+      "step 1 (g.m): rows differ; only synced: []; only fresh: [\"user.m:1 calls:g\"]"
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "why": "A bare call in a package file never reaches the package's own function of the name (only an import does), so `size(x, 1)` inside `+util/size.m` is the built-in: no self edge, and the row kept dormant (MATLAB doc 'Packages Create Namespaces'; harvested from matlab-resolution.test.ts 'never resolves a bare call in a package file to the package function itself').",
+  "truth": {
+    "edges": [
+      "+util/size.m util::size -calls-> util::helper @ +util/size.m",
+      "useUtil.m useUtil -calls-> util::plot @ +util/plot.m",
+      "useUtil.m useUtil -calls-> util::size @ +util/size.m"
+    ],
+    "noEdges": [
+      "+util/size.m util::size -calls-> util::size @ +util/size.m",
+      "+util/plot.m util::plot -calls-> util::plot @ +util/plot.m"
+    ],
+    "dormant": [
+      "+util/plot.m:2 calls:plot",
+      "+util/size.m:2 calls:size"
+    ],
+    "noRows": [
+      {
+        "file": "+util/size.m"
+      },
+      {
+        "file": "+util/plot.m"
+      }
+    ]
+  }
+}

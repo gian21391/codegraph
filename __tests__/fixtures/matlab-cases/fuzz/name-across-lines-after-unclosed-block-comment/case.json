@@ -1,0 +1,27 @@
+{
+  "why": "MATLAB reads everything after an unclosed `%{` as comment (MATLAB doc 'Add Comments to Code'), so no row comes from the lines after it, in LF or CRLF; the file is then a MATLAB script of comments (the user's ruling (step 11)), which a statement naming it runs, as it runs the one-line script `ctlScr.m` (the anchor). Today the text is kept as live rows, one whose name spans three lines, CR and LF included, and the statement `big` is a live row (found by the step 11 fuzzer).",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> big.m @ big.m",
+      "user.m user -calls-> ctlScr.m @ ctlScr.m"
+    ],
+    "noRows": [
+      {
+        "file": "big.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "big.m"
+      }
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-fuzz-6",
+    "fails": [
+      "index: missing edge user.m user -calls-> big.m @ big.m",
+      "index: unwanted row big.m:2 calls:1.persistent (matches {\"file\":\"big.m\"})",
+      "index: unwanted row big.m:2 calls:[1 2]);\r\n    persistent util\r\nobj = Base (matches {\"file\":\"big.m\"})"
+    ]
+  }
+}

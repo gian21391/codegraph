@@ -1,0 +1,15 @@
+{
+  "index": {
+    "edges": [
+      "Base.m Base::delete -calls-> Sub::delete @ Sub.m",
+      "Sub.m Sub -extends-> Base @ Base.m",
+      "Sub.m Sub -extends-> pkg::Other @ +pkg/Other.m",
+      "Sub.m Sub::Sub -calls-> Base::Base @ Base.m",
+      "Sub.m Sub::Sub -instantiates-> pkg::Other @ +pkg/Other.m",
+      "Sub.m Sub::delete -calls-> Base::delete @ Base.m",
+      "Sub.m Sub::delete -calls-> pkg::Other::show @ +pkg/Other.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

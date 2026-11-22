@@ -1,0 +1,31 @@
+{
+  "why": "A private function file that gains a stray `end` before its function line defines nothing its package's other files can call, so their call must lose its edge, as a fresh index has it; a sync keeps it (project rule; found by the step 11 fuzzer; the same shape as S11-fuzz-2).",
+  "truth": {
+    "edges": [
+      "+pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+pkg/private/size.m": "end\nfunction y = size(x)\ny = 1;\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "+pkg/Mid.m",
+            "to": "size"
+          }
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-2c",
+    "fails": [
+      "step 1 (synced): unwanted edge +pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m (matches {\"from\":\"+pkg/Mid.m\",\"to\":\"size\"})",
+      "step 1 (+pkg/private/size.m): edges differ; only synced: [\"+pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m\"]; only fresh: []",
+      "step 1 (+pkg/private/size.m): rows differ; only synced: []; only fresh: [\"+pkg/Mid.m:1 calls:size\"]"
+    ]
+  }
+}

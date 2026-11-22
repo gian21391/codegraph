@@ -1,0 +1,16 @@
+{
+  "why": "A capitalised parameter named after a root class that defines the method, ignoring case, is taken for that class's object (a marked guess); a lower-case one, a local, or one the function fills a field of is not (step 2 G3; harvested from matlab-dispatch.test.ts 'MATLAB parameter named after its class (G3)').",
+  "truth": {
+    "edges": [
+      "alg.m alg -calls-> TASK::score @ TASK.m"
+    ],
+    "noEdges": [
+      {
+        "from": "low.m"
+      },
+      {
+        "from": "fillit.m"
+      }
+    ]
+  }
+}

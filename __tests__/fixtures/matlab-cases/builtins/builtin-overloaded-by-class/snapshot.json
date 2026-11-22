@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> Shape::disp @ Shape.m",
+      "use.m use -instantiates-> Shape @ Shape.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "use.m:4 calls:Shape::numel"
+    ]
+  }
+}

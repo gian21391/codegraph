@@ -1,0 +1,3 @@
+function useA()
+tool
+end

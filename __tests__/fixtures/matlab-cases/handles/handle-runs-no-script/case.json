@@ -1,0 +1,14 @@
+{
+  "why": "A handle to a script's name runs no script, and neither does using the name as a value, while a statement naming the script runs it (MATLAB doc 'Scripts': a script takes no inputs and returns no outputs; harvested from matlab-resolution.test.ts 'links a statement naming a script … a handle runs no script').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setup_s.m @ setup_s.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "kind": "references"
+      }
+    ]
+  }
+}

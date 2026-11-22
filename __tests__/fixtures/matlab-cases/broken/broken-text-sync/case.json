@@ -1,0 +1,45 @@
+{
+  "why": "A callee's body broken and fixed keeps its function and the call into it, and a caller's line broken and fixed restores its call; every sync ends where a fresh index does (project rule: a sync ends where a fresh index ends).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> gB @ gB.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "gB.m": "function r = gB(x)\nr = (x +;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> gB @ gB.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gB.m": "function r = gB(x)\nr = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> gB @ gB.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\nz = [1 2;\ny = gB(1);\nend\n"
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\ny = gB(1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> gB @ gB.m"
+        ]
+      }
+    }
+  ]
+}

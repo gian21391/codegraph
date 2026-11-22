@@ -1,0 +1,15 @@
+{
+  "index": {
+    "edges": [
+      "A.m A::step -calls-> B::step @ B.m",
+      "B.m B -extends-> A @ A.m",
+      "B.m B::step -calls-> C::step @ C.m",
+      "C.m C -extends-> B @ B.m",
+      "P.m P::go -calls-> R::go @ R.m",
+      "Q.m Q -extends-> P @ P.m",
+      "R.m R -extends-> Q @ Q.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

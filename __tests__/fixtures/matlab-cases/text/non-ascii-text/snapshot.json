@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> helperN @ helperN.m"
+    ],
+    "rows": [
+      "f.m:5 calls:missingN"
+    ],
+    "dormant": []
+  }
+}

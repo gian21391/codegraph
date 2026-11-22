@@ -1,0 +1,19 @@
+{
+  "why": "A function closed by `endfunction`: Octave syntax is no MATLAB: MATLAB cannot run the file, and codegraph reads none of its code (project rule, matlab-extraction.test.ts 'Octave files (unsupported)').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helperG @ helperG.m"
+    ],
+    "noEdges": [
+      {
+        "from": "gOct.m"
+      }
+    ]
+  },
+  "known": [
+    {
+      "what": "no symbol of an Octave file is indexed, so a caller of gOct finds nothing",
+      "why": "Octave is unsupported (matlab-extraction.test.ts \"Octave files (unsupported)\"; step 9)"
+    }
+  ]
+}

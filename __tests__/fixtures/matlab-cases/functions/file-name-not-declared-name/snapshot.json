@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "caller.m caller -calls-> foo @ foo.m",
+      "my-tool.m mytool -calls-> mytool @ my-tool.m"
+    ],
+    "rows": [
+      "caller.m:4 calls:mytool"
+    ],
+    "dormant": []
+  }
+}

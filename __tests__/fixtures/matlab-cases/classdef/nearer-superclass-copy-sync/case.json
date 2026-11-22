@@ -1,0 +1,38 @@
+{
+  "why": "A copy of the superclass added beside the subclass is the nearer one, so the subclass extends it, until it is removed; a sync ends where a fresh index does (project rule; harvested from matlab-sync.test.ts 'when a nearer copy of the superclass is added').",
+  "truth": {
+    "edges": [
+      "a/Sub.m Sub -extends-> Base @ b/Base.m",
+      "main.m main -calls-> Base::greet @ b/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "a/Base.m": "classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "a/Sub.m Sub -extends-> Base @ a/Base.m",
+          "main.m main -calls-> Base::greet @ a/Base.m"
+        ],
+        "noEdges": [
+          {
+            "at": "b/Base.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "a/Base.m": null
+      },
+      "truth": {
+        "edges": [
+          "a/Sub.m Sub -extends-> Base @ b/Base.m",
+          "main.m main -calls-> Base::greet @ b/Base.m"
+        ]
+      }
+    }
+  ]
+}

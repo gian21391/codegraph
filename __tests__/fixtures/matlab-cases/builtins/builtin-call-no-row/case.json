@@ -1,0 +1,31 @@
+{
+  "why": "A call of MATLAB's own functions, in base MATLAB or a toolbox, leaves no row; a call of a name nothing defines keeps one, and a project copy of a built-in links (project rule: rows are for calls a sync may still link; harvested from matlab-resolution.test.ts 'keeps no row for a call of MATLAB's own functions').",
+  "truth": {
+    "edges": [
+      "useCot.m useCot -calls-> cot @ cot.m"
+    ],
+    "rows": [
+      "useMore.m:6 calls:notdefined"
+    ],
+    "noRows": [
+      {
+        "name": "nextpow2"
+      },
+      {
+        "name": "numel"
+      },
+      {
+        "name": "seconds"
+      },
+      {
+        "name": "histogram"
+      },
+      {
+        "name": "table"
+      },
+      {
+        "name": "tan"
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "why": "A bare name read as a value is a call with no arguments when no variable of the name exists, and an assigned name is a variable (MATLAB doc 'Function Precedence Order'; harvested from matlab-extraction.test.ts 'tells calls from index reads').",
+  "truth": {
+    "edges": [
+      "calcAll.m calcAll -calls-> loadData @ loadData.m",
+      "calcAll.m calcAll -calls-> helperB @ helperB.m",
+      "calcAll.m calcAll -calls-> splitIt @ splitIt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "calcAll.m",
+        "to": "data"
+      },
+      {
+        "from": "calcAll.m",
+        "to": "a"
+      }
+    ]
+  }
+}

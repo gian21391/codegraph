@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "Model.m Model::make -instantiates-> Model @ Model.m",
+      "g1.m g1 -calls-> Model::compute @ Model.m",
+      "g1.m g1 -calls-> Model::reset @ Model.m",
+      "g1.m g1 -instantiates-> Model @ Model.m",
+      "g2.m g2 -calls-> Model::make @ Model.m",
+      "g2.m g2 -calls-> pkg::pf @ +pkg/pf.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

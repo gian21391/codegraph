@@ -1,0 +1,20 @@
+{
+  "index": {
+    "edges": [
+      "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+      "app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

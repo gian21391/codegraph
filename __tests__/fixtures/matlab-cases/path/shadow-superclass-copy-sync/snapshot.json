@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "app/Arm.m Arm -extends-> Base @ lib2/Base.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/Arm.m Arm -extends-> Base @ lib1/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/Arm.m Arm -extends-> Base @ lib2/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

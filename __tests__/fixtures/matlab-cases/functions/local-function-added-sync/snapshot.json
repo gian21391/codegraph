@@ -1,0 +1,39 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> helper @ helper.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> helper @ main.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> helper @ helper.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:helper"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> helper @ helper.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

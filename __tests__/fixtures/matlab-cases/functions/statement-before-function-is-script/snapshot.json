@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "s1.m s1.m -calls-> help2 @ s1.m"
+    ],
+    "rows": [
+      "main.m:2 calls:s1",
+      "main.m:3 calls:help2"
+    ],
+    "dormant": []
+  }
+}

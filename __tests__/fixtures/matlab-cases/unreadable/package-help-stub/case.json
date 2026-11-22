@@ -1,0 +1,13 @@
+{
+  "why": "The help text of a MEX function in a package, `+p/X.m`, is no target of `p.X(2)`: MATLAB runs the MEX file, which the index never reads, so the call stays a live row (project rule; harvested from matlab-dormant.test.ts 'a MEX help file in one keep it, as before').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "u.m"
+      }
+    ],
+    "rows": [
+      "u.m:2 calls:p::X"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "index": {
+    "edges": [
+      "@Arm/part.m Arm::part -instantiates-> Joint @ Joint.m",
+      "@Arm/total.m Arm::total -calls-> Arm::part @ @Arm/part.m"
+    ],
+    "rows": [
+      "@Arm/total.m:3 calls:resist"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "@Arm/total.m Arm::total -calls-> Arm::part @ @Arm/part.m",
+        "@Arm/total.m Arm::total -calls-> Arm::resist @ @Arm/resist.m"
+      ],
+      "rows": [
+        "@Arm/part.m:2 calls:Joint"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "@Arm/part.m Arm::part -instantiates-> Joint @ Joint.m",
+        "@Arm/total.m Arm::total -calls-> Arm::part @ @Arm/part.m"
+      ],
+      "rows": [
+        "@Arm/total.m:3 calls:resist"
+      ],
+      "dormant": []
+    }
+  ]
+}

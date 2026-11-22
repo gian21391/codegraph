@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "app/main.m:3 calls:qg",
+      "app/main.m:4 imports:pq::qg",
+      "app/main.m:5 calls:qg"
+    ],
+    "dormant": []
+  }
+}

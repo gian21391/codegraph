@@ -1,0 +1,15 @@
+{
+  "why": "Code in a private/ folder under an on-path folder (plain, class folder or package) runs on the path, so it reaches nothing that is only off the path (project rule; harvested from matlab-path.test.ts review case 10, L2).",
+  "truth": {
+    "noEdges": [
+      {
+        "to": "onlyold"
+      }
+    ],
+    "rows": [
+      "lib1/private/phelper.m:2 calls:onlyold",
+      "lib1/@Pt/private/helper.m:2 calls:onlyold",
+      "lib1/+pk/private/phelp.m:2 calls:onlyold"
+    ]
+  }
+}

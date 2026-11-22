@@ -1,0 +1,25 @@
+{
+  "why": "A constant property, an enumeration member and an inherited property are reads, not calls: no edge, and a row only where another class has a method of the name (MATLAB doc 'Define Class Properties with Constant Values', 'Define Enumeration Classes'; harvested from matlab-dispatch.test.ts 'reads a constant, an enumeration member and an inherited property').",
+  "truth": {
+    "edges": [
+      "Sub.m Sub -extends-> Base @ Base.m"
+    ],
+    "noEdges": [
+      {
+        "from": "Sub.m",
+        "kind": "calls"
+      }
+    ],
+    "rows": [
+      "Sub.m:4 calls:Sub::Rate"
+    ],
+    "noRows": [
+      {
+        "name": "Limits::MAX"
+      },
+      {
+        "name": "Color::Red"
+      }
+    ]
+  }
+}

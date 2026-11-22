@@ -1,0 +1,46 @@
+{
+  "why": "A second base added to a classdef line gives its objects that base's methods, and removing it takes them away; a sync ends where a fresh index does (MATLAB doc 'Subclass Syntax'; project rule).",
+  "truth": {
+    "edges": [
+      "C.m C -extends-> A @ A.m",
+      "main.m main -calls-> A::fromA @ A.m"
+    ],
+    "noEdges": [
+      {
+        "to": "fromB"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "C.m": "classdef C < A & B\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "C.m C -extends-> B @ B.m",
+          "main.m main -calls-> A::fromA @ A.m",
+          "main.m main -calls-> B::fromB @ B.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "C.m": "classdef C < B\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> B::fromB @ B.m"
+        ],
+        "noEdges": [
+          {
+            "to": "fromA"
+          },
+          {
+            "at": "A.m"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "why": "A name alone on a line that a script file carries runs the script in the caller's workspace (MATLAB doc 'Scripts vs. Functions'; harvested from matlab-extraction.test.ts `setup_paths`).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setupPaths.m @ setupPaths.m"
+    ]
+  }
+}

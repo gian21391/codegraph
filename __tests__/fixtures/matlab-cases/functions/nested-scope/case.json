@@ -1,0 +1,16 @@
+{
+  "why": "A nested function is seen from its parent, its siblings and the functions it nests, and from no local function of the file (MATLAB doc 'Nested Functions'; harvested from matlab-resolution.test.ts 'sees a nested function from its parent, its siblings and what it nests only').",
+  "truth": {
+    "edges": [
+      "gui.m gui -calls-> gui::cb @ gui.m",
+      "gui.m gui::cb -calls-> gui::cb::inner @ gui.m",
+      "gui.m gui::sib -calls-> gui::cb @ gui.m",
+      "gui.m other -calls-> cb @ cb.m",
+      "gui.m other -calls-> inner @ inner.m"
+    ],
+    "noEdges": [
+      "gui.m other -calls-> gui::cb @ gui.m",
+      "gui.m other -calls-> gui::cb::inner @ gui.m"
+    ]
+  }
+}

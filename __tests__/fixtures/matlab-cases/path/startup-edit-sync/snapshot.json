@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "lib1/caller.m caller -calls-> util @ lib1/util.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib1/caller.m caller -calls-> util @ lib2/util.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib1/caller.m caller -calls-> util @ lib1/util.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "main.m:2 function_ref:later_fn",
+      "main.m:3 calls:later_fn"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> later_fn @ later_fn.m",
+        "main.m main -references-> later_fn @ later_fn.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> later_fn @ main.m",
+        "main.m main -references-> later_fn @ main.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 function_ref:later_fn",
+        "main.m:3 calls:later_fn"
+      ],
+      "dormant": []
+    }
+  ]
+}

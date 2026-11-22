@@ -1,0 +1,58 @@
+{
+  "why": "A C++ method or a MATLAB property named like a built-in answers no bare MATLAB call, so the call keeps no row; a MATLAB function of the name added later links the calls (project rule; harvested from matlab-dormant.test.ts 'only a MATLAB symbol that could answer a bare call keeps a built-in's call').",
+  "truth": {
+    "noRows": [
+      {
+        "name": "error"
+      },
+      {
+        "name": "grid"
+      }
+    ],
+    "noDormant": [
+      {
+        "name": "error"
+      },
+      {
+        "name": "grid"
+      }
+    ],
+    "noEdges": [
+      {
+        "to": "error"
+      },
+      {
+        "to": "grid"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/error.m": "function error(m)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "prog.m prog -calls-> error @ lib/error.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/error.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "to": "error"
+          }
+        ],
+        "noRows": [
+          {
+            "name": "error"
+          }
+        ]
+      }
+    }
+  ]
+}

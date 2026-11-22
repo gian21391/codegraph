@@ -1,0 +1,16 @@
+{
+  "why": "With a path in force, private/ still belongs to its parent folder: the parent's code reaches it, another on-path folder's code does not (MATLAB doc 'Private Functions'; harvested from matlab-path.test.ts 'MATLAB path: resolution', lib1/usep.m and lib2/caller.m).",
+  "truth": {
+    "edges": [
+      "lib1/usep.m usep -calls-> p @ lib1/private/p.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib2/caller.m"
+      }
+    ],
+    "rows": [
+      "lib2/caller.m:2 calls:p"
+    ]
+  }
+}

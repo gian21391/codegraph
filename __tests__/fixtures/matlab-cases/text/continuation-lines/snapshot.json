@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> helperK @ helperK.m",
+      "f.m f -calls-> helperK2 @ helperK2.m",
+      "f.m f -calls-> otherK @ otherK.m"
+    ],
+    "rows": [
+      "f.m:7 calls:missingK"
+    ],
+    "dormant": []
+  }
+}

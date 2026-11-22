@@ -1,0 +1,12 @@
+{
+  "why": "An import holds in the function that makes it and the functions nested in it, not in the file's other local functions (MATLAB doc 'import'; harvested from matlab-resolution.test.ts 'an import only where it is made', two.m and nestimp.m).",
+  "truth": {
+    "edges": [
+      "nest.m nest::inner -calls-> imp::onlyImp @ +imp/onlyImp.m",
+      "two.m two -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ],
+    "noEdges": [
+      "two.m three -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ]
+  }
+}

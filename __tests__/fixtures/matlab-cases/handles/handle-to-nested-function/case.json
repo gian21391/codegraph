@@ -1,0 +1,14 @@
+{
+  "why": "A handle to a nested function, written in its parent, names that nested function, ahead of a path function of the name (MATLAB doc 'Nested Functions', 'Create Function Handle').",
+  "truth": {
+    "edges": [
+      "gui.m gui -references-> gui::onTick @ gui.m"
+    ],
+    "noEdges": [
+      {
+        "from": "gui.m",
+        "at": "onTick.m"
+      }
+    ]
+  }
+}

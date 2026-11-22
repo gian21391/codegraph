@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> inner @ inner.m",
+      "f.m f -calls-> outer @ outer.m",
+      "f.m f -calls-> pop @ pop.m",
+      "f.m f -calls-> runIt @ runIt.m",
+      "f.m f -calls-> select @ select.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

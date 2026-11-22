@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "lib/use.m use -calls-> Thing @ lib/Thing.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/use.m use -instantiates-> Thing @ @Thing/Thing.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/use.m use -calls-> Thing @ lib/Thing.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

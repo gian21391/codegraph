@@ -1,0 +1,31 @@
+{
+  "index": {
+    "edges": [
+      "a/Sub.m Sub -extends-> Base @ b/Base.m",
+      "main.m main -calls-> Base::greet @ b/Base.m",
+      "main.m main -instantiates-> Sub @ a/Sub.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "a/Sub.m Sub -extends-> Base @ a/Base.m",
+        "main.m main -calls-> Base::greet @ a/Base.m",
+        "main.m main -instantiates-> Sub @ a/Sub.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "a/Sub.m Sub -extends-> Base @ b/Base.m",
+        "main.m main -calls-> Base::greet @ b/Base.m",
+        "main.m main -instantiates-> Sub @ a/Sub.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

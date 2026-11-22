@@ -1,0 +1,19 @@
+{
+  "why": "After a run of `*****` lines `ax = 1` parses as an ERROR holding `a`, then `x = 1`; that `x` is a piece of a word and makes no variable, so `x(1)` still calls x, in a script and in a function (step 10, matlab-extraction.test.ts 'takes no assignment from a piece of a word').",
+  "truth": {
+    "edges": [
+      "notes.m notes.m -calls-> x @ x.m",
+      "notes2.m notes2 -calls-> x @ x.m"
+    ],
+    "noEdges": [
+      {
+        "from": "notes.m",
+        "to": "a"
+      },
+      {
+        "from": "notes2.m",
+        "to": "a"
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "why": "`%{` or `%}` with other text on its own line is an ordinary line comment, so the lines after it are code (MATLAB doc 'Add Comments to Code': the markers must appear alone on their lines).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> looseA @ looseA.m",
+      "f.m f -calls-> looseC @ looseC.m"
+    ]
+  }
+}

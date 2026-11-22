@@ -1,0 +1,10 @@
+{
+  "why": "A parse error inside one local function leaves the file's other functions and their calls in the graph (project rule: a real call is never hidden; harvested from matlab-extraction.test.ts 'A function file with an error and its symbols').",
+  "truth": {
+    "edges": [
+      "a.m a -calls-> g1 @ g1.m",
+      "a.m c -calls-> h1 @ h1.m",
+      "user.m user -calls-> a @ a.m"
+    ]
+  }
+}

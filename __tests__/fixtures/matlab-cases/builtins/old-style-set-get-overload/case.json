@@ -1,0 +1,22 @@
+{
+  "why": "set and get on an object of an old-style class folder class run the class's method files, on its own object too; set on a parameter is MATLAB's, which leaves no row (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'dispatches set/get on an object of a class-folder class to its method files').",
+  "truth": {
+    "edges": [
+      "@Acc/bump.m Acc::bump -calls-> Acc::set @ @Acc/set.m",
+      "useAcc.m useAcc -calls-> Acc::get @ @Acc/get.m",
+      "useAcc.m useAcc -calls-> Acc::set @ @Acc/set.m",
+      "useAcc.m useAcc -instantiates-> Acc @ @Acc/Acc.m"
+    ],
+    "rows": [
+      "useAcc.m:6 calls:notdefined"
+    ],
+    "noRows": [
+      {
+        "name": "set"
+      },
+      {
+        "name": "class"
+      }
+    ]
+  }
+}

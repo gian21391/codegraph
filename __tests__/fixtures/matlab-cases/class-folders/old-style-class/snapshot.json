@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> Poly::value @ @Poly/value.m",
+      "use.m use -instantiates-> Poly @ @Poly/Poly.m",
+      "use.m use -instantiates-> Poly @ @Poly/Poly.m",
+      "use.m use -references-> Poly::Poly @ @Poly/Poly.m"
+    ],
+    "rows": [
+      "use.m:6 calls:WAVE"
+    ],
+    "dormant": [
+      "@Poly/Poly.m:3 calls:Poly::class"
+    ]
+  }
+}

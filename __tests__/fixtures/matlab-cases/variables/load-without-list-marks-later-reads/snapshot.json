@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "f.m:2 calls:Before"
+    ],
+    "dormant": [
+      "f.m:4 calls:After",
+      "g.m:3 calls:InLoop",
+      "g.m:6 calls:Later"
+    ]
+  }
+}

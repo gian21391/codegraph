@@ -1,0 +1,37 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [],
+    "dormant": [
+      "Vehicle.m:4 calls:Vehicle::deriv"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "Bike.m Bike -extends-> Vehicle @ Vehicle.m",
+        "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+      ],
+      "rows": [
+        "Vehicle.m:4 calls:Vehicle::deriv"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "Bike.m Bike -extends-> Vehicle @ Vehicle.m",
+        "Vehicle.m Vehicle::deriv -calls-> Bike::deriv @ Bike.m",
+        "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "why": "Functions of a file may be written without `end` when none of them is; each `function` line then closes the previous one, and the later ones are local functions (MATLAB doc 'Local Functions').",
+  "truth": {
+    "edges": [
+      "a.m a -calls-> b @ a.m",
+      "a.m b -calls-> c @ a.m",
+      "user.m user -calls-> a @ a.m"
+    ],
+    "noEdges": [
+      {
+        "from": "user.m",
+        "to": "b"
+      }
+    ]
+  }
+}

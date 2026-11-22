@@ -1,0 +1,22 @@
+{
+  "index": {
+    "edges": [
+      "Widget.m Widget -extends-> Mid @ Mid.m",
+      "util.m util.m -calls-> Mid::plot @ tools/Mid.m",
+      "util.m util.m -instantiates-> Widget @ Widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "util.m util.m -calls-> Mid::plot @ tools/Mid.m"
+      ],
+      "rows": [
+        "util.m:1 calls:Widget"
+      ],
+      "dormant": []
+    }
+  ]
+}

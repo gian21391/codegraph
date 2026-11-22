@@ -1,0 +1,19 @@
+{
+  "index": {
+    "edges": [
+      "@Tree/fuse.m Tree::fuse -calls-> Tree::joinAll @ @Tree/joinAll.m",
+      "@Tree/fuse.m Tree::fuse -calls-> Tree::toList @ @Tree/toList.m",
+      "@Tree/fuse.m Tree::fuse -calls-> Tree::toList @ @Tree/toList.m",
+      "@Tree/neg.m Tree::neg -calls-> Tree::toList @ @Tree/toList.m"
+    ],
+    "rows": [
+      "@Tree/neg.m:4 calls:joinAll",
+      "@Tree/neg.m:5 calls:joinAll",
+      "@Tree/neg.m:6 calls:joinAll",
+      "outside.m:3 calls:joinAll"
+    ],
+    "dormant": [
+      "@Tree/neg.m:5 calls:Tree::v"
+    ]
+  }
+}

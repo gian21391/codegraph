@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "gui.m gui -references-> onClose @ onClose.m",
+      "gui.m gui -references-> onMove @ onMove.m",
+      "gui.m gui -references-> onPress @ onPress.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

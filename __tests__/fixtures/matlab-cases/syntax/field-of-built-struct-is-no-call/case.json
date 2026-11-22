@@ -1,0 +1,20 @@
+{
+  "why": "`s.predict(3)` on a struct the function built reads a field (here a handle) and calls no function `predict` (MATLAB doc 'Structure Arrays'; harvested from matlab-extraction.test.ts 'MATLAB method calls on variables').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "predict"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "f.m",
+        "name": "predict"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> predict @ predict.m"
+    ]
+  }
+}

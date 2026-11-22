@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "cf.m cf -calls-> K::declx @ @K/declx.m",
+      "cf.m cf -instantiates-> K @ @K/K.m"
+    ],
+    "rows": [
+      "cf.m:4 calls:K::other"
+    ],
+    "dormant": []
+  }
+}

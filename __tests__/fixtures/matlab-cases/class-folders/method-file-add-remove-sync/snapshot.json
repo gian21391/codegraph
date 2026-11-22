@@ -1,0 +1,47 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> Robot::step @ @Robot/step.m",
+      "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Robot/step.m:2 calls:Robot::Q",
+      "main.m:4 calls:Robot::reset"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> Robot::reset @ @Robot/reset.m",
+        "main.m main -calls-> Robot::step @ @Robot/step.m",
+        "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "@Robot/step.m:2 calls:Robot::Q"
+      ]
+    },
+    {
+      "edges": [
+        "main.m main -calls-> Robot::reset @ @Robot/reset.m",
+        "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "main.m:3 calls:Robot::step"
+      ]
+    },
+    {
+      "edges": [
+        "main.m main -calls-> Robot::reset @ @Robot/reset.m",
+        "main.m main -calls-> Robot::step @ @Robot/step.m",
+        "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "@Robot/step.m:2 calls:Robot::Q"
+      ]
+    }
+  ]
+}

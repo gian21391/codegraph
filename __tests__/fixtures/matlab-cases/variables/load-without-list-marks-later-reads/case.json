@@ -1,0 +1,18 @@
+{
+  "why": "A load that lists no names may make any variable: a read after it (or in a loop holding it) is kept dormant, a read before it stays a call (MATLAB doc 'load'; harvested from matlab-dynamic.test.ts 'a read before the load is not marked, unless a loop body holds both').",
+  "truth": {
+    "rows": [
+      "f.m:2 calls:Before"
+    ],
+    "dormant": [
+      "f.m:4 calls:After",
+      "g.m:3 calls:InLoop",
+      "g.m:6 calls:Later"
+    ],
+    "noRows": [
+      "f.m:4 calls:After",
+      "g.m:3 calls:InLoop",
+      "g.m:6 calls:Later"
+    ]
+  }
+}

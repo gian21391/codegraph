@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> pa @ pa.m",
+      "f.m f -calls-> pq @ pq.m",
+      "f.m f -references-> pa @ pa.m",
+      "f.m f -references-> pq @ pq.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

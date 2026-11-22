@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "lib/use.m use -instantiates-> Thing @ @Thing/Thing.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

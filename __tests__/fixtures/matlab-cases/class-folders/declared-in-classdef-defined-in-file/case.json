@@ -1,0 +1,17 @@
+{
+  "why": "A method declared in the classdef and defined in its own file links to the file, which has the body; a Static method is called through the class, not on an object (MATLAB doc 'Methods in Separate Files'; harvested from matlab-resolution.test.ts 'links a class-folder method to its method file, not the classdef's declaration of it').",
+  "truth": {
+    "edges": [
+      "+geo/@Pt/origin.m geo::Pt::origin -instantiates-> geo::Pt @ +geo/@Pt/Pt.m",
+      "user.m user -calls-> geo::Pt::norm2 @ +geo/@Pt/norm2.m",
+      "user.m user -calls-> geo::Pt::origin @ +geo/@Pt/origin.m",
+      "user.m user -instantiates-> geo::Pt @ +geo/@Pt/Pt.m"
+    ],
+    "noEdges": [
+      {
+        "at": "+geo/@Pt/Pt.m",
+        "to": "norm2"
+      }
+    ]
+  }
+}

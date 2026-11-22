@@ -1,0 +1,2 @@
+classdef Arm < Base
+end

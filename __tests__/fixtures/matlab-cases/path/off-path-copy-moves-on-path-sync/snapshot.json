@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "lib/caller.m:2 calls:onlyoff"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/caller.m caller -calls-> onlyoff @ lib/onlyoff.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "lib/caller.m:2 calls:onlyoff"
+      ],
+      "dormant": []
+    }
+  ]
+}

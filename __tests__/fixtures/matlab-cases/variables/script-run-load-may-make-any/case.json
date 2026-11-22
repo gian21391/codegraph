@@ -1,0 +1,14 @@
+{
+  "why": "A statement naming a script whose only line is an unlisted load runs that script in the function's workspace (MATLAB doc 'Scripts vs. Functions'; a step 6 shape).",
+  "truth": {
+    "edges": [
+      "scr_user.m scr_user -calls-> loadscr.m @ loadscr.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "the read after the run, `Qx(1)`, is a live row: the unlisted load in the script the function runs does not mark it as a name made at runtime",
+      "why": "step 6 marks a read after an unlisted load from the file's own text only (step 6 SPEC \"the fact is computed from one file's own text\"); a script run passes on only the names its text spells (matlab-dormant.test.ts \"every form a script makes a name in\")"
+    }
+  ]
+}

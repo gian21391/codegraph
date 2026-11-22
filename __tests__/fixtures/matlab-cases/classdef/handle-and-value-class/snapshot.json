@@ -1,0 +1,15 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> Counter::bump @ Counter.m",
+      "main.m main -calls-> Pt::move @ Pt.m",
+      "main.m main -calls-> Pt::move @ Pt.m",
+      "main.m main -instantiates-> Counter @ Counter.m",
+      "main.m main -instantiates-> Pt @ Pt.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "Pt.m:7 calls:Pt::x"
+    ]
+  }
+}

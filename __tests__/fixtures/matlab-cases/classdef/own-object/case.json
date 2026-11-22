@@ -1,0 +1,17 @@
+{
+  "why": "The own object is a constructor's output or a method's first parameter; after `~` (an ignored object) or in a static method a first argument is no object of the class (MATLAB doc 'Method Syntax', 'Static Methods'; harvested from matlab-extraction.test.ts 'MATLAB own object (self)').",
+  "truth": {
+    "edges": [
+      "Sub.m Sub::Sub -calls-> Base::helper @ Base.m",
+      "Sub.m Sub::Sub -calls-> Base::render @ Base.m",
+      "Sub.m Sub::onKey -calls-> Base::render @ Base.m"
+    ],
+    "noEdges": [
+      "Sub.m Sub::onClick -calls-> Base::render @ Base.m",
+      "Sub.m Sub::onClick -calls-> Base::helper @ Base.m",
+      "Sub.m Sub::onClick -calls-> Other::helper @ Other.m",
+      "Sub.m Sub::make -calls-> Base::render @ Base.m",
+      "Sub.m Sub::Sub -calls-> Other::helper @ Other.m"
+    ]
+  }
+}

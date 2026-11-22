@@ -1,0 +1,17 @@
+{
+  "why": "A `%{` after code on its line is a line comment, not a block comment's start, so the next line is code and its call links (MATLAB doc 'Add Comments to Code': the markers must appear alone on their lines, as codegraph's own block-comment mask in matlab-syntax.ts also reads them; project rule: a real call is never hidden). The anchor: the same call from a file with no comment marker links.",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> looseB @ looseB.m",
+      "g.m g -calls-> looseB @ looseB.m",
+      "h.m h -calls-> looseB @ looseB.m"
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-text-1",
+    "fails": [
+      "index: missing edge f.m f -calls-> looseB @ looseB.m",
+      "index: missing edge g.m g -calls-> looseB @ looseB.m"
+    ]
+  }
+}

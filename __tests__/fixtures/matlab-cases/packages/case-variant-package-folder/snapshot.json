@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "main.m:2 calls:pkg::f"
+    ],
+    "dormant": []
+  }
+}

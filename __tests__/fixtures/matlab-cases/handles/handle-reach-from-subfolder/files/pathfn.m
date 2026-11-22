@@ -1,0 +1,2 @@
+function pathfn(x)
+end

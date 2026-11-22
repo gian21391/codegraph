@@ -1,0 +1,23 @@
+{
+  "why": "`update`, `setup`, `time`, `add`, `keys` and `read` are no MATLAB functions, only methods of its classes, so a bare call of one runs the project's copy, and a MEX help stub of one is the call's target (project rule from the step 8 built-in catalog; harvested from matlab-resolution.test.ts 'MATLAB's names that are only methods of its classes are no built-ins').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> add @ tools/add.m",
+      "app/main.m main -calls-> keys @ tools/keys.m",
+      "app/main.m main -calls-> setup @ tools/setup.m",
+      "app/main.m main -calls-> time @ tools/time.m",
+      "app/main.m main -calls-> tools/read.m @ tools/read.m",
+      "app/main.m main -calls-> update @ tools/update.m"
+    ],
+    "noRows": [
+      {
+        "file": "app/main.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "app/main.m"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "why": "A dotted call on a variable of no stated class links only when one class defines the method or every definer inherits it from one root; two unrelated definers, or a property of the name, leave it unlinked (project rule: a wrong answer is worse than none; harvested from matlab-resolution.test.ts 'MATLAB methods on a variable').",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Root::calc @ Root.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "to": "score"
+      },
+      {
+        "from": "use.m",
+        "to": "items"
+      },
+      "use.m use -calls-> Leaf::calc @ Leaf.m"
+    ],
+    "rows": [
+      "use.m:3 calls:a.score"
+    ]
+  }
+}

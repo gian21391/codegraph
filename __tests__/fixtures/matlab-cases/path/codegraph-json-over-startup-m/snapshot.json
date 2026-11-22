@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> f @ zlib/f.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "why": "A classdef closed by `endproperties` / `endmethods` / `endclassdef` is Octave, and a caller of it instantiates nothing (Octave syntax is no MATLAB: MATLAB cannot run the file, and codegraph reads none of its code (project rule, matlab-extraction.test.ts 'Octave files (unsupported)')).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "Foo"
+      },
+      {
+        "from": "Foo.m"
+      }
+    ],
+    "rows": [
+      "main.m:2 calls:Foo"
+    ]
+  }
+}

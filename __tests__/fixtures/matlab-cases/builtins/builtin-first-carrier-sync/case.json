@@ -1,0 +1,41 @@
+{
+  "why": "When a sync adds the project's first function named like a built-in, every call of the name links to it, in files the sync leaves alone too, and unlinks when it goes; a sync ends where a fresh index does (project rule; harvested from matlab-resolution.test.ts 'on a sync, links a call of a built-in's name to a function added beside it in every file').",
+  "truth": {
+    "noEdges": [
+      {
+        "to": "normpdf"
+      }
+    ],
+    "noRows": [
+      {
+        "name": "normpdf"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "normpdf.m": "function p = normpdf(x)\np = x;\nend\n",
+        "edited.m": "function edited(x)\np = normpdf(x);\nend\n% edited\n"
+      },
+      "truth": {
+        "edges": [
+          "edited.m edited -calls-> normpdf @ normpdf.m",
+          "untouched.m untouched -calls-> normpdf @ normpdf.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "normpdf.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "to": "normpdf"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "A.m A::tucked -calls-> B::tucked @ B.m",
+      "B.m B -extends-> A @ A.m",
+      "B.m B::B -calls-> A::A @ A.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

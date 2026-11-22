@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "+geom/Circle.m geom::Circle -extends-> geom::Shape @ +geom/Shape.m",
+      "+geom/Circle.m geom::Circle::area -calls-> geom::Shape::describe @ +geom/Shape.m",
+      "main.m main -calls-> geom::Shape::describe @ +geom/Shape.m",
+      "main.m main -instantiates-> geom::Circle @ +geom/Circle.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

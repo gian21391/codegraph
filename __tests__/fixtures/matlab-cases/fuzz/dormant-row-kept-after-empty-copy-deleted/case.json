@@ -1,0 +1,56 @@
+{
+  "why": "An empty `disp.m` at the root is an empty MATLAB script ahead of the built-in (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): so `disp('…')` is a live row; once `disp.m` is deleted the call is the built-in's: no edge and no row of any kind (MATLAB doc 'Function Precedence Order'). Today the empty file reads as Objective-C and the call is dormant, and the sync keeps it dormant after the delete where a fresh index drops it (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer; the reverse of S11-fuzz-3). The anchor: the script's other call, `g(1)`, links.",
+  "truth": {
+    "rows": [
+      "data.m:1 calls:disp"
+    ],
+    "edges": [
+      "data.m data.m -calls-> g @ g.m"
+    ],
+    "noEdges": [
+      {
+        "from": "data.m",
+        "to": "disp"
+      }
+    ],
+    "noDormant": [
+      "data.m:1 calls:disp"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "disp.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "data.m",
+            "to": "disp"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "data.m",
+            "name": "disp"
+          }
+        ],
+        "noDormant": [
+          {
+            "file": "data.m",
+            "name": "disp"
+          }
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-3c",
+    "fails": [
+      "index: missing row data.m:1 calls:disp",
+      "index: unwanted dormant row data.m:1 calls:disp",
+      "step 1 (synced): unwanted dormant row data.m:1 calls:disp (matches {\"file\":\"data.m\",\"name\":\"disp\"})",
+      "step 1 (disp.m): dormant rows differ; only synced: [\"data.m:1 calls:disp\"]; only fresh: []"
+    ]
+  }
+}

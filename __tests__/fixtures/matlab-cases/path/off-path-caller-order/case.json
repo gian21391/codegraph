@@ -1,0 +1,20 @@
+{
+  "why": "A caller off the path runs from its own folder: its own folder's copy first, then the path's, then the nearest copy off the path (project rule; harvested from matlab-path.test.ts 'an off-path caller takes its own folder's copy, then the path's, then the nearest').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> helper @ app/helper.m",
+      "app/main.m main -calls-> onlyoff @ old/onlyoff.m",
+      "app/main.m main -calls-> util @ lib1/util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "lib2/util.m"
+      },
+      {
+        "from": "app/main.m",
+        "at": "lib1/helper.m"
+      }
+    ]
+  }
+}

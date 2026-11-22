@@ -1,0 +1,23 @@
+{
+  "why": "Octave's `##` header comments, whose prose (`if not, write to …`) would read as an unclosed `if`: Octave syntax is no MATLAB: MATLAB cannot run the file, and codegraph reads none of its code (project rule, matlab-extraction.test.ts 'Octave files (unsupported)').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "stamp.m"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "stamp.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "stamp.m"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> helperD @ helperD.m"
+    ]
+  }
+}

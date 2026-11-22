@@ -1,0 +1,43 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "p.m:3 calls:AfterLoad",
+      "p.m:5 calls:InNested"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "p.m:3 calls:AfterLoad"
+      ]
+    },
+    {
+      "edges": [
+        "p.m p -calls-> AfterLoad @ AfterLoad.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "p.m p -calls-> AfterLoad @ AfterLoad.m"
+      ],
+      "rows": [
+        "p.m:5 calls:InNested"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "p.m:3 calls:AfterLoad",
+        "p.m:5 calls:InNested"
+      ],
+      "dormant": []
+    }
+  ]
+}

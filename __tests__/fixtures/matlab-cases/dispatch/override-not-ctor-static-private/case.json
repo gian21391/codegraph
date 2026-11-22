@@ -1,0 +1,14 @@
+{
+  "why": "A constructor, a static method and a private method are no overrides; a Hidden one is (MATLAB doc 'Method Attributes'; harvested from matlab-dispatch.test.ts 'links no constructor, accessor, static or private method').",
+  "truth": {
+    "edges": [
+      "A.m A::tucked -calls-> B::tucked @ B.m",
+      "B.m B::B -calls-> A::A @ A.m"
+    ],
+    "noEdges": [
+      "A.m A::A -calls-> B::B @ B.m",
+      "A.m A::make -calls-> B::make @ B.m",
+      "A.m A::hidden -calls-> B::hidden @ B.m"
+    ]
+  }
+}

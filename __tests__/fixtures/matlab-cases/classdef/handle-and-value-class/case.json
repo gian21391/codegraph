@@ -1,0 +1,16 @@
+{
+  "why": "A method call reads the same on a handle class's object and a value class's, whose method returns the changed copy (MATLAB doc 'Comparison of Handle and Value Classes'); neither base is a project class.",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Counter::bump @ Counter.m",
+      "main.m main -calls-> Pt::move @ Pt.m",
+      "main.m main -instantiates-> Counter @ Counter.m",
+      "main.m main -instantiates-> Pt @ Pt.m"
+    ],
+    "noEdges": [
+      {
+        "kind": "extends"
+      }
+    ]
+  }
+}

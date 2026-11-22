@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> pkg::f @ +pkg/f.m",
+      "main.m main -calls-> pkg::sub::f @ +pkg/+sub/f.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

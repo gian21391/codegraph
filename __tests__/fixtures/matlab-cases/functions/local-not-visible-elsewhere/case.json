@@ -1,0 +1,14 @@
+{
+  "why": "Another file's local function is out of reach of a caller (MATLAB doc 'Local Functions': visible only inside their file).",
+  "truth": {
+    "edges": [
+      "util.m util -calls-> clampIt @ util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "clampIt"
+      }
+    ]
+  }
+}

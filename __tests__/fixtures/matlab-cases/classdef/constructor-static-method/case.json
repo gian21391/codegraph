@@ -1,0 +1,13 @@
+{
+  "why": "`C(…)` builds an object of the class, with or without an explicit constructor, `C.m()` calls its static method and `obj.m()` its method (MATLAB doc 'Static Methods', 'Class Constructor Methods'; harvested from matlab-resolution.test.ts 'MATLAB lookup across a project').",
+  "truth": {
+    "edges": [
+      "main.m main -instantiates-> Circle @ Circle.m",
+      "main.m main -calls-> Circle::area @ Circle.m",
+      "main.m main -calls-> Circle::unit @ Circle.m",
+      "main.m main -instantiates-> Plain @ Plain.m",
+      "main.m main -calls-> Plain::go @ Plain.m",
+      "Circle.m Circle::unit -instantiates-> Circle @ Circle.m"
+    ]
+  }
+}

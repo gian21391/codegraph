@@ -1,0 +1,50 @@
+{
+  "why": "A handle to a function that is not there yet links when a sync adds the function, moves to a local function of the name, and unlinks when both go; a sync ends where a fresh index does (project rule).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "main.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "later_fn.m": "function later_fn(varargin)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -references-> later_fn @ later_fn.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\nh = @later_fn;\nh(1);\nend\nfunction later_fn(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -references-> later_fn @ main.m"
+        ],
+        "noEdges": [
+          {
+            "at": "later_fn.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\nh = @later_fn;\nh(1);\nend\n",
+        "later_fn.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m"
+          }
+        ]
+      }
+    }
+  ]
+}

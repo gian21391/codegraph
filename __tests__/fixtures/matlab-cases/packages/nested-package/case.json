@@ -1,0 +1,9 @@
+{
+  "why": "pkg.sub.f names the function in +pkg/+sub/, and pkg.f the one in +pkg/ (MATLAB doc 'Namespaces', nested namespace folders).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> pkg::f @ +pkg/f.m",
+      "main.m main -calls-> pkg::sub::f @ +pkg/+sub/f.m"
+    ]
+  }
+}

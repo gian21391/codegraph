@@ -1,0 +1,17 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> lib/config.m @ lib/config.m",
+      "main.m main -calls-> lib/config.m @ lib/config.m",
+      "main.m main -calls-> lib/config.m @ lib/config.m",
+      "main.m main -calls-> setup_a.m @ setup_a.m",
+      "runner.m runner.m -calls-> setup_a.m @ setup_a.m"
+    ],
+    "rows": [
+      "value.m:2 calls:setup_a",
+      "value.m:3 calls:config",
+      "value.m:3 calls:f"
+    ],
+    "dormant": []
+  }
+}

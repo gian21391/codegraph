@@ -1,0 +1,8 @@
+{
+  "why": "`aload data.mat x` after `*****` lines parses as an ERROR holding `a`, then the command `load data.mat x`; a load cut out of a word makes no variable, so `x(1)` still calls x (step 10, matlab-extraction.test.ts 'takes no command from a piece of a word').",
+  "truth": {
+    "edges": [
+      "notes3.m notes3.m -calls-> x @ x.m"
+    ]
+  }
+}

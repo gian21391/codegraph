@@ -1,0 +1,30 @@
+{
+  "why": "With no codegraph.json startup, a startup.m at the project root is the startup code; deleting it returns to no path (nearest, then genpath order), and a sync follows both ways (project rule; harvested from matlab-path.test.ts 'MATLAB path: a root startup.m').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> f @ zlib/f.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "startup.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> f @ alib/f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "startup.m": "addpath(genpath('zlib'));\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> f @ zlib/f.m"
+        ]
+      }
+    }
+  ]
+}

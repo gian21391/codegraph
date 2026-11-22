@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "Bare.m Bare::draw -calls-> Bare::plot @ Bare.m",
+      "Viz.m Viz::draw -calls-> plot @ Viz.m",
+      "Viz.m Viz::draw -calls-> plot @ Viz.m"
+    ],
+    "rows": [
+      "Bare.m:6 calls:plot"
+    ],
+    "dormant": []
+  }
+}

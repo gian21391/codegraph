@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "Sub.m Sub -extends-> Base @ Base.m"
+    ],
+    "rows": [
+      "Sub.m:4 calls:Sub::Rate"
+    ],
+    "dormant": [
+      "Sub.m:5 calls:Limits::MAX",
+      "Sub.m:6 calls:Color::Red"
+    ]
+  }
+}

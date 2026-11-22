@@ -1,0 +1,15 @@
+{
+  "why": "A built-in's name called on an object of a project class runs the class's method when it defines one (`disp(c)`), and MATLAB's function when it does not (`numel(c)`), which leaves no row (MATLAB doc 'Function Precedence Order': methods of the first argument's class; harvested from matlab-resolution.test.ts 'dispatches a call on a variable of a known class').",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Shape::disp @ Shape.m",
+      "use.m use -instantiates-> Shape @ Shape.m"
+    ],
+    "noEdges": [],
+    "noRows": [
+      {
+        "file": "use.m"
+      }
+    ]
+  }
+}

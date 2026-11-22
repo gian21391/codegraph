@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "cut.m cut.m -calls-> scanit @ scanit.m",
+      "whole.m whole.m -calls-> scanit @ scanit.m",
+      "whole.m whole.m -calls-> tally @ tally.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "cut.m:1 calls:x",
+      "cut.m:1 calls:y"
+    ]
+  }
+}

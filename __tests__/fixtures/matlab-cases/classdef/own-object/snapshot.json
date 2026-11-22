@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "Sub.m Sub -extends-> Base @ Base.m",
+      "Sub.m Sub::Sub -calls-> Base::helper @ Base.m",
+      "Sub.m Sub::Sub -calls-> Base::render @ Base.m",
+      "Sub.m Sub::onKey -calls-> Base::render @ Base.m"
+    ],
+    "rows": [
+      "Sub.m:10 calls:render",
+      "Sub.m:11 calls:src.helper",
+      "Sub.m:19 calls:render",
+      "Sub.m:4 calls:render",
+      "Sub.m:5 calls:L.helper"
+    ],
+    "dormant": []
+  }
+}

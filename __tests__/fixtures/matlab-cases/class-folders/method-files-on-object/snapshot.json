@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "@Robot/move.m Robot::move -calls-> Robot::step @ @Robot/step.m",
+      "main.m main -calls-> Robot::move @ @Robot/move.m",
+      "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Robot/plot.m:2 calls:Robot::Q",
+      "@Robot/step.m:2 calls:Robot::Q"
+    ]
+  }
+}

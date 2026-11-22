@@ -1,0 +1,8 @@
+{
+  "why": "A function in private/ is visible to the code in the folder immediately above it (MATLAB doc 'Private Functions'; harvested from matlab-path.test.ts, lib1/usep.m).",
+  "truth": {
+    "edges": [
+      "lib/usep.m usep -calls-> p @ lib/private/p.m"
+    ]
+  }
+}

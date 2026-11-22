@@ -1,0 +1,8 @@
+{
+  "why": "assignin('caller', name, v) assigns in the caller's workspace, not this function's, so a later read of the name here stays a call (MATLAB doc 'assignin').",
+  "truth": {
+    "rows": [
+      "f.m:3 calls:Gv"
+    ]
+  }
+}

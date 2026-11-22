@@ -1,0 +1,15 @@
+{
+  "why": "CRLF and mixed line ends read as LF ones: the calls link and a row's line counts each CRLF once (project rule: text form changes nothing).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperC @ helperC.m",
+      "g.m g -calls-> helperC @ helperC.m",
+      "h.m h -calls-> helperC @ helperC.m"
+    ],
+    "rows": [
+      "f.m:3 calls:missingC",
+      "g.m:4 calls:missingD",
+      "h.m:3 calls:missingM"
+    ]
+  }
+}

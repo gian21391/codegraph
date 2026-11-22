@@ -7,3 +7,7 @@
 # reach the files inside it.
 codegraph-kernel/grammars/** linguist-vendored
 codegraph-kernel/grammars/**/parser.c linguist-generated
+
+# The MATLAB case catalog's project files are exact bytes (CRLF, a BOM, binary
+# .m files are cases): no line-end conversion on checkout.
+__tests__/fixtures/matlab-cases/** -text

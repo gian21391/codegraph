@@ -1,0 +1,13 @@
+{
+  "why": "Package names are case-sensitive: pkg.f does not name the function in +Pkg/ (MATLAB doc 'Namespaces'; MATLAB names are case-sensitive).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "main.m"
+      }
+    ],
+    "rows": [
+      "main.m:2 calls:pkg::f"
+    ]
+  }
+}

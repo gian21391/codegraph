@@ -1,0 +1,14 @@
+{
+  "why": "A package's private/ serves the package's own functions by bare name, and is out of reach from outside the package, by bare or full name (MATLAB doc 'Private Functions'; shape from matlab-path.test.ts review case 10, lib1/+pk/private).",
+  "truth": {
+    "edges": [
+      "+pkg/f.m pkg::f -calls-> h @ +pkg/private/h.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "at": "+pkg/private/h.m"
+      }
+    ]
+  }
+}

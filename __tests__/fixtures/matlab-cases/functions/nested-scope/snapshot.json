@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "gui.m gui -calls-> gui::cb @ gui.m",
+      "gui.m gui::cb -calls-> gui::cb::inner @ gui.m",
+      "gui.m gui::sib -calls-> gui::cb @ gui.m",
+      "gui.m other -calls-> cb @ cb.m",
+      "gui.m other -calls-> inner @ inner.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

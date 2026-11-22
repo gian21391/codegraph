@@ -1,0 +1,39 @@
+{
+  "why": "No guess is made while a class outside the caller's hierarchy defines the method too; removing that class lets the guess in, and adding it back takes it out; a sync ends where a fresh index does (step 9 fix F1; harvested from matlab-dispatch.test.ts 'makes no guess when a class outside the caller's hierarchy defines the method too').",
+  "truth": {
+    "edges": [
+      "@Arm/total.m Arm::total -calls-> Arm::part @ @Arm/part.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Arm/total.m",
+        "to": "resist"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Joint.m": null
+      },
+      "truth": {
+        "edges": [
+          "@Arm/total.m Arm::total -calls-> Arm::resist @ @Arm/resist.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Joint.m": "classdef Joint < handle\n    methods\n        function f = resist(L, qd)\n            f = 1;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "@Arm/total.m",
+            "to": "resist"
+          }
+        ]
+      }
+    }
+  ]
+}

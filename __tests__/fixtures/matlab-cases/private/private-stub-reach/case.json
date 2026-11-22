@@ -1,0 +1,16 @@
+{
+  "why": "The help text of a MEX function in private/ answers a call from the folder above it, and not one from elsewhere, which stays a live row (project rule for stubs; harvested from matlab-resolution.test.ts 'answers nothing ... in a private folder out of reach').",
+  "truth": {
+    "edges": [
+      "lib/inreach.m inreach -calls-> lib/private/privstub.m @ lib/private/privstub.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m"
+      }
+    ],
+    "rows": [
+      "main.m:2 calls:privstub"
+    ]
+  }
+}

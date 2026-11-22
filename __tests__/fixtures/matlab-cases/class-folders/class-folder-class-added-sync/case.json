@@ -1,0 +1,36 @@
+{
+  "why": "A class folder a sync adds takes the call from a function of the same name in the caller's folder, and deleting it gives the call back (MATLAB doc 'Function Precedence Order': class constructors in class folders come before the current folder's functions; project rule for sync).",
+  "truth": {
+    "edges": [
+      "lib/use.m use -calls-> Thing @ lib/Thing.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Thing/Thing.m": "classdef Thing\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/use.m use -instantiates-> Thing @ @Thing/Thing.m"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/use.m",
+            "at": "lib/Thing.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Thing/Thing.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/use.m use -calls-> Thing @ lib/Thing.m"
+        ]
+      }
+    }
+  ]
+}

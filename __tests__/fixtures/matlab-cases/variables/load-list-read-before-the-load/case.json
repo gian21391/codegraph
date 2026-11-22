@@ -1,0 +1,21 @@
+{
+  "why": "A read before `load(file, 'a')` runs while no variable `a` exists, so it is a call of `a`: with nothing to answer it, a call that links nowhere, not a name made at runtime (MATLAB doc 'load'; the project reads an unlisted load in text order, matlab-dynamic.test.ts 'a read before the load is not marked'). The anchor: the same read after the load is a name made at runtime (dormant).",
+  "truth": {
+    "rows": [
+      "user.m:2 calls:a"
+    ],
+    "noDormant": [
+      "user.m:2 calls:a"
+    ],
+    "dormant": [
+      "v.m:3 calls:a"
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-variables-2",
+    "fails": [
+      "index: missing row user.m:2 calls:a",
+      "index: unwanted dormant row user.m:2 calls:a"
+    ]
+  }
+}

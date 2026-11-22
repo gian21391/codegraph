@@ -1,0 +1,16 @@
+{
+  "why": "`obj@Base(…)` calls the superclass constructor and `m@Base(obj)` the superclass's method, never the calling method itself; a class with no constructor of its own is built by MATLAB's default one (MATLAB doc 'Call Superclass Methods on Subclass Objects'; harvested from matlab-extraction.test.ts 'MATLAB superclass calls').",
+  "truth": {
+    "edges": [
+      "Sub.m Sub -extends-> Base @ Base.m",
+      "Sub.m Sub -extends-> pkg::Other @ +pkg/Other.m",
+      "Sub.m Sub::Sub -calls-> Base::Base @ Base.m",
+      "Sub.m Sub::Sub -instantiates-> pkg::Other @ +pkg/Other.m",
+      "Sub.m Sub::delete -calls-> Base::delete @ Base.m",
+      "Sub.m Sub::delete -calls-> pkg::Other::show @ +pkg/Other.m"
+    ],
+    "noEdges": [
+      "Sub.m Sub::delete -calls-> Sub::delete @ Sub.m"
+    ]
+  }
+}

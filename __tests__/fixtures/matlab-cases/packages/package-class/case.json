@@ -1,0 +1,11 @@
+{
+  "why": "A package class is constructed and its static method called by the full name, or by the bare name after a wildcard import of its package (MATLAB doc 'Namespaces' and 'import'; shape harvested from matlab-resolution.test.ts main.m's geom.Circle and 'Circle.unit() after import geom.*').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> geom::Circle::unit @ +geom/Circle.m",
+      "main.m main -instantiates-> geom::Circle @ +geom/Circle.m",
+      "useimp.m useimp -calls-> geom::Circle::unit @ +geom/Circle.m",
+      "useimp.m useimp -instantiates-> geom::Circle @ +geom/Circle.m"
+    ]
+  }
+}

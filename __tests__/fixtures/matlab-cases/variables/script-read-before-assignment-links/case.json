@@ -1,0 +1,25 @@
+{
+  "why": "In a script, a read before the script's own assignment of the name goes in text order: line 1's `helperT(1)` is a call and links to `helperT.m`, while the reads after the assignment read the variable (the user's ruling (step 11); MATLAB doc 'Function Precedence Order'). The anchor: the same read in a script that never assigns the name links.",
+  "truth": {
+    "edges": [
+      "s.m s.m -calls-> helperT @ helperT.m",
+      "t.m t.m -calls-> helperT @ helperT.m"
+    ],
+    "noRows": [
+      {
+        "file": "s.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "s.m"
+      }
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-ruling-text-order-2",
+    "fails": [
+      "index: missing edge s.m s.m -calls-> helperT @ helperT.m"
+    ]
+  }
+}

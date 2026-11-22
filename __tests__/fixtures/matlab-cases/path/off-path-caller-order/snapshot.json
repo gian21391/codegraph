@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> helper @ app/helper.m",
+      "app/main.m main -calls-> onlyoff @ old/onlyoff.m",
+      "app/main.m main -calls-> util @ lib1/util.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

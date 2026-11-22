@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> Meas::rate @ Meas.m",
+      "use.m use -instantiates-> Meas @ Meas.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

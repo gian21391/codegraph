@@ -1,0 +1,52 @@
+{
+  "why": "Files codegraph.json's top-level exclude names are not indexed, so they answer no call (a call written with arguments stays a live row); dropping the pattern brings them back, and a sync ends where a fresh index ends (project rule: codegraph.json 'exclude').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> util @ lib/util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "to": "only"
+      },
+      {
+        "at": "app/util.m"
+      }
+    ],
+    "rows": [
+      "app/main.m:2 calls:only"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": "{\"exclude\":[]}"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> only @ old/only.m",
+          "app/main.m main -calls-> util @ app/util.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\"exclude\":[\"old/\",\"app/util.m\"]}"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> util @ lib/util.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "to": "only"
+          },
+          {
+            "at": "app/util.m"
+          }
+        ]
+      }
+    }
+  ]
+}

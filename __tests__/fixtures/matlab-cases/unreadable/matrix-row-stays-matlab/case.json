@@ -1,0 +1,8 @@
+{
+  "why": "A matrix row that begins `-(b)` looks like an Objective-C method header but the file is MATLAB, and its calls link (harvested from matlab-extraction.test.ts 'reads MATLAB with C-looking lines as MATLAB').",
+  "truth": {
+    "edges": [
+      "matrow.m matrow -calls-> helperM @ helperM.m"
+    ]
+  }
+}

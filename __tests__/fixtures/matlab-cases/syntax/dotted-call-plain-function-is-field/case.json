@@ -1,0 +1,19 @@
+{
+  "why": "Dot syntax never calls a plain function, so `s.helperY(3)` on a parameter with only `helperY.m` in the project is a field's index: no edge and no live row (project rule, commit e3671df7; harvested from matlab-dormant.test.ts 'a member call written with arguments is kept only for what a dotted call can reach').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "u.m",
+        "to": "helperY"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "u.m"
+      }
+    ],
+    "dormant": [
+      "u.m:2 calls:s.helperY"
+    ]
+  }
+}

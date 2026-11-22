@@ -1,0 +1,2 @@
+classdef D < double
+end

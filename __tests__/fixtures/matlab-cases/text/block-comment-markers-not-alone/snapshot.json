@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> looseA @ looseA.m",
+      "f.m f -calls-> looseC @ looseC.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

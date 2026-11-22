@@ -1,0 +1,35 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "u.m:5 calls:nosuch_fn"
+    ],
+    "dormant": [
+      "u.m:3 calls:parse",
+      "u.m:4 calls:keys"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "u.m u -calls-> parse @ lib/parse.m"
+      ],
+      "rows": [
+        "u.m:5 calls:nosuch_fn"
+      ],
+      "dormant": [
+        "u.m:4 calls:keys"
+      ]
+    },
+    {
+      "edges": [],
+      "rows": [
+        "u.m:5 calls:nosuch_fn"
+      ],
+      "dormant": [
+        "u.m:3 calls:parse",
+        "u.m:4 calls:keys"
+      ]
+    }
+  ]
+}

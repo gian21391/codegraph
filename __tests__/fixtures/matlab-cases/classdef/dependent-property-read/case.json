@@ -1,0 +1,19 @@
+{
+  "why": "Reading a Dependent property runs its get method; the index keeps the read unlinked and leaves no row (harvested from matlab-dispatch.test.ts 'keeps a Dependent property read unlinked, with no row').",
+  "truth": {
+    "edges": [
+      "user.m user -instantiates-> Model @ Model.m"
+    ],
+    "noRows": [
+      {
+        "file": "user.m"
+      }
+    ]
+  },
+  "known": [
+    {
+      "what": "No edge from the read `m.Total` to the get.Total accessor MATLAB runs for it.",
+      "why": "Pinned by matlab-dispatch.test.ts: a property read stays a read."
+    }
+  ]
+}

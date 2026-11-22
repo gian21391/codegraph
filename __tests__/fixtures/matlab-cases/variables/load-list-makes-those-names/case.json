@@ -1,0 +1,45 @@
+{
+  "why": "`load(file, 'a')` makes `a` alone, at runtime: a later `a(3)` is kept dormant while nothing carries the name and links when a function does, and `b` stays a call (MATLAB doc 'load'; harvested from matlab-dynamic.test.ts 'MATLAB variables load makes').",
+  "truth": {
+    "dormant": [
+      "user.m:3 calls:a"
+    ],
+    "rows": [
+      "user.m:4 calls:b"
+    ],
+    "noRows": [
+      "user.m:3 calls:a"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "a.m": "function y = a(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> a @ a.m"
+        ],
+        "noDormant": [
+          "user.m:3 calls:a"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "a.m": null
+      },
+      "truth": {
+        "dormant": [
+          "user.m:3 calls:a"
+        ],
+        "noEdges": [
+          {
+            "from": "user.m",
+            "to": "a"
+          }
+        ]
+      }
+    }
+  ]
+}

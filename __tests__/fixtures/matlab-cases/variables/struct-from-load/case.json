@@ -1,0 +1,14 @@
+{
+  "why": "`S = load(file)` puts the file's variables in a struct and makes no variable of its own, so `S.k(2)` reads a field and a later call is a call (MATLAB doc 'load'; harvested from matlab-dynamic.test.ts 'a value, a field ... named load ... mark nothing').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "k"
+      }
+    ],
+    "rows": [
+      "f.m:4 calls:Q1"
+    ]
+  }
+}

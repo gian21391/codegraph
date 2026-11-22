@@ -1,0 +1,21 @@
+{
+  "why": "A function that holds a nested function has a static workspace, where `load(file, 'a')` cannot add `a` (the code never assigns it), so `a(3)` stays a call: with nothing to answer it, a call that links nowhere (MATLAB error 'Attempt to add a variable to a static workspace', doc 'Variables in Nested and Anonymous Functions'; step 6 calls the listed-load form of this wrong by MATLAB's rules). The anchor: the same code in a function with no nested function (a workspace a load can add to) makes `a(3)` a name made at runtime (dormant; matlab-dynamic.test.ts' listed-load rule).",
+  "truth": {
+    "rows": [
+      "p.m:3 calls:a"
+    ],
+    "noDormant": [
+      "p.m:3 calls:a"
+    ],
+    "dormant": [
+      "q.m:3 calls:a"
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-variables-1",
+    "fails": [
+      "index: missing row p.m:3 calls:a",
+      "index: unwanted dormant row p.m:3 calls:a"
+    ]
+  }
+}

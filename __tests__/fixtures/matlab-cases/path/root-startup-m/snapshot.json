@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> f @ zlib/f.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/main.m main -calls-> f @ alib/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> f @ zlib/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

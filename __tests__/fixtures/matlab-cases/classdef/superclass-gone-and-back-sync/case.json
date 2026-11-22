@@ -1,0 +1,51 @@
+{
+  "why": "When the class a method is inherited from moves down its file, goes and comes back, the inherited call follows; a sync ends where a fresh index does (project rule; harvested from matlab-sync.test.ts 'when the class a method is inherited from moves, goes and comes back').",
+  "truth": {
+    "edges": [
+      "Sub.m Sub -extends-> Base @ Base.m",
+      "main.m main -calls-> Base::greet @ Base.m",
+      "main.m main -instantiates-> Sub @ Sub.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Base.m": "% moved down\n\nclassdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Base::greet @ Base.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Base.m": null
+      },
+      "truth": {
+        "edges": [
+          "main.m main -instantiates-> Sub @ Sub.m"
+        ],
+        "noEdges": [
+          {
+            "to": "greet"
+          },
+          {
+            "kind": "extends"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Base.m": "classdef Base < handle\n    methods\n        function greet(obj)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Sub.m Sub -extends-> Base @ Base.m",
+          "main.m main -calls-> Base::greet @ Base.m"
+        ]
+      }
+    }
+  ]
+}

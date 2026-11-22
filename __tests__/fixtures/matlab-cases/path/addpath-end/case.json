@@ -1,0 +1,14 @@
+{
+  "why": "addpath(..., '-end') puts a folder at the bottom of the path, so the folder added first stays ahead of it (MATLAB doc 'addpath'; harvested from matlab-path.test.ts 'after an edit of codegraph.json's startup').",
+  "truth": {
+    "edges": [
+      "lib1/caller.m caller -calls-> util @ lib2/util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib1/caller.m",
+        "at": "lib1/util.m"
+      }
+    ]
+  }
+}

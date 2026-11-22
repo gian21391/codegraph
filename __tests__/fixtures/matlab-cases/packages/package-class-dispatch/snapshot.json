@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "ui.m ui -calls-> g::Cir::area @ +g/Cir.m",
+      "ui.m ui -instantiates-> g::Cir @ +g/Cir.m",
+      "uq.m uq -calls-> g::Cir::area @ +g/Cir.m",
+      "uq.m uq -instantiates-> g::Cir @ +g/Cir.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

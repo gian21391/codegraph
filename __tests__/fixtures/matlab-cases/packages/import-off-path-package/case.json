@@ -1,0 +1,14 @@
+{
+  "why": "An import of a package that is only off the path links nothing from a caller on the path, by wildcard or explicit import (MATLAB doc 'import' and 'What Is the MATLAB Search Path?'; harvested from matlab-path.test.ts review case 14, L3).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "app/main.m"
+      }
+    ],
+    "rows": [
+      "app/main.m:3 calls:qg",
+      "app/main.m:5 calls:qg"
+    ]
+  }
+}

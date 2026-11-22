@@ -1,0 +1,2 @@
+classdef C < A
+end

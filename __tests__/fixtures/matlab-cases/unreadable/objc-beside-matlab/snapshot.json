@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> helperM @ helperM.m"
+    ],
+    "rows": [
+      "ios/AppDelegate.m:1 imports:AppDelegate.h",
+      "ios/Log.m:1 imports:stdio.h",
+      "ios/Log.m:3 calls:printf",
+      "main.m:2 calls:helperO",
+      "main.m:3 calls:logIt",
+      "main.m:4 calls:AppDelegate"
+    ],
+    "dormant": []
+  }
+}

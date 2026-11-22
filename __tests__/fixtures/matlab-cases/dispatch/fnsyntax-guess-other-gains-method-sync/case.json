@@ -1,0 +1,56 @@
+{
+  "why": "A class-folder guess onto an inherited method goes while another class on the path gains the method, comes back when it loses it, and yields to a path function of the name; a sync ends where a fresh index does (step 9; harvested from matlab-dispatch.test.ts 'ends a sync where a fresh index ends: a second class gains the method and loses it, a function of the name comes and goes').",
+  "truth": {
+    "edges": [
+      "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/Other.m": "classdef Other < handle\n    methods\n        function c = kids(obj, uid)\n            c = 2;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Other.m": "classdef Other < handle\n    methods\n        function c = other(obj)\n            c = 2;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/kids.m": "function c = kids(t, uid)\nc = 3;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> kids @ app/kids.m"
+        ],
+        "noEdges": [
+          "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/kids.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+        ]
+      }
+    }
+  ]
+}

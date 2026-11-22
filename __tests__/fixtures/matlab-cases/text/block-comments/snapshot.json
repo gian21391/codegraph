@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> shownA @ shownA.m",
+      "f.m f -calls-> shownB @ shownB.m"
+    ],
+    "rows": [
+      "f.m:16 calls:missingE"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "why": "Private functions come before the methods of the first argument's class (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'takes a private/ function before the method a call on an object dispatches to').",
+  "truth": {
+    "edges": [
+      "w.m w -calls-> area @ private/area.m",
+      "w.m w -instantiates-> Shape @ Shape.m"
+    ],
+    "noEdges": [
+      {
+        "from": "w.m",
+        "to": "Shape::area"
+      }
+    ]
+  }
+}

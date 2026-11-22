@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "+pkg/caller.m pkg::caller -calls-> pkg::onlyInPkg @ +pkg/onlyInPkg.m",
+      "+pkg/caller.m pkg::caller -calls-> util @ util.m"
+    ],
+    "rows": [
+      "+pkg/caller.m:3 calls:onlyInPkg"
+    ],
+    "dormant": []
+  }
+}

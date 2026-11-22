@@ -1,0 +1,15 @@
+{
+  "why": "`area(c)` on an object of a known class calls the class's method ahead of a path function, an inherited one included; a local or private function of the name comes first, and a class without the method leaves the path's function (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'dispatches a call on a variable of a known class' and 'takes a private/ function before the method').",
+  "truth": {
+    "edges": [
+      "useShape.m useShape -calls-> Shape::area @ Shape.m",
+      "useShape.m useShape -calls-> area @ area.m",
+      "useLocal.m useLocal -calls-> area @ useLocal.m",
+      "w/usePriv.m usePriv -calls-> area @ w/private/area.m"
+    ],
+    "noEdges": [
+      "useLocal.m useLocal -calls-> Shape::area @ Shape.m",
+      "w/usePriv.m usePriv -calls-> Shape::area @ Shape.m"
+    ]
+  }
+}

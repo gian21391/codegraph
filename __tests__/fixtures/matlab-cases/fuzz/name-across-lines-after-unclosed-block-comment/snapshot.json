@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "user.m user -calls-> ctlScr.m @ ctlScr.m"
+    ],
+    "rows": [
+      "big.m:2 calls:1.persistent",
+      "big.m:2 calls:[1 2]);\r\n    persistent util\r\nobj = Base",
+      "user.m:2 calls:big"
+    ],
+    "dormant": []
+  }
+}

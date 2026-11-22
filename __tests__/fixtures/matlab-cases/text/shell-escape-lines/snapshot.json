@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> helperW @ helperW.m",
+      "sh.m sh.m -calls-> helperW @ helperW.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "f.m:2 calls:!echo",
+      "f.m:3 calls:!helperZ",
+      "sh.m:1 calls:!ls"
+    ]
+  }
+}

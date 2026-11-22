@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> sig1 @ sig1.m"
+    ],
+    "rows": [
+      "readme.m:2 calls:sigdata"
+    ],
+    "dormant": [
+      "readme.m:1 calls:see"
+    ]
+  }
+}

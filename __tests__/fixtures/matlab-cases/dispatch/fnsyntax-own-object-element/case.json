@@ -1,0 +1,12 @@
+{
+  "why": "In a method, `f(e)` on an element or a copy of the own object, or after a number (`f(2, obj)`), dispatches to the class's method exactly; a copy written again with a number does not (step 9 E1; harvested from matlab-dispatch.test.ts 'dispatches on an element or a copy of the method's own object').",
+  "truth": {
+    "edges": [
+      "Seg.m Seg::anyJoint -calls-> Seg::isjoint @ Seg.m",
+      "Seg.m Seg::anyJoint -calls-> Seg::scaled @ Seg.m"
+    ],
+    "noEdges": [
+      "Seg.m Seg::other -calls-> Seg::isjoint @ Seg.m"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "F.m F -extends-> H @ H.m",
+      "use.m use -instantiates-> D @ D.m",
+      "use.m use -instantiates-> E @ E.m",
+      "use.m use -instantiates-> H @ H.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

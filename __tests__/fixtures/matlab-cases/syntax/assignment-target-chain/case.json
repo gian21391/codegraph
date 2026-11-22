@@ -1,0 +1,27 @@
+{
+  "why": "The chain an assignment writes is a variable's, dynamic fields and multiple outputs included; only the names read in its indexes are calls (MATLAB doc 'Generate Field Names from Variables'; harvested from matlab-extraction.test.ts 'MATLAB assignment targets').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> fieldName @ fieldName.m",
+      "f.m f -calls-> pickOne @ pickOne.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "x"
+      },
+      {
+        "from": "f.m",
+        "to": "m"
+      },
+      {
+        "from": "f.m",
+        "to": "q"
+      },
+      {
+        "from": "f.m",
+        "to": "monitor"
+      }
+    ]
+  }
+}

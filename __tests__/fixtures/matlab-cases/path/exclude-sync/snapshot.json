@@ -1,0 +1,30 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> util @ lib/util.m"
+    ],
+    "rows": [
+      "app/main.m:2 calls:only"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/main.m main -calls-> only @ old/only.m",
+        "app/main.m main -calls-> util @ app/util.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> util @ lib/util.m"
+      ],
+      "rows": [
+        "app/main.m:2 calls:only"
+      ],
+      "dormant": []
+    }
+  ]
+}

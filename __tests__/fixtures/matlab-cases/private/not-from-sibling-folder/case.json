@@ -1,0 +1,13 @@
+{
+  "why": "Another folder's private/ is out of reach: MATLAB errors, so no edge, and the call written with arguments stays a live row (MATLAB doc 'Private Functions'; harvested from matlab-path.test.ts, lib2/caller.m calling lib1's p).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib2/caller.m"
+      }
+    ],
+    "rows": [
+      "lib2/caller.m:2 calls:p"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "why": "A Latin-1 byte (not valid UTF-8) in a comment, as files saved in an older system encoding have, is still MATLAB text: its calls link and its lines count (project rule: a real call is never hidden).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperL @ helperL.m"
+    ],
+    "rows": [
+      "f.m:4 calls:missingL"
+    ]
+  }
+}

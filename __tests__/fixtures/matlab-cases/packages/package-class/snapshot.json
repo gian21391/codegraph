@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> geom::Circle::unit @ +geom/Circle.m",
+      "main.m main -instantiates-> geom::Circle @ +geom/Circle.m",
+      "useimp.m useimp -calls-> geom::Circle::unit @ +geom/Circle.m",
+      "useimp.m useimp -instantiates-> geom::Circle @ +geom/Circle.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

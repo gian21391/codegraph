@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> caseName @ caseName.m",
+      "f.m f -calls-> getRange @ getRange.m",
+      "f.m f -calls-> isOther @ isOther.m",
+      "f.m f -calls-> isReady @ isReady.m",
+      "f.m f -calls-> keepGoing @ keepGoing.m",
+      "f.m f -calls-> pickMode @ pickMode.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "why": "A call on an object of a subclass reaches a method only its superclass defines, in the superclass's classdef or in its class folder's method file (MATLAB doc 'Function Precedence Order', inherited methods; harvested from matlab-resolution.test.ts 'dispatches to a method only a superclass defines').",
+  "truth": {
+    "edges": [
+      "S2.m S2 -extends-> B2 @ @B2/B2.m",
+      "u.m u -calls-> B2::vol @ @B2/vol.m",
+      "u.m u -instantiates-> S2 @ S2.m"
+    ],
+    "noEdges": [
+      {
+        "from": "u.m",
+        "at": "vol.m"
+      }
+    ]
+  }
+}

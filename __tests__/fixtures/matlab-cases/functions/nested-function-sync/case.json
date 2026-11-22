@@ -1,0 +1,36 @@
+{
+  "why": "A nested function a sync adds takes the parent's call from the path's function, and a sync ends where a fresh index does (MATLAB doc 'Nested Functions'; project rule).",
+  "truth": {
+    "edges": [
+      "gui.m gui -calls-> refresh @ refresh.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "gui.m": "function gui()\nrefresh();\n    function refresh()\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "gui.m gui -calls-> gui::refresh @ gui.m"
+        ],
+        "noEdges": [
+          {
+            "from": "gui.m",
+            "at": "refresh.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gui.m": "function gui()\nrefresh();\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "gui.m gui -calls-> refresh @ refresh.m"
+        ]
+      }
+    }
+  ]
+}

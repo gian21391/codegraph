@@ -1,0 +1,17 @@
+{
+  "why": "Calling a variable that holds a handle calls the function it holds, `str2func` of a literal included; calling a parameter calls nothing the code can name, even beside a file of the parameter's name (MATLAB doc 'Call Local Functions Using Function Handles', 'str2func'; harvested from matlab-dynamic.test.ts 'calls what the handle holds, and nothing through a parameter').",
+  "truth": {
+    "edges": [
+      "handles.m handles -calls-> helper @ helper.m",
+      "handles.m handles -calls-> solve @ solve.m",
+      "handles.m handles -references-> helper @ helper.m",
+      "handles.m handles -references-> solve @ solve.m"
+    ],
+    "noEdges": [
+      {
+        "from": "handles.m",
+        "to": "fp"
+      }
+    ]
+  }
+}

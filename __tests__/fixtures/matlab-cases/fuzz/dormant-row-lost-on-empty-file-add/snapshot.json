@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "+Pkg/disp.m +Pkg/disp.m -calls-> g @ g.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "+Pkg/disp.m +Pkg/disp.m -calls-> g @ g.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

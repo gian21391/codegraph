@@ -1,0 +1,11 @@
+{
+  "why": "An unclosed `while` makes the whole parse an ERROR, but the script's calls written with arguments, its dotted calls and its whole-line commands stay, and the variable still holds its class (project rule; harvested from matlab-extraction.test.ts 'leave a MATLAB file whose parse fails at the root to its frames').",
+  "truth": {
+    "edges": [
+      "loopit.m loopit.m -instantiates-> Quat @ Quat.m",
+      "loopit.m loopit.m -calls-> Quat::inv @ Quat.m",
+      "loopit.m loopit.m -calls-> cleanupAll @ cleanupAll.m",
+      "loopit.m loopit.m -calls-> getVal @ getVal.m"
+    ]
+  }
+}

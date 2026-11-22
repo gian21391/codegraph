@@ -1,0 +1,22 @@
+{
+  "index": {
+    "edges": [
+      "+pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "+pkg/Mid.m:1 calls:w"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "+pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "+pkg/Mid.m:1 calls:w"
+      ]
+    }
+  ]
+}

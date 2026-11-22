@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "+geom/Sq2.m geom::Sq2 -extends-> geom::Circle @ +geom/Circle.m"
+    ],
+    "rows": [
+      "+geom/Sq.m:1 extends:Circle",
+      "+geom/Sq.m:4 calls:Circle::unit"
+    ],
+    "dormant": []
+  }
+}

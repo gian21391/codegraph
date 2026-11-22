@@ -1,0 +1,14 @@
+{
+  "why": "A class constructor in a class folder comes before a function of the same name in the current folder (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'takes a class-folder class before a function of the current folder').",
+  "truth": {
+    "edges": [
+      "lib/use.m use -instantiates-> Thing @ @Thing/Thing.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/use.m",
+        "at": "lib/Thing.m"
+      }
+    ]
+  }
+}

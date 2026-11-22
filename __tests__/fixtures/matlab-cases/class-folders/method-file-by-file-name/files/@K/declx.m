@@ -1,0 +1,2 @@
+function other(q)
+end

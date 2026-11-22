@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "app/main.m:2 calls:disp"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/main.m main -calls-> disp @ lib1/disp.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

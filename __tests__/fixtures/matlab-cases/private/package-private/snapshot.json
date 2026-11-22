@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "+pkg/f.m pkg::f -calls-> h @ +pkg/private/h.m"
+    ],
+    "rows": [
+      "main.m:2 calls:h"
+    ],
+    "dormant": [
+      "main.m:3 calls:pkg::h"
+    ]
+  }
+}

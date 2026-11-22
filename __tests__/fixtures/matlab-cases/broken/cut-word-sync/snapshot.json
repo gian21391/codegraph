@@ -1,0 +1,60 @@
+{
+  "index": {
+    "edges": [
+      "cut.m cut.m -calls-> drawit @ drawit.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "cut.m:1 calls:a",
+      "cut.m:1 calls:b"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "cut.m cut.m -calls-> drawit @ drawit.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "cut.m:1 calls:a",
+        "cut.m:1 calls:b"
+      ]
+    },
+    {
+      "edges": [
+        "cut.m cut.m -calls-> drawit @ drawit.m",
+        "cut.m cut.m -calls-> showit @ showit.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "cut.m cut.m -calls-> drawit @ drawit.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "cut.m:1 calls:a",
+        "cut.m:1 calls:b"
+      ]
+    },
+    {
+      "edges": [
+        "cut2.m cut2.m -calls-> drawit @ drawit.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "cut2.m:1 calls:a",
+        "cut2.m:1 calls:b"
+      ]
+    },
+    {
+      "edges": [
+        "cut2.m cut2.m -calls-> drawit @ drawit.m",
+        "cut2.m cut2.m -calls-> showit @ showit.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

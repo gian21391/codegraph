@@ -1,0 +1,3 @@
+function beeper()
+sound();
+end

@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "+util/size.m util::size -calls-> util::helper @ +util/size.m",
+      "useUtil.m useUtil -calls-> util::plot @ +util/plot.m",
+      "useUtil.m useUtil -calls-> util::size @ +util/size.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "+util/plot.m:2 calls:plot",
+      "+util/size.m:2 calls:size"
+    ]
+  }
+}

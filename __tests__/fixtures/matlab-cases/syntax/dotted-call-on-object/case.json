@@ -1,0 +1,12 @@
+{
+  "why": "A variable holds what `Widget()` made, so `r.step()` calls Widget's method; setting a property `r.gain` says nothing against it (MATLAB doc 'Method Invocation'; harvested from matlab-extraction.test.ts 'keeps an object's method').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> Widget::step @ Widget.m",
+      "f.m f -instantiates-> Widget @ Widget.m"
+    ],
+    "noEdges": [
+      "f.m f -calls-> step @ step.m"
+    ]
+  }
+}

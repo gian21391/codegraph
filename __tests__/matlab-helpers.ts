@@ -23,8 +23,8 @@ export function tempDir(prefix: string): string {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
-/** Writes each file under `root`, creating its folders; a `null` content deletes the file. */
-export function writeTree(root: string, files: Record<string, string | null>): void {
+/** Writes each file under `root`, creating its folders; a `null` content deletes the file. A Buffer is written byte for byte. */
+export function writeTree(root: string, files: Record<string, string | Buffer | null>): void {
   for (const [rel, content] of Object.entries(files)) {
     if (content === null) {
       fs.rmSync(path.join(root, rel), { force: true });
@@ -163,21 +163,96 @@ export async function syncedAndFresh(
   return { steps: [run.initial, ...run.steps.map((s) => s.synced)], ...last };
 }
 
-async function syncSteps(initial: Record<string, string>, steps: Array<Record<string, string | null>>): Promise<{ initial: string[]; steps: SyncedStep[] }> {
+/** A project's edges, live unresolved rows and dormant rows, as {@link allEdges}, {@link unresolvedRows} and {@link dormantRows} read them. */
+export interface ProjectState {
+  edges: string[];
+  rows: string[];
+  dormant: string[];
+}
+
+/**
+ * What the catalog checks of a state beside its edges and rows (never part of
+ * its snapshot): `nodes`, every node as `file qualified-name`, and
+ * `exceptions`, every stored extraction error that comes from an exception
+ * the product caught while extracting a file, as `file: message`.
+ */
+export interface StateFacts {
+  nodes: string[];
+  exceptions: string[];
+}
+
+/**
+ * Whether a stored extraction error comes from an exception, not from the
+ * text: the product stores an exception thrown while a file is extracted
+ * (the extractor's catch, the parse worker's, recordParseFailure in
+ * src/extraction/index.ts) as a `parse_error` of severity `error`, and a file
+ * that merely fails to parse as a `parse_error` of severity `warning`.
+ * scripts/matlab/fuzz/harness.mjs applies the same test.
+ */
+export function isExtractionException(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const x = e as { code?: unknown; severity?: unknown; message?: unknown };
+  if (x.code !== 'parse_error') return false;
+  if (x.severity === 'error') return true;
+  return x.severity === undefined && /^(Parse error|Parse worker error): /.test(String(x.message ?? ''));
+}
+
+/** {@link StateFacts} of the index at `root`. */
+export function stateFacts(root: string): StateFacts {
+  const db = DatabaseConnection.open(getDatabasePath(root));
+  try {
+    const d = db.getDb();
+    const nodes = (d.prepare('SELECT file_path AS f, qualified_name AS q FROM nodes').all() as Array<{ f: string; q: string }>).map((n) => `${n.f} ${n.q}`).sort();
+    const exceptions: string[] = [];
+    for (const f of d.prepare('SELECT path AS p, errors AS e FROM files').all() as Array<{ p: string; e: string | null }>) {
+      if (!f.e) continue;
+      let list: unknown;
+      try { list = JSON.parse(f.e); } catch { list = [{ code: 'parse_error', message: String(f.e) }]; }
+      for (const e of Array.isArray(list) ? list : [list]) if (isExtractionException(e)) exceptions.push(`${f.p}: ${String((e as { message?: unknown }).message ?? '')}`);
+    }
+    return { nodes, exceptions: exceptions.sort() };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * {@link syncedAndFreshEachStep}, with the first index's state too: the
+ * edges and rows `initial` indexes to, then each step's synced and fresh
+ * state. With no steps it is one fresh index. The MATLAB case catalog
+ * (matlab-cases.test.ts) reads every case through it. Files may be Buffers,
+ * for a case that needs exact bytes. `facts` holds each state's
+ * {@link StateFacts}: the first index's, then each step's synced and fresh.
+ */
+export async function indexThenSyncEachStep(
+  initial: Record<string, string | Buffer>,
+  ...steps: Array<Record<string, string | Buffer | null>>
+): Promise<{ initial: ProjectState; steps: SyncedStep[]; facts: { initial: StateFacts; steps: Array<{ synced: StateFacts; fresh: StateFacts }> } }> {
+  const run = await syncSteps(initial, steps);
+  return { initial: { edges: run.initial, rows: run.initialRows, dormant: run.initialDormant }, steps: run.steps, facts: run.facts };
+}
+
+async function syncSteps(
+  initial: Record<string, string | Buffer>,
+  steps: Array<Record<string, string | Buffer | null>>,
+): Promise<{ initial: string[]; initialRows: string[]; initialDormant: string[]; steps: SyncedStep[]; facts: { initial: StateFacts; steps: Array<{ synced: StateFacts; fresh: StateFacts }> } }> {
   const root = tempDir('cg-matlab-sync-');
-  const current: Record<string, string | null> = { ...initial };
+  const current: Record<string, string | Buffer | null> = { ...initial };
   writeTree(root, initial);
   const cg = await CodeGraph.init(root, { index: true });
   const out: SyncedStep[] = [];
   try {
     const first = allEdges(cg);
+    const initialRows = unresolvedRows(root);
+    const initialDormant = dormantRows(root);
+    const facts = { initial: stateFacts(root), steps: [] as Array<{ synced: StateFacts; fresh: StateFacts }> };
     for (const step of steps) {
       writeTree(root, step);
       Object.assign(current, step);
       await cg.sync();
       const freshRoot = tempDir('cg-matlab-fresh-');
       try {
-        writeTree(freshRoot, Object.fromEntries(Object.entries(current).filter(([, c]) => c !== null)));
+        writeTree(freshRoot, Object.fromEntries(Object.entries(current).filter(([, c]) => c !== null)) as Record<string, string | Buffer>);
         const fresh = await CodeGraph.init(freshRoot, { index: true });
         let freshEdges: string[];
         try {
@@ -190,11 +265,12 @@ async function syncSteps(initial: Record<string, string>, steps: Array<Record<st
           syncedRows: unresolvedRows(root), freshRows: unresolvedRows(freshRoot),
           syncedDormant: dormantRows(root), freshDormant: dormantRows(freshRoot),
         });
+        facts.steps.push({ synced: stateFacts(root), fresh: stateFacts(freshRoot) });
       } finally {
         fs.rmSync(freshRoot, { recursive: true, force: true });
       }
     }
-    return { initial: first, steps: out };
+    return { initial: first, initialRows, initialDormant, steps: out, facts };
   } finally {
     cg.close();
     fs.rmSync(root, { recursive: true, force: true });

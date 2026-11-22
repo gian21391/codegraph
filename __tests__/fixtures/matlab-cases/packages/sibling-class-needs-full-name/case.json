@@ -1,0 +1,13 @@
+{
+  "why": "Inside a package a sibling class is written in full too: `classdef Sq < Circle` and `Circle.unit()` in +geom/ name no geom.Circle, while `< geom.Circle` does (MATLAB doc 'Namespaces'; harvested from matlab-resolution.test.ts 'reaches a package member by its full name only', +geom/Sq.m).",
+  "truth": {
+    "edges": [
+      "+geom/Sq2.m geom::Sq2 -extends-> geom::Circle @ +geom/Circle.m"
+    ],
+    "noEdges": [
+      {
+        "from": "+geom/Sq.m"
+      }
+    ]
+  }
+}

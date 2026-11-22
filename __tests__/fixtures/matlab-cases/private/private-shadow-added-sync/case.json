@@ -1,0 +1,38 @@
+{
+  "why": "A private function a sync adds beside a caller takes its call from the path's function, and deleting it gives the call back; callers elsewhere keep the path's (MATLAB doc 'Function Precedence Order'; project rule for sync).",
+  "truth": {
+    "edges": [
+      "lib/useP.m useP -calls-> tool @ tool.m",
+      "useTop.m useTop -calls-> tool @ tool.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/private/tool.m": "function y = tool(x)\ny = 0;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/useP.m useP -calls-> tool @ lib/private/tool.m",
+          "useTop.m useTop -calls-> tool @ tool.m"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/useP.m",
+            "at": "tool.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/private/tool.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/useP.m useP -calls-> tool @ tool.m"
+        ]
+      }
+    }
+  ]
+}

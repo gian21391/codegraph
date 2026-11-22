@@ -1,0 +1,8 @@
+{
+  "why": "A method written in the classdef file of a class folder reaches the class folder's private/ too (MATLAB doc 'Private Functions'; a step 8 shape, a class folder's private helper called from its classdef).",
+  "truth": {
+    "edges": [
+      "@K/K.m K::go -calls-> ph @ @K/private/ph.m"
+    ]
+  }
+}

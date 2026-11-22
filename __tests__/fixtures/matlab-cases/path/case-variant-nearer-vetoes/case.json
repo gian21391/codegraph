@@ -1,0 +1,37 @@
+{
+  "why": "MATLAB names are case-sensitive, and a nearer file of the name in another case is what a case-insensitive file system finds first, so no call is linked past it; an exact match nearer than the variant links (project rule; harvested from matlab-resolution.test.ts 'MATLAB names matched with their case' and matlab-sync.test.ts 'a nearer file of the name in another case is added and removed').",
+  "truth": {
+    "edges": [
+      "a2/sub/lat.m lat -calls-> findit @ a2/findit.m"
+    ],
+    "noEdges": [
+      {
+        "from": "a1/r.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "a1/FindIt.m": null
+      },
+      "truth": {
+        "edges": [
+          "a1/r.m r -calls-> findit @ a2/findit.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "a1/FindIt.m": "function i = FindIt(r)\ni = r;\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "a1/r.m"
+          }
+        ]
+      }
+    }
+  ]
+}

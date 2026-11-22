@@ -1,0 +1,9 @@
+{
+  "why": "A classdef and a method file with an upper-case .M extension in a class folder are read as the class and its method (project rule; harvested from matlab-resolution.test.ts '@Gauge/Gauge.M' and '@Gauge/read.M').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Gauge::read @ @Gauge/read.M",
+      "main.m main -instantiates-> Gauge @ @Gauge/Gauge.M"
+    ]
+  }
+}

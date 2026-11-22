@@ -1,0 +1,65 @@
+{
+  "why": "A file turned from LF to CRLF, given a BOM, and back changes no edge and no row, and every sync ends where a fresh index does (project rule: text form changes nothing).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperC @ helperC.m"
+    ],
+    "rows": [
+      "f.m:3 calls:missingC"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "f.m": "function f()\r\ny = helperC(1);\r\nmissingC(2);\r\nend\r\n"
+      },
+      "truth": {
+        "edges": [
+          "f.m f -calls-> helperC @ helperC.m"
+        ],
+        "rows": [
+          "f.m:3 calls:missingC"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": "﻿function f()\r\ny = helperC(1);\r\nmissingC(2);\r\nend\r\n"
+      },
+      "truth": {
+        "edges": [
+          "f.m f -calls-> helperC @ helperC.m"
+        ],
+        "rows": [
+          "f.m:3 calls:missingC"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": "﻿function f()\ny = helperC(1);\nmissingC(2);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "f.m f -calls-> helperC @ helperC.m"
+        ],
+        "rows": [
+          "f.m:3 calls:missingC"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": "function f()\ny = helperC(1);\nmissingC(2);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "f.m f -calls-> helperC @ helperC.m"
+        ],
+        "rows": [
+          "f.m:3 calls:missingC"
+        ]
+      }
+    }
+  ]
+}

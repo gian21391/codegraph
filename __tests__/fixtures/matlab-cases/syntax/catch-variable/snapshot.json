@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> cleanupAll @ cleanupAll.m",
+      "f.m f -calls-> report @ report.m",
+      "f.m f -calls-> risky @ risky.m",
+      "f.m f -calls-> risky @ risky.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

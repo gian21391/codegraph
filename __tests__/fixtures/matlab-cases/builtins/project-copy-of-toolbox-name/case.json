@@ -1,0 +1,23 @@
+{
+  "why": "A project function named like a toolbox function or a built-in, on the path, in private/ or local to the file, is what MATLAB runs from there, so the call links to it; a call of a name the project does not define leaves no row (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'reaches a project function named like a built-in').",
+  "truth": {
+    "edges": [
+      "lib/useP.m useP -calls-> normpdf @ lib/private/normpdf.m",
+      "useGrid.m useGrid -calls-> grid @ useGrid.m",
+      "usePause.m usePause -calls-> pause @ pause.m",
+      "useStats.m useStats -calls-> normpdf @ normpdf.m",
+      "useStats.m useStats -calls-> strsplit @ strsplit.m"
+    ],
+    "noEdges": [
+      "useStats.m useStats -calls-> normpdf @ lib/private/normpdf.m"
+    ],
+    "noRows": [
+      {
+        "name": "plot"
+      },
+      {
+        "name": "hold"
+      }
+    ]
+  }
+}

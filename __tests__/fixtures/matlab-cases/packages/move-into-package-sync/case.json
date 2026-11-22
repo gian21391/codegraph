@@ -1,0 +1,60 @@
+{
+  "why": "A function moved into a package is no longer reached by its bare name, is reached by its full name or after an import, and moved back is reached by its bare name again; a sync ends where a fresh index ends each way (MATLAB doc 'Namespaces' and 'import'; project rule for sync).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> f @ f.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "f.m": null,
+        "+pkg/f.m": "function f(x)\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\npkg.f(1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> pkg::f @ +pkg/f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\nimport pkg.*\nf(1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> pkg::f @ +pkg/f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "+pkg/f.m": null,
+        "f.m": "function f(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> f @ f.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "pkg::f"
+          }
+        ]
+      }
+    }
+  ]
+}

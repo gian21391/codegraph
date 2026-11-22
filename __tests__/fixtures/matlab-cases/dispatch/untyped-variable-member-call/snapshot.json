@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "Leaf.m Leaf -extends-> Root @ Root.m",
+      "Root.m Root::calc -calls-> Leaf::calc @ Leaf.m",
+      "use.m use -calls-> Root::calc @ Root.m"
+    ],
+    "rows": [
+      "use.m:3 calls:a.score",
+      "use.m:4 calls:s.items"
+    ],
+    "dormant": []
+  }
+}

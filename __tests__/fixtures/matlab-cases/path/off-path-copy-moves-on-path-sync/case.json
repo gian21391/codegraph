@@ -1,0 +1,49 @@
+{
+  "why": "A function only off the path is out of reach of a caller on the path; moved into an on-path folder it is reached, and moved back it is not (MATLAB doc 'What Is the MATLAB Search Path?'; project rule for sync).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib/caller.m",
+        "to": "onlyoff"
+      }
+    ],
+    "rows": [
+      "lib/caller.m:2 calls:onlyoff"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "old/onlyoff.m": null,
+        "lib/onlyoff.m": "function onlyoff(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> onlyoff @ lib/onlyoff.m"
+        ],
+        "noRows": [
+          {
+            "name": "onlyoff"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/onlyoff.m": null,
+        "old/onlyoff.m": "function onlyoff(x)\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "lib/caller.m",
+            "to": "onlyoff"
+          }
+        ],
+        "rows": [
+          "lib/caller.m:2 calls:onlyoff"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "s.m s.m -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ],
+    "rows": [
+      "s.m:4 calls:onlyImp"
+    ],
+    "dormant": []
+  }
+}

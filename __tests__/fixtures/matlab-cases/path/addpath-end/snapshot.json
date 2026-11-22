@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "lib1/caller.m caller -calls-> util @ lib2/util.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

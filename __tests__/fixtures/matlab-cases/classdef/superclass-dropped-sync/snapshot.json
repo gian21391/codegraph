@@ -1,0 +1,34 @@
+{
+  "index": {
+    "edges": [
+      "a/Sub.m Sub -extends-> Mid @ n/Mid.m",
+      "main.m main -calls-> pkg::Base::greet @ +pkg/Base.m",
+      "main.m main -instantiates-> Sub @ a/Sub.m",
+      "n/Mid.m Mid -extends-> pkg::Base @ +pkg/Base.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "a/Sub.m Sub -extends-> Mid @ n/Mid.m",
+        "main.m main -instantiates-> Sub @ a/Sub.m"
+      ],
+      "rows": [
+        "main.m:3 calls:Sub::greet"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "a/Sub.m Sub -extends-> Mid @ n/Mid.m",
+        "main.m main -calls-> pkg::Base::greet @ +pkg/Base.m",
+        "main.m main -instantiates-> Sub @ a/Sub.m",
+        "n/Mid.m Mid -extends-> pkg::Base @ +pkg/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

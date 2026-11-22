@@ -1,0 +1,13 @@
+{
+  "why": "A statement takes the nearest file of the name, script or function, but a call with arguments only a function (a script takes none: MATLAB doc 'Scripts vs. Functions'; harvested from matlab-resolution.test.ts 'takes the nearest file of the name, script or function').",
+  "truth": {
+    "edges": [
+      "a/useA.m useA -calls-> tool @ a/tool.m",
+      "b/useB.m useB -calls-> b/tool.m @ b/tool.m",
+      "b/useB.m useB -calls-> tool @ a/tool.m"
+    ],
+    "noEdges": [
+      "a/useA.m useA -calls-> b/tool.m @ b/tool.m"
+    ]
+  }
+}

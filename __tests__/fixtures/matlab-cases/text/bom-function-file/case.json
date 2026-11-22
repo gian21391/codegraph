@@ -1,0 +1,9 @@
+{
+  "why": "A UTF-8 byte-order mark before `function` is no part of the code: the file's primary function and its calls are read as without it (MATLAB reads UTF-8 files with a BOM; harvested from matlab-extraction.test.ts detection of `\\uFEFFfunction f()`).",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> bomfn @ bomfn.m",
+      "bomfn.m bomfn -calls-> helperB2 @ helperB2.m"
+    ]
+  }
+}

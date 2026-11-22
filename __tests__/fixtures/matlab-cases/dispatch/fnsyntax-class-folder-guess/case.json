@@ -1,0 +1,21 @@
+{
+  "why": "In an old-style class folder's code, a call on a parameter or a local that may hold an object is taken for the class's method (a marked guess); on text, a field's value or an expression, and outside the class, it is not (step 9 E2; harvested from matlab-dispatch.test.ts 'takes a call in an old-style class folder's code on a variable for the class's method').",
+  "truth": {
+    "edges": [
+      "@Tree/fuse.m Tree::fuse -calls-> Tree::toList @ @Tree/toList.m",
+      "@Tree/fuse.m Tree::fuse -calls-> Tree::joinAll @ @Tree/joinAll.m"
+    ],
+    "noEdges": [
+      "@Tree/neg.m Tree::neg -calls-> Tree::joinAll @ @Tree/joinAll.m",
+      {
+        "from": "outside.m"
+      }
+    ]
+  },
+  "known": [
+    {
+      "what": "The guessed edges carry provenance heuristic and via caller-class, which allEdges does not show.",
+      "why": "matlab-dispatch.test.ts (step 9) pins the marking; the catalog's edge format has no provenance."
+    }
+  ]
+}

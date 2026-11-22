@@ -1,0 +1,13 @@
+{
+  "why": "A private/ folder serves only the folder immediately above it, not that folder's subfolders (MATLAB doc 'Private Functions').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib/sub/deep.m"
+      }
+    ],
+    "rows": [
+      "lib/sub/deep.m:2 calls:p"
+    ]
+  }
+}

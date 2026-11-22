@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "w/wild.m wild -calls-> imp::helper @ +imp/helper.m",
+      "w/wild.m wild -calls-> shared @ w/wild.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "Seg.m Seg::anyJoint -calls-> Seg::isjoint @ Seg.m",
+      "Seg.m Seg::anyJoint -calls-> Seg::isjoint @ Seg.m",
+      "Seg.m Seg::anyJoint -calls-> Seg::scaled @ Seg.m"
+    ],
+    "rows": [
+      "Seg.m:14 calls:isjoint"
+    ],
+    "dormant": []
+  }
+}

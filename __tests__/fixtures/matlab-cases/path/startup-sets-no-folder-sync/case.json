@@ -1,0 +1,26 @@
+{
+  "why": "Startup code that adds no folder of the project sets no path, so resolution is as with none (nearest, then genpath order); fixing it sets the path, and an off-path caller then takes the path's copy (project rule; harvested from matlab-path.test.ts review case 3, 'a startup.m that set no path is fixed').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> foo @ lib1/foo.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "startup.m": "addpath('lib2');\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> foo @ lib2/foo.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib1/foo.m"
+          }
+        ]
+      }
+    }
+  ]
+}

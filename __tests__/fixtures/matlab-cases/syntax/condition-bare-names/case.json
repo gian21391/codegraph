@@ -1,0 +1,19 @@
+{
+  "why": "A bare name in an if, elseif, while, switch, case or for range is read as a value, so a call when it is no variable; a variable there is nothing (harvested from matlab-extraction.test.ts 'reads a bare name as a condition or a for range').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> isReady @ isReady.m",
+      "f.m f -calls-> isOther @ isOther.m",
+      "f.m f -calls-> keepGoing @ keepGoing.m",
+      "f.m f -calls-> pickMode @ pickMode.m",
+      "f.m f -calls-> caseName @ caseName.m",
+      "f.m f -calls-> getRange @ getRange.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "items"
+      }
+    ]
+  }
+}

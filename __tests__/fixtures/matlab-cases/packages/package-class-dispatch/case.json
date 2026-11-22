@@ -1,0 +1,16 @@
+{
+  "why": "A call in function syntax on an object of a package class, reached by `import g.*` or written in full, dispatches to that class's method ahead of a path function (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'dispatches on a package class reached through import g.* or written in full').",
+  "truth": {
+    "edges": [
+      "ui.m ui -calls-> g::Cir::area @ +g/Cir.m",
+      "ui.m ui -instantiates-> g::Cir @ +g/Cir.m",
+      "uq.m uq -calls-> g::Cir::area @ +g/Cir.m",
+      "uq.m uq -instantiates-> g::Cir @ +g/Cir.m"
+    ],
+    "noEdges": [
+      {
+        "at": "area.m"
+      }
+    ]
+  }
+}

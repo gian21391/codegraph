@@ -1,0 +1,17 @@
+{
+  "why": "An anonymous function's parameters are its own variables and end with it: inside the lambda `helperB` is no call, after it the same name is one, and the bare read `offsetQ` nothing answers is kept dormant (MATLAB doc 'Anonymous Functions'; harvested from matlab-extraction.test.ts 'scopes a lambda's parameters to the lambda').",
+  "truth": {
+    "rows": [
+      "f.m:3 calls:helperB"
+    ],
+    "noRows": [
+      "f.m:2 calls:helperB"
+    ],
+    "noDormant": [
+      "f.m:2 calls:helperB"
+    ],
+    "dormant": [
+      "f.m:2 calls:offsetQ"
+    ]
+  }
+}

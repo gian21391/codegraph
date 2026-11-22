@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> pkg::top @ +pkg/top.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "@K/m.m K::m -calls-> K::m::inner @ @K/m.m",
+      "@K/m.m loc -calls-> inner @ inner.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

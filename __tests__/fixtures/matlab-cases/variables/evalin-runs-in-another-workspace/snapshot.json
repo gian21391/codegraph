@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "f_base.m f_base -calls-> globs.m @ globs.m",
+      "f_caller.m f_caller -calls-> globs.m @ globs.m",
+      "f_eval.m f_eval -calls-> globs.m @ globs.m"
+    ],
+    "rows": [
+      "f_base.m:3 calls:G",
+      "f_caller.m:3 calls:G"
+    ],
+    "dormant": [
+      "f_eval.m:3 calls:G"
+    ]
+  }
+}

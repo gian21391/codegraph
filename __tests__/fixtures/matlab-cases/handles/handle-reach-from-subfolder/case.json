@@ -1,0 +1,18 @@
+{
+  "why": "From another folder a private function and a package class without an import are out of a handle's reach; an anonymous function's body calls what it names (MATLAB doc 'Private Functions', 'Anonymous Functions'; harvested from matlab-resolution.test.ts 'reaches no private function from outside its folder, and no package class without an import').",
+  "truth": {
+    "edges": [
+      "sub/other.m other -calls-> pathfn @ pathfn.m"
+    ],
+    "noEdges": [
+      {
+        "from": "sub/other.m",
+        "to": "privhelp"
+      },
+      {
+        "from": "sub/other.m",
+        "to": "Circle"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> globs.m @ globs.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "f.m:3 calls:G"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "f.m f -calls-> G @ G.m",
+        "f.m f -calls-> globs.m @ globs.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "f.m f -calls-> globs.m @ globs.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "f.m:3 calls:G"
+      ]
+    },
+    {
+      "edges": [
+        "f.m f -calls-> globs @ globs.m"
+      ],
+      "rows": [
+        "f.m:3 calls:G"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "f.m f -calls-> globs.m @ globs.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "f.m:3 calls:G"
+      ]
+    }
+  ]
+}

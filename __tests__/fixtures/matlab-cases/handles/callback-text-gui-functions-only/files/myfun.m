@@ -1,0 +1,2 @@
+function myfun(varargin)
+end

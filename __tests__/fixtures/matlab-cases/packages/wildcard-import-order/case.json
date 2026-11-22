@@ -1,0 +1,16 @@
+{
+  "why": "A wildcard import comes after the file's local functions and before the current folder's functions (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'a wildcard import before the current folder' and nestimp.m's local shared).",
+  "truth": {
+    "edges": [
+      "w/wild.m wild -calls-> imp::helper @ +imp/helper.m",
+      "w/wild.m wild -calls-> shared @ w/wild.m"
+    ],
+    "noEdges": [
+      "w/wild.m wild -calls-> helper @ w/helper.m",
+      {
+        "from": "w/wild.m",
+        "to": "imp::shared"
+      }
+    ]
+  }
+}

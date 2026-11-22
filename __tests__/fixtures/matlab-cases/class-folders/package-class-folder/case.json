@@ -1,0 +1,9 @@
+{
+  "why": "A class folder inside a package makes a package class: geo.Shape constructs it, and its method file is reached on its object (MATLAB doc 'Namespaces' and 'Class Folders'; shape from matlab-resolution.test.ts '+geo/@Shape').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> geo::Shape::area @ +geo/@Shape/area.m",
+      "main.m main -instantiates-> geo::Shape @ +geo/@Shape/Shape.m"
+    ]
+  }
+}

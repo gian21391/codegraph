@@ -1,0 +1,13 @@
+{
+  "why": "An override links from its direct superclass's method only, so a chain composes, and from the nearest class up that declares it when the one between does not (project rule; harvested from matlab-dispatch.test.ts 'links direct supers only, so a chain composes').",
+  "truth": {
+    "edges": [
+      "A.m A::step -calls-> B::step @ B.m",
+      "B.m B::step -calls-> C::step @ C.m",
+      "P.m P::go -calls-> R::go @ R.m"
+    ],
+    "noEdges": [
+      "A.m A::step -calls-> C::step @ C.m"
+    ]
+  }
+}

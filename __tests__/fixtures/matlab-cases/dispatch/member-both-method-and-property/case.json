@@ -1,0 +1,13 @@
+{
+  "why": "A member that is both a property of the object's class and a method of another class is a read: no edge, and its row kept for a sync that may make it a call (project rule; harvested from matlab-dispatch.test.ts 'links no member that is both a method and a property of the class').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "Chain.m"
+      }
+    ],
+    "rows": [
+      "Chain.m:7 calls:Chain::n"
+    ]
+  }
+}

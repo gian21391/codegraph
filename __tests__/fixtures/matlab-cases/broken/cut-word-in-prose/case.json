@@ -1,0 +1,34 @@
+{
+  "why": "In prose saved as `.m`, `2sig1` lexes as the number 2 and the name `sig1`, and `1_5set` as 1 and `_5set`: pieces of words, which link nothing and leave no row (step 10, matlab-extraction.test.ts 'links nothing to a piece of a word in prose saved as .m').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "readme.m",
+        "to": "sig1"
+      },
+      {
+        "from": "readme.m",
+        "at": "_5set.m"
+      }
+    ],
+    "noRows": [
+      {
+        "name": "sig1"
+      },
+      {
+        "name": "_5set"
+      }
+    ],
+    "noDormant": [
+      {
+        "name": "sig1"
+      },
+      {
+        "name": "_5set"
+      }
+    ],
+    "edges": [
+      "use.m use -calls-> sig1 @ sig1.m"
+    ]
+  }
+}

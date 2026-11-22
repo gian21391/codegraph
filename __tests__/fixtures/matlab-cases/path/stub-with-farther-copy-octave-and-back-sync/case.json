@@ -1,0 +1,98 @@
+{
+  "why": "A call and a statement of a MEX function's name reach the nearer help-text stub; when it becomes Octave they go to the farther stub, back when it is help text again, to the nearer file's function when it is one, and every sync ends where a fresh index does (harvested from matlab-sync.test.ts 'when a stub with a farther copy goes to Octave and back, and to a function and back, and from Octave to a function'; matlab-lookup step 8).",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> app/fastop.m @ app/fastop.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/fastop.m": "## Copyright (C) 2000 A. Author\n## FASTOP\n1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> lib/fastop.m @ lib/fastop.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "app/fastop.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "% FASTOP  help for a MEX function\n%   v = fastop(pv)\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> app/fastop.m @ app/fastop.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib/fastop.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "function v = fastop(pv)\nv = pv;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> fastop @ app/fastop.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "% FASTOP  help for a MEX function\n%   v = fastop(pv)\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> app/fastop.m @ app/fastop.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "## Copyright (C) 2000 A. Author\n## FASTOP\n1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> lib/fastop.m @ lib/fastop.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "function v = fastop(pv)\nv = pv;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> fastop @ app/fastop.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib/fastop.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/fastop.m": "## Copyright (C) 2000 A. Author\n## FASTOP\n1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> lib/fastop.m @ lib/fastop.m"
+        ]
+      }
+    }
+  ]
+}

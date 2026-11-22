@@ -1,0 +1,15 @@
+{
+  "why": "A package function is called by its full name, even from inside its own package: a bare name there finds the top-level function, never the package's (MATLAB doc 'Namespaces' / 'Packages Create Namespaces'; harvested from matlab-resolution.test.ts 'reaches a package member by its full name only, even from inside the package').",
+  "truth": {
+    "edges": [
+      "+pkg/caller.m pkg::caller -calls-> pkg::onlyInPkg @ +pkg/onlyInPkg.m",
+      "+pkg/caller.m pkg::caller -calls-> util @ util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "+pkg/caller.m",
+        "at": "+pkg/util.m"
+      }
+    ]
+  }
+}

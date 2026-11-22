@@ -1,0 +1,19 @@
+{
+  "why": "@Poly/Poly.m with no classdef is an old-style class's constructor: Poly(...) and a bare Poly instantiate it, @Poly names the constructor, and the folder's files are its methods; @wave/WAVE.m is a method of wave, no constructor of a WAVE class (MATLAB doc 'Old-style class folders' / 'Class Folders'; harvested from matlab-resolution.test.ts 'MATLAB old-style classes').",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Poly::value @ @Poly/value.m",
+      "use.m use -instantiates-> Poly @ @Poly/Poly.m",
+      "use.m use -references-> Poly::Poly @ @Poly/Poly.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "to": "WAVE"
+      }
+    ],
+    "rows": [
+      "use.m:6 calls:WAVE"
+    ]
+  }
+}

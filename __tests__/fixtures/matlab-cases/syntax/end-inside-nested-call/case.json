@@ -1,0 +1,18 @@
+{
+  "why": "An `end` in a call's arguments belongs to the innermost array, which the code alone cannot tell, so both the outer and the inner name stay calls and neither real call is hidden (project rule; harvested from matlab-extraction.test.ts 'keeps the calls an end in their arguments may not be the own of').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> outer @ outer.m",
+      "f.m f -calls-> inner @ inner.m",
+      "f.m f -calls-> pop @ pop.m",
+      "f.m f -calls-> select @ select.m",
+      "f.m f -calls-> runIt @ runIt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "q"
+      }
+    ]
+  }
+}

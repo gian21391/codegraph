@@ -1,0 +1,39 @@
+{
+  "why": "A `.m` that is one whole-file `%{ … %}` block comment is a MATLAB script of comments, the same as an empty one, so a statement naming it links to it, and a `%` line put before it changes nothing (the user's ruling (step 11)).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> notes.m @ notes.m"
+    ],
+    "noRows": [
+      {
+        "file": "main.m",
+        "name": "notes"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "notes.m": "% NOTES  old code, kept\n%{\nfunction y = notes(x)\ny = x;\nend\n%}\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> notes.m @ notes.m"
+        ],
+        "noRows": [
+          {
+            "file": "main.m",
+            "name": "notes"
+          }
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-ruling-comments",
+    "fails": [
+      "index: missing edge main.m main -calls-> notes.m @ notes.m",
+      "index: unwanted row main.m:2 calls:notes (matches {\"file\":\"main.m\",\"name\":\"notes\"})"
+    ]
+  }
+}

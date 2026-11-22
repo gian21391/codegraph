@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "@K/m2.m K::m2 -calls-> ph @ @K/private/ph.m",
+      "r.m r -calls-> top @ private/top.m"
+    ],
+    "rows": [
+      "@K/m2.m:3 calls:top",
+      "r.m:3 calls:ph"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "why": "Of two copies on the path the one in the earlier folder runs; a copy a sync adds earlier takes the call, deleting it gives the call back, and a copy off the path takes nothing (MATLAB doc 'Function Precedence Order').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> util @ lib2/util.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib1/util.m": "function util(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> util @ lib1/util.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib2/util.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib1/util.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> util @ lib2/util.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "old/util.m": "function util(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> util @ lib2/util.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "old/util.m"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "why": "A call moves to a local function a sync adds to the caller's file, and back to the path's function when it is removed; a sync ends where a fresh index does (MATLAB doc 'Function Precedence Order'; project rule).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helper @ helper.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "main.m": "function main()\nhelper(1);\nend\n\nfunction helper(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> helper @ main.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "at": "helper.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "main.m": "function main()\nhelper(1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> helper @ helper.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "helper.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m"
+          }
+        ],
+        "rows": [
+          "main.m:2 calls:helper"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "helper.m": "function helper(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> helper @ helper.m"
+        ]
+      }
+    }
+  ]
+}

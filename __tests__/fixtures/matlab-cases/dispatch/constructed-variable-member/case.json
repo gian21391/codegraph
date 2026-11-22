@@ -1,0 +1,12 @@
+{
+  "why": "On a variable the function constructs, `m.reset` and `x = m.compute` are calls of the class's methods even without an argument list, and `Cls.make` a static call (MATLAB doc 'Ordinary Methods'; harvested from matlab-dispatch.test.ts 'links a method on a variable the function constructs, a static method and a package function').",
+  "truth": {
+    "edges": [
+      "g1.m g1 -calls-> Model::compute @ Model.m",
+      "g1.m g1 -calls-> Model::reset @ Model.m",
+      "g1.m g1 -instantiates-> Model @ Model.m",
+      "g2.m g2 -calls-> Model::make @ Model.m",
+      "g2.m g2 -calls-> pkg::pf @ +pkg/pf.m"
+    ]
+  }
+}

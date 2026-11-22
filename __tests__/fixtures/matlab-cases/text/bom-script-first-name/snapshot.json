@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "bomscr.m bomscr.m -calls-> helperB3 @ helperB3.m"
+    ],
+    "rows": [
+      "bomscr.m:2 calls:missingB"
+    ],
+    "dormant": []
+  }
+}

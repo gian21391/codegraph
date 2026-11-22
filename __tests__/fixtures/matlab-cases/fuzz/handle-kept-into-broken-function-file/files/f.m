@@ -1,0 +1,3 @@
+function y = f()
+y = 1;
+end

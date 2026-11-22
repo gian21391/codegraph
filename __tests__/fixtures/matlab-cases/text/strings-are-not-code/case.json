@@ -1,0 +1,19 @@
+{
+  "why": "Text in single or double quotes is data, a `%` inside a string starts no comment, and `a'` after a name is a transpose, not a string (MATLAB doc 'Characters and Strings', 'transpose').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperP @ helperP.m",
+      "f.m f -calls-> helperP2 @ helperP2.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "helperS"
+      },
+      {
+        "from": "f.m",
+        "to": "otherS"
+      }
+    ]
+  }
+}

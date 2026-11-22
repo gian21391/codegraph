@@ -1,0 +1,14 @@
+{
+  "why": "addpath puts a folder at the top of the path, so the folder added last is searched first, and a caller on the path takes the path's first copy over the one in its own folder (MATLAB doc 'addpath' and 'Function Precedence Order'; harvested from matlab-path.test.ts 'MATLAB path: resolution').",
+  "truth": {
+    "edges": [
+      "lib2/caller.m caller -calls-> util @ lib1/util.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib2/caller.m",
+        "at": "lib2/util.m"
+      }
+    ]
+  }
+}

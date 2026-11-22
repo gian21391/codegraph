@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "g.m g -calls-> G2 @ G2.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

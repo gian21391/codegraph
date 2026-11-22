@@ -1,0 +1,13 @@
+{
+  "why": "A self call of a method only subclasses define reaches each subclass's definition, nearest down each line (project rule; harvested from matlab-dispatch.test.ts 'links the call to each subclass's definition, nearest down each line').",
+  "truth": {
+    "edges": [
+      "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m",
+      "Vehicle.m Vehicle::run -calls-> Cart::deriv @ Cart.m",
+      "Bike.m Bike::deriv -calls-> Racer::deriv @ Racer.m"
+    ],
+    "noEdges": [
+      "Vehicle.m Vehicle::run -calls-> Racer::deriv @ Racer.m"
+    ]
+  }
+}

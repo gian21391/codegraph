@@ -1,0 +1,107 @@
+{
+  "why": "A piece's function added and removed, the colon line made a comment and back, and the file renamed: the calls follow the text, no piece of a cut word links, and every sync ends where a fresh index does (step 10; project rule: a sync ends where a fresh index ends).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "cut.m",
+        "to": "howit"
+      }
+    ],
+    "noRows": [
+      {
+        "name": "howit"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "howit.m": "function y = howit(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "cut.m",
+            "to": "howit"
+          }
+        ],
+        "noRows": [
+          {
+            "name": "howit"
+          }
+        ],
+        "noDormant": [
+          {
+            "name": "howit"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "cut.m": "% a:b:\nshowit(1);\ndrawit(2);\n"
+      },
+      "truth": {
+        "edges": [
+          "cut.m cut.m -calls-> showit @ showit.m",
+          "cut.m cut.m -calls-> drawit @ drawit.m"
+        ],
+        "noEdges": [
+          {
+            "from": "cut.m",
+            "to": "howit"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "cut.m": "a:b:\nshowit(1);\ndrawit(2);\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "cut.m",
+            "to": "howit"
+          }
+        ],
+        "noRows": [
+          {
+            "name": "howit"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "cut.m": null,
+        "cut2.m": "a:b:\nshowit(1);\ndrawit(2);\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "cut2.m",
+            "to": "howit"
+          }
+        ],
+        "noRows": [
+          {
+            "name": "howit"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "howit.m": null,
+        "cut2.m": "% a:b:\nshowit(1);\ndrawit(2);\n"
+      },
+      "truth": {
+        "edges": [
+          "cut2.m cut2.m -calls-> showit @ showit.m",
+          "cut2.m cut2.m -calls-> drawit @ drawit.m"
+        ]
+      }
+    }
+  ]
+}

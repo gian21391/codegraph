@@ -1,0 +1,36 @@
+{
+  "why": "A folder added with '-end' comes after MATLAB's own folders, so MATLAB's own sound runs, not the project's; moving the folder ahead links the call, and back unlinks it (MATLAB doc 'addpath'; harvested from matlab-path.test.ts 'after a folder moves from after MATLAB's own folders to before them, and back').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib1/beeper.m",
+        "to": "sound"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":\"addpath('extra'); addpath('lib1')\"}}"
+      },
+      "truth": {
+        "edges": [
+          "lib1/beeper.m beeper -calls-> sound @ extra/sound.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":\"addpath('lib1'); addpath('extra', '-end')\"}}"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "lib1/beeper.m",
+            "to": "sound"
+          }
+        ]
+      }
+    }
+  ]
+}

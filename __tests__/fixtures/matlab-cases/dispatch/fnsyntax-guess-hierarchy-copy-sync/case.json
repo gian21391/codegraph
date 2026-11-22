@@ -1,0 +1,46 @@
+{
+  "why": "A class defining the method that descends from the caller's class stops no guess; a copy of its superclass coming ahead on the path that takes it out of the hierarchy does, until it goes; a sync ends where a fresh index does (step 9; harvested from matlab-dispatch.test.ts 'when a copy of a class comes ahead of another or goes').",
+  "truth": {
+    "edges": [
+      "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/Mid.m": "classdef Mid < handle\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Mid.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Mid.m": "classdef Mid < handle\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    }
+  ]
+}

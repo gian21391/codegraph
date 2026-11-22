@@ -1,0 +1,9 @@
+{
+  "why": "A private function can call another function of the same private/ folder (project rule: a private/ file is in reach from its parent folder or the folder itself, matlab-lookup privateInReach).",
+  "truth": {
+    "edges": [
+      "lib/private/a.m a -calls-> b @ lib/private/b.m",
+      "lib/use.m use -calls-> a @ lib/private/a.m"
+    ]
+  }
+}

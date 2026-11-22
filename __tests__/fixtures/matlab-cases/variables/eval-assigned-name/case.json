@@ -1,0 +1,14 @@
+{
+  "why": "Code eval runs is read as code: its calls are calls, and a name it assigns is made at runtime, so a later read of it is kept dormant while another name stays a call (MATLAB doc 'eval'; harvested from matlab-dynamic.test.ts 'reads the code a variable holds there').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperE @ helperE.m"
+    ],
+    "dormant": [
+      "f.m:3 calls:x"
+    ],
+    "rows": [
+      "f.m:4 calls:w"
+    ]
+  }
+}

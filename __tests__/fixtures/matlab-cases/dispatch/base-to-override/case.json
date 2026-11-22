@@ -1,0 +1,11 @@
+{
+  "why": "A base method's self call reaches the override a subclass defines, as MATLAB dispatches on the object's class (MATLAB doc 'Modify Inherited Methods'; harvested from matlab-dispatch.test.ts 'links a base method to the override, from the base class's self call on').",
+  "truth": {
+    "edges": [
+      "Base.m Base::run -calls-> Base::step @ Base.m",
+      "Base.m Base::step -calls-> Sub::step @ Sub.m",
+      "Sub.m Sub -extends-> Base @ Base.m",
+      "Sub.m Sub::step -calls-> helperSub @ helperSub.m"
+    ]
+  }
+}

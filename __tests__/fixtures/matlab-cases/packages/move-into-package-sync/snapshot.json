@@ -1,0 +1,39 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> f @ f.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:f"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> pkg::f @ +pkg/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> pkg::f @ +pkg/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> f @ f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

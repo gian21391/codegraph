@@ -1,0 +1,42 @@
+{
+  "why": "An edit of codegraph.json's startup re-orders the path, and a sync moves the call as a fresh index would (MATLAB doc 'addpath'; harvested from matlab-path.test.ts 'after an edit of codegraph.json's startup').",
+  "truth": {
+    "edges": [
+      "lib1/caller.m caller -calls-> util @ lib1/util.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":\"addpath('lib2'); addpath('lib1', '-end')\"}}"
+      },
+      "truth": {
+        "edges": [
+          "lib1/caller.m caller -calls-> util @ lib2/util.m"
+        ],
+        "noEdges": [
+          {
+            "from": "lib1/caller.m",
+            "at": "lib1/util.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":\"addpath('lib1')\"}}"
+      },
+      "truth": {
+        "edges": [
+          "lib1/caller.m caller -calls-> util @ lib1/util.m"
+        ],
+        "noEdges": [
+          {
+            "from": "lib1/caller.m",
+            "at": "lib2/util.m"
+          }
+        ]
+      }
+    }
+  ]
+}

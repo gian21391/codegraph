@@ -1,0 +1,33 @@
+{
+  "why": "When the class a method call resolved into is rewritten with two methods of the name, a fresh index leaves the call failed and a sync keeps its old edge (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: the rewritten class `Mid.m` keeps its superclass list, whose bases no file defines (live rows).",
+  "truth": {
+    "rows": [
+      "Mid.m:1 extends:Base",
+      "Mid.m:1 extends:Gadget"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Mid.m": "classdef Mid < Base & Gadget\n    methods\n        function r = reset(obj)\n        end\n        function r = reset(obj, x)\n        end\n    end\nend"
+      },
+      "truth": {
+        "noEdges": [
+          "lib/Mid.m Mid::update -calls-> Mid::reset @ Mid.m"
+        ],
+        "rows": [
+          "lib/Mid.m:6 calls:Mid::reset"
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-8",
+    "fails": [
+      "step 1 (synced): unwanted edge lib/Mid.m Mid::update -calls-> Mid::reset @ Mid.m",
+      "step 1 (synced): missing row lib/Mid.m:6 calls:Mid::reset",
+      "step 1 (Mid.m): edges differ; only synced: [\"lib/Mid.m Mid::update -calls-> Mid::reset @ Mid.m\"]; only fresh: []",
+      "step 1 (Mid.m): rows differ; only synced: []; only fresh: [\"lib/Mid.m:6 calls:Mid::reset\"]"
+    ]
+  }
+}

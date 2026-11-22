@@ -1,0 +1,36 @@
+{
+  "why": "`a(end)`, `b(2:end)` and `c{k}` can only index an array (an `end` in the arguments is the array's last index, braces index a cell), so none of them calls a function of the name (MATLAB doc 'end' and 'Access Data in Cell Array'; harvested from matlab-extraction.test.ts 'MATLAB indexing written like a call').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "a"
+      },
+      {
+        "from": "f.m",
+        "to": "b"
+      },
+      {
+        "from": "f.m",
+        "to": "c"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "f.m",
+        "name": "a"
+      },
+      {
+        "file": "f.m",
+        "name": "b"
+      },
+      {
+        "file": "f.m",
+        "name": "c"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> a @ a.m"
+    ]
+  }
+}

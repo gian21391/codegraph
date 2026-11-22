@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> brokenS.m @ brokenS.m"
+    ],
+    "rows": [
+      "f.m:3 calls:G"
+    ],
+    "dormant": []
+  }
+}

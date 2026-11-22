@@ -1,0 +1,16 @@
+{
+  "why": "A name only a nested function assigns is no variable of its parent, so the parent's use of it is a call; a name the parent assigns is shared (MATLAB doc 'Sharing Variables Between Parent and Nested Functions'; harvested from matlab-extraction.test.ts 'nested-function workspaces').",
+  "truth": {
+    "edges": [
+      "outer.m outer -calls-> outer::compute @ outer.m",
+      "outer.m outer -calls-> total @ total.m",
+      "shared.m shared -calls-> shared::nest @ shared.m"
+    ],
+    "noEdges": [
+      {
+        "from": "shared.m",
+        "to": "total"
+      }
+    ]
+  }
+}

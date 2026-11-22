@@ -1,0 +1,39 @@
+{
+  "why": "When the middle class of a chain stops extending the base, the call through it goes, and comes back when it extends it again; a sync ends where a fresh index does (MATLAB doc 'Subclass Syntax'; harvested from matlab-sync.test.ts 'drops the call through a superclass the middle class no longer extends').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> pkg::Base::greet @ +pkg/Base.m",
+      "n/Mid.m Mid -extends-> pkg::Base @ +pkg/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "n/Mid.m": "classdef Mid < handle\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "a/Sub.m Sub -extends-> Mid @ n/Mid.m"
+        ],
+        "noEdges": [
+          {
+            "to": "greet"
+          },
+          {
+            "from": "n/Mid.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "n/Mid.m": "classdef Mid < pkg.Base\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> pkg::Base::greet @ +pkg/Base.m"
+        ]
+      }
+    }
+  ]
+}

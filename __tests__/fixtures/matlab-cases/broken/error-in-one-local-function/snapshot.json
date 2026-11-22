@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "a.m a -calls-> g1 @ g1.m",
+      "a.m c -calls-> h1 @ h1.m",
+      "user.m user -calls-> a @ a.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

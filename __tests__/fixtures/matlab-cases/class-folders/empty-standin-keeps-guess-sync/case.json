@@ -1,0 +1,35 @@
+{
+  "why": "An empty `grow.m` added to the class folder is a method-less file of the name (an empty MATLAB script, by the user's ruling (step 11)), which blocks the guessed call `grow(t, 1)` in the folder's code as help text or Octave does, so the guess must go, as a fresh index has it; a sync keeps the guessed edge (project rule: a sync ends where a fresh index ends; step 9's marked-guess rule). Likely root: an empty `.m` reads as Objective-C, and the sync's re-open of a class folder's guessed calls passes over an Objective-C file.",
+  "truth": {
+    "edges": [
+      "app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/@Node/grow.m": ""
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/Node.m Node -extends-> Base @ lib/Base.m"
+        ],
+        "noEdges": [
+          "app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m"
+        ],
+        "rows": [
+          "app/@Node/show.m:3 calls:grow"
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-class-folders-1",
+    "fails": [
+      "step 1 (synced): unwanted edge app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m",
+      "step 1 (synced): missing row app/@Node/show.m:3 calls:grow",
+      "step 1 (app/@Node/grow.m): edges differ; only synced: [\"app/@Node/show.m Node::show -calls-> Base::grow @ lib/Base.m\"]; only fresh: []",
+      "step 1 (app/@Node/grow.m): rows differ; only synced: []; only fresh: [\"app/@Node/show.m:3 calls:grow\"]"
+    ]
+  }
+}

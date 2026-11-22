@@ -1,0 +1,69 @@
+{
+  "why": "A callee turning from MATLAB to Octave text and back drops and restores the call, and every sync ends where a fresh index does (project rule; a step 9 shape).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> gOct @ gOct.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "gOct.m": "function y = gOct(x)\ny = x;\nendfunction\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "gOct"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gOct.m": "function y = gOct(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> gOct @ gOct.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gOct.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "gOct"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gOct.m": "function y = gOct(x)\n# Octave comment\ny = x;\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "gOct"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gOct.m": "function y = gOct(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> gOct @ gOct.m"
+        ]
+      }
+    }
+  ]
+}

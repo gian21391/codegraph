@@ -1,0 +1,15 @@
+{
+  "why": "A class-folder method is called by its file's name, not by the name its first line declares (MATLAB doc 'Methods in Separate Files'; harvested from matlab-resolution.test.ts 'calls a class-folder method file by its file name too').",
+  "truth": {
+    "edges": [
+      "cf.m cf -calls-> K::declx @ @K/declx.m",
+      "cf.m cf -instantiates-> K @ @K/K.m"
+    ],
+    "noEdges": [
+      {
+        "from": "cf.m",
+        "to": "other"
+      }
+    ]
+  }
+}

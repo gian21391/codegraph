@@ -1,0 +1,12 @@
+{
+  "why": "In a classdef file a local function comes before the method of the first argument's class; without one, `plot(obj)` is the method and `plot(x)` the built-in (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'takes a classdef file's local function before the method of the same name').",
+  "truth": {
+    "edges": [
+      "Viz.m Viz::draw -calls-> plot @ Viz.m",
+      "Bare.m Bare::draw -calls-> Bare::plot @ Bare.m"
+    ],
+    "noEdges": [
+      "Viz.m Viz::draw -calls-> Viz::plot @ Viz.m"
+    ]
+  }
+}

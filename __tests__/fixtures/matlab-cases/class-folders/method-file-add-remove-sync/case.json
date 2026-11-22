@@ -1,0 +1,53 @@
+{
+  "why": "A method file a sync adds to a class folder answers the call on the object, and one it removes leaves the call unlinked, as a fresh index does (MATLAB doc 'Methods in Separate Files'; harvested from matlab-resolution.test.ts 'adds a method file a sync brings, and drops one it removes').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Robot::step @ @Robot/step.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "reset"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Robot/reset.m": "function reset(r)\n    r.Q = 0;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Robot::reset @ @Robot/reset.m",
+          "main.m main -calls-> Robot::step @ @Robot/step.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Robot/step.m": null
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Robot::reset @ @Robot/reset.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "step"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Robot/step.m": "function step(r, x)\n    r.Q = r.Q + x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Robot::step @ @Robot/step.m"
+        ]
+      }
+    }
+  ]
+}

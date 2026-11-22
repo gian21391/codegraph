@@ -1,0 +1,35 @@
+{
+  "why": "With its classdef file gone a class folder has no constructor, so Robot() instantiates nothing; the classdef restored, the edges return, as a fresh index has them (harvested from matlab-resolution.test.ts 'follows the classdef file through an edit, a removal and its return').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Robot::step @ @Robot/step.m",
+      "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Robot/Robot.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m",
+            "kind": "instantiates"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Robot/Robot.m": "classdef Robot < handle\n    properties\n        Q\n    end\n    methods\n        function r = Robot()\n            r.Q = 0;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Robot::step @ @Robot/step.m",
+          "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+        ]
+      }
+    }
+  ]
+}

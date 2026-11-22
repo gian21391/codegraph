@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "g.m g.m -calls-> getVal @ getVal.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

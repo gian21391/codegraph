@@ -1,0 +1,27 @@
+{
+  "index": {
+    "edges": [
+      "helper.m helper.m -references-> F @ off/F.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "helper.m helper.m -references-> F @ off/F.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "helper.m helper.m -references-> F @ off/F.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "f.m:1 calls:obj::data"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "why": "Lines between `%{` and `%}` alone on their lines are comments, block comments nest, and indented markers count (MATLAB doc 'Add Comments to Code').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> shownA @ shownA.m",
+      "f.m f -calls-> shownB @ shownB.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "hiddenA"
+      },
+      {
+        "from": "f.m",
+        "to": "hiddenB"
+      },
+      {
+        "from": "f.m",
+        "to": "hiddenC"
+      },
+      {
+        "from": "f.m",
+        "to": "hiddenI"
+      }
+    ],
+    "rows": [
+      "f.m:16 calls:missingE"
+    ]
+  }
+}

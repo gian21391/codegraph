@@ -1,0 +1,36 @@
+{
+  "why": "A superclass name resolves by the path like any name: a copy a sync adds in an earlier folder becomes the superclass, and deleting it restores the later one (MATLAB doc 'Function Precedence Order'; shape from matlab-path.test.ts 'Superclass lookup sees the path too').",
+  "truth": {
+    "edges": [
+      "app/Arm.m Arm -extends-> Base @ lib2/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib1/Base.m": "classdef Base < handle\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/Arm.m Arm -extends-> Base @ lib1/Base.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/Arm.m",
+            "at": "lib2/Base.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib1/Base.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/Arm.m Arm -extends-> Base @ lib2/Base.m"
+        ]
+      }
+    }
+  ]
+}

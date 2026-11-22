@@ -1,0 +1,14 @@
+{
+  "why": "codegraph.json's matlab.startup is the startup code when present; a root startup.m is read only when it has none (project rule; matlab-path.test.ts 'a root startup.m ... is the startup code when codegraph.json has none').",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> f @ zlib/f.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "alib/f.m"
+      }
+    ]
+  }
+}

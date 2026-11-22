@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "private/util.m util -calls-> pkg::Widget::reset @ +pkg/Widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "private/util.m util -calls-> pkg::Widget::reset @ +pkg/Widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

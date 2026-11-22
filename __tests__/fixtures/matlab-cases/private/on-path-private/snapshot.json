@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "lib1/usep.m usep -calls-> p @ lib1/private/p.m"
+    ],
+    "rows": [
+      "lib2/caller.m:2 calls:p"
+    ],
+    "dormant": []
+  }
+}

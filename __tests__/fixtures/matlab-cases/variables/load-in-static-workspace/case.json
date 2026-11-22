@@ -1,0 +1,54 @@
+{
+  "why": "A function that holds nested functions has a static workspace, where a load cannot add a name the code does not spell, so a read after it stays a call (MATLAB error 'Attempt to add variable to a static workspace', doc 'Variables in Nested and Anonymous Functions'; harvested from matlab-dynamic.test.ts).",
+  "truth": {
+    "rows": [
+      "p.m:3 calls:AfterLoad",
+      "p.m:5 calls:InNested"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "p.m": "function p(fname)\nload(fname)\nq = AfterLoad(1);\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "p.m:3 calls:AfterLoad"
+        ],
+        "noRows": [
+          "p.m:3 calls:AfterLoad"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "AfterLoad.m": "function y = AfterLoad(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "p.m p -calls-> AfterLoad @ AfterLoad.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "p.m": "function p(fname)\nload(fname)\nq = AfterLoad(1);\n  function n()\n    r = InNested(1);\n  end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "p.m p -calls-> AfterLoad @ AfterLoad.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "AfterLoad.m": null
+      },
+      "truth": {
+        "rows": [
+          "p.m:3 calls:AfterLoad"
+        ]
+      }
+    }
+  ]
+}

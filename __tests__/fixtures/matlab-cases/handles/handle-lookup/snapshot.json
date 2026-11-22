@@ -1,0 +1,19 @@
+{
+  "index": {
+    "edges": [
+      "a.m a -references-> NoCtor @ NoCtor.m",
+      "a.m a -references-> Robot::Robot @ Robot.m",
+      "a.m a -references-> Robot::build @ Robot.m",
+      "a.m a -references-> localA @ a.m",
+      "a.m a -references-> pathfn @ pathfn.m",
+      "a.m a -references-> pkg::area2 @ +pkg/area2.m",
+      "a.m a -references-> privhelp @ private/privhelp.m"
+    ],
+    "rows": [
+      "a.m:2 function_ref:helperB"
+    ],
+    "dormant": [
+      "NoCtor.m:4 calls:NoCtor::disp"
+    ]
+  }
+}

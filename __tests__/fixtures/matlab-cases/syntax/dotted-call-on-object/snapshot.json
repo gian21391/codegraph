@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> Widget::step @ Widget.m",
+      "f.m f -instantiates-> Widget @ Widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

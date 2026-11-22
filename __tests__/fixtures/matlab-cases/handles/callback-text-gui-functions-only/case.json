@@ -1,0 +1,21 @@
+{
+  "why": "Text is read as a callback only as the value of a callback property of MATLAB's GUI functions, set, or a handle's property: a struct field's value, a project function's argument and a text built around an unknown name are not (project rule; harvested from matlab-dynamic.test.ts 'reads callback pairs in step, of MATLAB's GUI functions and struct').",
+  "truth": {
+    "edges": [
+      "gui2.m gui2 -references-> go_menu @ go_menu.m",
+      "gui2.m gui2 -references-> go_lower @ go_lower.m",
+      "gui2.m gui2 -references-> go_hole @ go_hole.m",
+      "gui2.m gui2 -calls-> myfun @ myfun.m"
+    ],
+    "noEdges": [
+      {
+        "from": "gui2.m",
+        "to": "go_two"
+      },
+      {
+        "from": "gui2.m",
+        "to": "go_not"
+      }
+    ]
+  }
+}

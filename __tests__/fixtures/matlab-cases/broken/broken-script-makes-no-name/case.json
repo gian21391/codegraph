@@ -1,0 +1,11 @@
+{
+  "why": "A script whose text does not parse cleanly makes no variable in its caller's workspace, so the caller's later read stays a call; the run of the script itself still links (project rule; harvested from matlab-dormant.test.ts 'a script whose text does not parse cleanly, or is Octave, makes no name').",
+  "truth": {
+    "rows": [
+      "f.m:3 calls:G"
+    ],
+    "edges": [
+      "f.m f -calls-> brokenS.m @ brokenS.m"
+    ]
+  }
+}

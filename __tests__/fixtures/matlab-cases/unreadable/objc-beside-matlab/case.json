@@ -1,0 +1,18 @@
+{
+  "why": "An Objective-C `.m` beside MATLAB files stays Objective-C, and no MATLAB call links to its symbols, while the MATLAB files' own calls link (harvested from matlab-extraction.test.ts 'keeps Objective-C .m files Objective-C').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helperM @ helperM.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "at": "ios/AppDelegate.m"
+      },
+      {
+        "from": "main.m",
+        "at": "ios/Log.m"
+      }
+    ]
+  }
+}

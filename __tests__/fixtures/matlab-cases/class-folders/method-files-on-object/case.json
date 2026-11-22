@@ -1,0 +1,16 @@
+{
+  "why": "Each file of a class folder is a method of the class, called in function syntax on an object of it; a method's plot(x, x) on plain numbers is MATLAB's own plot, though the class overloads plot (MATLAB doc 'Methods in Separate Files' and 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'reads a class folder's files as its methods').",
+  "truth": {
+    "edges": [
+      "@Robot/move.m Robot::move -calls-> Robot::step @ @Robot/step.m",
+      "main.m main -calls-> Robot::move @ @Robot/move.m",
+      "main.m main -instantiates-> Robot @ @Robot/Robot.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Robot/move.m",
+        "to": "plot"
+      }
+    ]
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> gOct @ gOct.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:gOct"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> gOct @ gOct.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:gOct"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:gOct"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> gOct @ gOct.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

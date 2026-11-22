@@ -1,0 +1,21 @@
+{
+  "why": "In a script, reads go in text order: line 1's `helperT(1)`, before the script assigns the name, is a call (here of no project function, so a call that links nowhere), and the reads after the assignment read the variable (the user's ruling (step 11); MATLAB doc 'Function Precedence Order': variables first; the later reads harvested from matlab-dynamic.test.ts 'a script's top level is one scope, read in text order'). The anchor: the same read in a script that never assigns the name is a call that links nowhere.",
+  "truth": {
+    "rows": [
+      "s.m:1 calls:helperT",
+      "t.m:1 calls:helperT"
+    ],
+    "noRows": [
+      "s.m:3 calls:helperT"
+    ],
+    "noDormant": [
+      "s.m:3 calls:helperT"
+    ]
+  },
+  "pendingBug": {
+    "id": "S11-ruling-text-order",
+    "fails": [
+      "index: missing row s.m:1 calls:helperT"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "Circle.m Circle::unit -instantiates-> Circle @ Circle.m",
+      "main.m main -calls-> Circle::area @ Circle.m",
+      "main.m main -calls-> Circle::unit @ Circle.m",
+      "main.m main -calls-> Plain::go @ Plain.m",
+      "main.m main -instantiates-> Circle @ Circle.m",
+      "main.m main -instantiates-> Plain @ Plain.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "Circle.m:10 calls:Circle::R"
+    ]
+  }
+}

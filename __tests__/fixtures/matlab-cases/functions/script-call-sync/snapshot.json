@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> setup_x.m @ setup_x.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> setup_x @ setup_x.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "main.m:2 calls:setup_x"
+      ]
+    }
+  ]
+}

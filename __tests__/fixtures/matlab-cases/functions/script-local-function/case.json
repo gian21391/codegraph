@@ -1,0 +1,15 @@
+{
+  "why": "A script's local function comes before a built-in or a path function of the name, and holds the script's code only (MATLAB doc 'Add Functions to Scripts'; harvested from matlab-resolution.test.ts 'a script's local function before the built-in').",
+  "truth": {
+    "edges": [
+      "runIt.m runIt.m -calls-> plot @ runIt.m",
+      "runIt.m runIt.m -calls-> helper @ runIt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "runIt.m",
+        "at": "helper.m"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "loopit.m loopit.m -calls-> Quat::inv @ Quat.m",
+      "loopit.m loopit.m -calls-> cleanupAll @ cleanupAll.m",
+      "loopit.m loopit.m -calls-> getVal @ getVal.m",
+      "loopit.m loopit.m -instantiates-> Quat @ Quat.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "why": "A bare read's function turned to binary bytes and back, and moved: the call goes and comes back, and every sync ends where a fresh index does (project rule; harvested from matlab-dormant.test.ts 'a bare read: its function added, deleted, restored, renamed, moved, turned to binary').",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> tintOf @ lib/tintOf.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/tintOf.m": {
+          "base64": "VjFNQ0M0MDAwTUVDMTAwME1DUjEwMDB4AQAAS8peCsZ9Ug=="
+        }
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "user.m",
+            "to": "tintOf"
+          }
+        ],
+        "dormant": [
+          "user.m:2 calls:tintOf"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tintOf.m": "function c = tintOf()\nc = [1 0 0];\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> tintOf @ lib/tintOf.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tintOf.m": null,
+        "other/tintOf.m": "function c = tintOf()\nc = 1;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> tintOf @ other/tintOf.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "other/tintOf.m": {
+          "base64": "VjFNQ0M0MDAwTUVDMTAwME1DUjEwMDB4AQAAS8peCsZ9Ug=="
+        }
+      },
+      "truth": {
+        "dormant": [
+          "user.m:2 calls:tintOf"
+        ]
+      }
+    }
+  ]
+}

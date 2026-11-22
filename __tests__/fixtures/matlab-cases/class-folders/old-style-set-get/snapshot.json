@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "@Acct/bump.m Acct::bump -calls-> Acct::set @ @Acct/set.m",
+      "useAcc.m useAcc -calls-> Acct::get @ @Acct/get.m",
+      "useAcc.m useAcc -calls-> Acct::set @ @Acct/set.m",
+      "useAcc.m useAcc -instantiates-> Acct @ @Acct/Acct.m"
+    ],
+    "rows": [
+      "useAcc.m:6 calls:notdefined"
+    ],
+    "dormant": [
+      "@Acct/Acct.m:3 calls:Acct::class"
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "index": {
+    "edges": [
+      "a2/sub/lat.m lat -calls-> findit @ a2/findit.m"
+    ],
+    "rows": [
+      "a1/r.m:2 calls:findit"
+    ],
+    "dormant": [
+      "a2/sub/lat.m:2 calls:x"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "a1/r.m r -calls-> findit @ a2/findit.m",
+        "a2/sub/lat.m lat -calls-> findit @ a2/findit.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "a2/sub/lat.m:2 calls:x"
+      ]
+    },
+    {
+      "edges": [
+        "a2/sub/lat.m lat -calls-> findit @ a2/findit.m"
+      ],
+      "rows": [
+        "a1/r.m:2 calls:findit"
+      ],
+      "dormant": [
+        "a2/sub/lat.m:2 calls:x"
+      ]
+    }
+  ]
+}

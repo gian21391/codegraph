@@ -1,0 +1,10 @@
+{
+  "why": "A handle given as a callback property's value, alone or as the head of a cell, names the function that runs on the event (MATLAB doc 'Create Callbacks for Graphics Objects').",
+  "truth": {
+    "edges": [
+      "gui.m gui -references-> onPress @ onPress.m",
+      "gui.m gui -references-> onMove @ onMove.m",
+      "gui.m gui -references-> onClose @ onClose.m"
+    ]
+  }
+}

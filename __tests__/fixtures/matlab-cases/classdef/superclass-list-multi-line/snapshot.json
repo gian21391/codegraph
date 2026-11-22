@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "Foo.m Foo -extends-> Bar @ Bar.m",
+      "Foo.m Foo -extends-> Baz @ Baz.m",
+      "Foo.m Foo::go -calls-> Bar::fromBar @ Bar.m",
+      "Foo.m Foo::go -calls-> Baz::fromBaz @ Baz.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

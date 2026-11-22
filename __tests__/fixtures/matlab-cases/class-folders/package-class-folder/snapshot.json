@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> geo::Shape::area @ +geo/@Shape/area.m",
+      "main.m main -instantiates-> geo::Shape @ +geo/@Shape/Shape.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

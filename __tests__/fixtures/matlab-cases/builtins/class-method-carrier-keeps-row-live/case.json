@@ -1,0 +1,40 @@
+{
+  "why": "A project class's method named like a built-in keeps a bare call of the name live (an overload resolution may have missed), and turning it back into a property drops the row; a sync ends where a fresh index does (project rule; harvested from matlab-dormant.test.ts 'the property turned into a method and back').",
+  "truth": {
+    "noRows": [
+      {
+        "name": "grid"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Plotter.m": "classdef Plotter\n    methods\n        function grid(obj, v)\n        end\n        function draw(obj)\n            grid('on');\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "Plotter.m:6 calls:grid",
+          "useGrid.m:3 calls:grid"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Plotter.m": "classdef Plotter\n    properties\n        grid\n    end\n    methods\n        function draw(obj)\n            grid('on');\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "noRows": [
+          {
+            "name": "grid"
+          }
+        ],
+        "noDormant": [
+          {
+            "name": "grid"
+          }
+        ]
+      }
+    }
+  ]
+}

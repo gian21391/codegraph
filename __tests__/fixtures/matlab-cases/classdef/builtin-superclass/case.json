@@ -1,0 +1,22 @@
+{
+  "why": "A class may derive from `handle` or a built-in type, which is no project class: no extends edge, while a project base gets one (MATLAB doc 'Handle Classes', 'Subclasses of MATLAB Built-In Types'; harvested from matlab-extraction.test.ts 'skips built-in bases'). The anchor: each class is indexed as one (an instantiation links to it).",
+  "truth": {
+    "edges": [
+      "F.m F -extends-> H @ H.m",
+      "use.m use -instantiates-> D @ D.m",
+      "use.m use -instantiates-> E @ E.m",
+      "use.m use -instantiates-> H @ H.m"
+    ],
+    "noEdges": [
+      {
+        "from": "D.m"
+      },
+      {
+        "from": "E.m"
+      },
+      {
+        "from": "H.m"
+      }
+    ]
+  }
+}

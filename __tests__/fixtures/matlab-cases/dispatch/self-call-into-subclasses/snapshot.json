@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "Bike.m Bike -extends-> Vehicle @ Vehicle.m",
+      "Bike.m Bike::deriv -calls-> Racer::deriv @ Racer.m",
+      "Cart.m Cart -extends-> Vehicle @ Vehicle.m",
+      "Racer.m Racer -extends-> Bike @ Bike.m",
+      "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m",
+      "Vehicle.m Vehicle::run -calls-> Cart::deriv @ Cart.m"
+    ],
+    "rows": [
+      "Vehicle.m:4 calls:Vehicle::deriv"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "why": "A statement naming a script, `run name` and `run('name.m')` run it, as does a script naming another; a value or an argument is no run (MATLAB doc 'run', 'Scripts'; harvested from matlab-resolution.test.ts 'links a statement naming a script').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setup_a.m @ setup_a.m",
+      "main.m main -calls-> lib/config.m @ lib/config.m",
+      "runner.m runner.m -calls-> setup_a.m @ setup_a.m"
+    ],
+    "noEdges": [
+      {
+        "from": "value.m"
+      }
+    ]
+  }
+}

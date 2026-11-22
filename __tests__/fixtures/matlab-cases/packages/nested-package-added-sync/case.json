@@ -1,0 +1,34 @@
+{
+  "why": "A nested package a sync adds answers the full-name call into it, and deleting it leaves the call unlinked; the parent package's function of the same name never answers it (MATLAB doc 'Namespaces'; project rule for sync).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "main.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+pkg/+sub/f.m": "function y = f(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> pkg::sub::f @ +pkg/+sub/f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "+pkg/+sub/f.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m"
+          }
+        ]
+      }
+    }
+  ]
+}

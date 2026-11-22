@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "private/h.m private/h.m -references-> widget @ @widget/widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "private/h.m private/h.m -references-> widget @ @widget/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

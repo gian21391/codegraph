@@ -1,0 +1,21 @@
+{
+  "why": "A BOM right before a script's first statement does not glue to its name: `helperB3(1)` on line 1 still calls helperB3, and the next line's row is line 2 (MATLAB reads UTF-8 files with a BOM; project rule).",
+  "truth": {
+    "edges": [
+      "bomscr.m bomscr.m -calls-> helperB3 @ helperB3.m"
+    ],
+    "rows": [
+      "bomscr.m:2 calls:missingB"
+    ],
+    "noRows": [
+      {
+        "name": "﻿helperB3"
+      }
+    ],
+    "noDormant": [
+      {
+        "name": "﻿helperB3"
+      }
+    ]
+  }
+}

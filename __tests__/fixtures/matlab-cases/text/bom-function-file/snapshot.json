@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "bomfn.m bomfn -calls-> helperB2 @ helperB2.m",
+      "user.m user -calls-> bomfn @ bomfn.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

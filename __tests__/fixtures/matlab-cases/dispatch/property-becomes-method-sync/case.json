@@ -1,0 +1,54 @@
+{
+  "why": "A member read relinks in a file the sync leaves alone when its property becomes a method, and goes back to a read when it is a property again; a sync ends where a fresh index does (project rule; harvested from matlab-dispatch.test.ts 'relinks it too when another class already had a method of the name').",
+  "truth": {
+    "noEdges": [
+      {
+        "to": "Total"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Model.m": "classdef Model < handle\n    methods\n        function reset(obj)\n        end\n        function v = Total(obj)\n            v = 1;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> Model::Total @ Model.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Model.m": "classdef Model < handle\n    properties\n        Total\n    end\n    methods\n        function reset(obj)\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "to": "Total"
+          }
+        ],
+        "rows": [
+          "user.m:3 calls:Model::Total"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Other.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "to": "Total"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "user.m"
+          }
+        ]
+      }
+    }
+  ]
+}

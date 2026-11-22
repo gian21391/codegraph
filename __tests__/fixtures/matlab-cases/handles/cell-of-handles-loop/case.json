@@ -1,0 +1,9 @@
+{
+  "why": "A handle read out of a cell of handles in a loop and called calls each handle the cell holds (MATLAB doc 'Cell Arrays of Function Handles'; harvested from matlab-dynamic.test.ts 'calls every handle a cell holds, read in a loop').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> pa @ pa.m",
+      "f.m f -calls-> pq @ pq.m"
+    ]
+  }
+}

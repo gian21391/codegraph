@@ -1,0 +1,11 @@
+{
+  "why": "`clear all` removes every variable, so what a load before it made is gone and a later read is a call; `clear x` removes `x` alone (MATLAB doc 'clear'; harvested from matlab-dynamic.test.ts 'a clear that may remove every variable ends what a load before it made').",
+  "truth": {
+    "rows": [
+      "f.m:4 calls:afterClear"
+    ],
+    "dormant": [
+      "g.m:4 calls:AfterNamed"
+    ]
+  }
+}

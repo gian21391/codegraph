@@ -1,0 +1,34 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "c.m:5 calls:Other"
+    ],
+    "dormant": [
+      "c.m:7 calls:After"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "c.m:6 calls:Other"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "c.m c -calls-> Other @ Other.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "c.m:6 calls:Other"
+      ],
+      "dormant": []
+    }
+  ]
+}

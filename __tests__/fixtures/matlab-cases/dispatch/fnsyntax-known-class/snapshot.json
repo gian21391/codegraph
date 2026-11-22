@@ -1,0 +1,19 @@
+{
+  "index": {
+    "edges": [
+      "Sub.m Sub -extends-> Shape @ Shape.m",
+      "useLocal.m useLocal -calls-> area @ useLocal.m",
+      "useLocal.m useLocal -instantiates-> Shape @ Shape.m",
+      "useShape.m useShape -calls-> Shape::area @ Shape.m",
+      "useShape.m useShape -calls-> Shape::area @ Shape.m",
+      "useShape.m useShape -calls-> area @ area.m",
+      "useShape.m useShape -instantiates-> Shape @ Shape.m",
+      "useShape.m useShape -instantiates-> Sub @ Sub.m",
+      "useShape.m useShape -instantiates-> Tri @ Tri.m",
+      "w/usePriv.m usePriv -calls-> area @ w/private/area.m",
+      "w/usePriv.m usePriv -instantiates-> Shape @ Shape.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

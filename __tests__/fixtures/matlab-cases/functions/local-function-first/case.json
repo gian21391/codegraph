@@ -1,0 +1,14 @@
+{
+  "why": "A call in a function file reaches the file's own local function before any other file's function of the name (MATLAB doc 'Function Precedence Order': local functions come before the path).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helper @ main.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "at": "helper.m"
+      }
+    ]
+  }
+}

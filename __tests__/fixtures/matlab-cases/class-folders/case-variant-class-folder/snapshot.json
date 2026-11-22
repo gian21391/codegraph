@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "p2/near.m near -instantiates-> WAVE @ p2/@WAVE/WAVE.m"
+    ],
+    "rows": [
+      "p1/use.m:2 calls:WAVE"
+    ],
+    "dormant": []
+  }
+}

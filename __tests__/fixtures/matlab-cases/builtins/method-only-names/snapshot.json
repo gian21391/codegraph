@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> add @ tools/add.m",
+      "app/main.m main -calls-> keys @ tools/keys.m",
+      "app/main.m main -calls-> setup @ tools/setup.m",
+      "app/main.m main -calls-> time @ tools/time.m",
+      "app/main.m main -calls-> tools/read.m @ tools/read.m",
+      "app/main.m main -calls-> update @ tools/update.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

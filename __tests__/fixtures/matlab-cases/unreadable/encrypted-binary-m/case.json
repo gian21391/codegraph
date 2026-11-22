@@ -1,0 +1,27 @@
+{
+  "why": "A `.m` holding binary bytes (a compiled-runtime component) is no MATLAB text: none of its bytes become a symbol, an edge or a row (project rule, matlab-extraction.test.ts 'warns in terms that are true for MATLAB').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helperP @ helperP.m"
+    ],
+    "noEdges": [
+      {
+        "from": "secretFn.m"
+      },
+      {
+        "from": "main.m",
+        "at": "secretFn.m"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "secretFn.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "secretFn.m"
+      }
+    ]
+  }
+}

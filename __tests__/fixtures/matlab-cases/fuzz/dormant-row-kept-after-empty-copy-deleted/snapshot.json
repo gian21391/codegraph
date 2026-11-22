@@ -1,0 +1,24 @@
+{
+  "index": {
+    "edges": [
+      "data.m data.m -calls-> g @ g.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "data.m:1 calls:disp",
+      "h.m:1 calls:a"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "data.m data.m -calls-> g @ g.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "data.m:1 calls:disp",
+        "h.m:1 calls:a"
+      ]
+    }
+  ]
+}

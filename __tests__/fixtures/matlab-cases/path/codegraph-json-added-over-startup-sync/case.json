@@ -1,0 +1,42 @@
+{
+  "why": "A codegraph.json startup a sync adds takes over from the root startup.m, and deleting it gives the path back to startup.m, as a fresh index has it (project rule: a root startup.m is read only when codegraph.json has no startup).",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> f @ alib/f.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":\"addpath('zlib');\"}}"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> f @ zlib/f.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "alib/f.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": null
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> f @ alib/f.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "zlib/f.m"
+          }
+        ]
+      }
+    }
+  ]
+}

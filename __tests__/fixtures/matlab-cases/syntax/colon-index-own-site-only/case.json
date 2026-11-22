@@ -1,0 +1,11 @@
+{
+  "why": "`a(1,:)` indexes at its own site, but a function can be passed `':'`, so another site's `a(1,1)` in the same function stays a call; an own `end` makes `a` a variable for the whole function (project rule; harvested from matlab-extraction.test.ts 'names a function indexes as only an array can be').",
+  "truth": {
+    "edges": [
+      "f.m h -calls-> a @ a.m"
+    ],
+    "noEdges": [
+      "f.m f -calls-> a @ a.m"
+    ]
+  }
+}

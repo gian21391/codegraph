@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "measure.m measure -calls-> Shape::area @ Shape.m",
+      "measure.m measure -instantiates-> Shape @ Shape.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

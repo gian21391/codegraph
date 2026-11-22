@@ -1,0 +1,31 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "user.m:4 calls:b"
+    ],
+    "dormant": [
+      "user.m:3 calls:a"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "user.m user -calls-> a @ a.m"
+      ],
+      "rows": [
+        "user.m:4 calls:b"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "user.m:4 calls:b"
+      ],
+      "dormant": [
+        "user.m:3 calls:a"
+      ]
+    }
+  ]
+}

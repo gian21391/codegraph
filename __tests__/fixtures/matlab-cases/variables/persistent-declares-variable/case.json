@@ -1,0 +1,18 @@
+{
+  "why": "`persistent count` declares a variable of the function, so `count(1)` indexes it and calls no function `count` (MATLAB doc 'persistent').",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "counter.m",
+        "to": "count"
+      },
+      {
+        "from": "counter.m",
+        "to": "cache"
+      }
+    ],
+    "edges": [
+      "g.m g -calls-> count @ count.m"
+    ]
+  }
+}

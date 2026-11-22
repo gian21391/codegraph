@@ -1,0 +1,2 @@
+classdef Node < Base
+end

@@ -1,0 +1,18 @@
+{
+  "why": "A statement `name word word` is command syntax: a call of the function with the words as text arguments (MATLAB doc 'Command vs. Function Syntax').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setMode @ setMode.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "fast"
+      },
+      {
+        "from": "main.m",
+        "to": "quiet"
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "why": "Each local function has its own workspace, so a load in one marks none of another's reads (MATLAB doc 'Local Functions'; harvested from matlab-dynamic.test.ts 'a load in one local function marks none of another's reads').",
+  "truth": {
+    "dormant": [
+      "a.m:3 calls:InA"
+    ],
+    "rows": [
+      "a.m:6 calls:InB"
+    ]
+  }
+}

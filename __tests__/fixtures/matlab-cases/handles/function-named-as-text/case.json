@@ -1,0 +1,16 @@
+{
+  "why": "str2func, cellfun and function functions such as fzero name a function by text, which references it; cellfun's own fast-path names ('isempty', 'size') are no project function even beside a project size.m (MATLAB doc 'cellfun': backward-compatible function names; harvested from matlab-dynamic.test.ts 'references what str2func and cellfun & co. name').",
+  "truth": {
+    "edges": [
+      "texts.m texts -references-> froot @ froot.m",
+      "texts.m texts -references-> myfun @ myfun.m",
+      "texts.m texts -references-> myfun2 @ myfun2.m"
+    ],
+    "noEdges": [
+      {
+        "from": "texts.m",
+        "to": "size"
+      }
+    ]
+  }
+}

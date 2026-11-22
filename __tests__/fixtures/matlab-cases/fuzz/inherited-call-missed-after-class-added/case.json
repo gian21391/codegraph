@@ -1,0 +1,27 @@
+{
+  "why": "Adding `+pkg/Base.m < widget` must leave the index where a fresh index of the same files is; here the fresh index links `run(x, 1)` into `@Mid`'s `run` and the sync leaves it failed (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The fresh index's link takes `x`'s class from an assignment after the call, so no truth is stated for that call.",
+  "truth": {
+    "edges": [
+      "tools/widget.m widget -extends-> Mid @ Mid.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+pkg/Base.m": "classdef Base < widget\nend"
+      },
+      "truth": {
+        "edges": [
+          "+pkg/Base.m pkg::Base -extends-> widget @ tools/widget.m"
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-7",
+    "fails": [
+      "step 1 (+pkg/Base.m): edges differ; only synced: []; only fresh: [\"tools/Gadget.m disp -calls-> Mid::run @ @Mid/Mid.m\"]",
+      "step 1 (+pkg/Base.m): rows differ; only synced: [\"tools/Gadget.m:3 calls:pkg::Base::run\"]; only fresh: []"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "util.m util -calls-> clampIt @ util.m"
+    ],
+    "rows": [
+      "main.m:2 calls:clampIt"
+    ],
+    "dormant": []
+  }
+}

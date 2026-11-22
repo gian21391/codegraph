@@ -1,0 +1,79 @@
+{
+  "why": "A class-folder file kids.m that holds no method kids (Octave, help text, empty) is what MATLAB finds for the name, so the guessed call in the class folder's code is blocked; deleting it or making it a real method relinks it, and a sync ends where a fresh index ends. The file goes from Octave to nothing, a method, help text, empty and a method; an empty file added where none was, while the guess stands, is S11-class-folders-1 (step 9, reopenMatlabScriptRuns; truth harvested from matlab-dispatch.test.ts 'when an Octave file of the name is in the class folder').",
+  "truth": {
+    "edges": [
+      "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/@Node/kids.m": "function c = kids(obj, uid)\nc = 3;\nendfunction\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/@Node/kids.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/@Node/kids.m": "function c = kids(obj, uid)\nc = 3;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Node::kids @ app/@Node/kids.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/@Node/kids.m": "% KIDS  help text only\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/@Node/kids.m": ""
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/@Node/show.m",
+            "to": "kids"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/@Node/kids.m": "function c = kids(obj, uid)\nc = 3;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/@Node/show.m Node::show -calls-> Node::kids @ app/@Node/kids.m"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "why": "A nested function of a class-folder method file is seen from that method only; the file's local function calls the path's function of the name (MATLAB doc 'Nested Functions'; harvested from matlab-resolution.test.ts 'sees a nested function of a class-folder method from the method only').",
+  "truth": {
+    "edges": [
+      "@K/m.m K::m -calls-> K::m::inner @ @K/m.m",
+      "@K/m.m loc -calls-> inner @ inner.m"
+    ],
+    "noEdges": [
+      "@K/m.m loc -calls-> K::m::inner @ @K/m.m"
+    ]
+  }
+}

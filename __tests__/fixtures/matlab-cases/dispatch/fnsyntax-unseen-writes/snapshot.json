@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "lib/Seg3.m Seg3::control -calls-> Seg3::isj @ lib/Seg3.m",
+      "lib/Seg3.m Seg3::viaEval -calls-> isj @ lib/isj.m",
+      "lib/Seg3.m Seg3::viaGlobal -calls-> isj @ lib/isj.m",
+      "lib/Seg3.m Seg3::viaLoad -calls-> isj @ lib/isj.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "why": "No guess on a lambda's parameter (arrayfun may pass anything), nor in a classdef file inside its class folder (a constructor's argument, an event source); a method file there keeps it (step 9 fix F4; harvested from matlab-dispatch.test.ts 'makes no guess on a lambda's parameter' and 'makes no guess in a classdef file inside its class folder').",
+  "truth": {
+    "edges": [
+      "@Shape/draw.m Shape::draw -calls-> Shape::render @ @Shape/render.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Shape/Shape.m",
+        "to": "render"
+      },
+      {
+        "from": "@Shape/lam.m",
+        "to": "render"
+      }
+    ]
+  }
+}

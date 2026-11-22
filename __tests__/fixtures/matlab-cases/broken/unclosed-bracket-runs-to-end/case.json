@@ -1,0 +1,15 @@
+{
+  "why": "An unclosed `[` swallows the rest of the file into one ERROR; the calls before it keep their edges (project rule; harvested from matlab-extraction.test.ts 'keeps a command or a bare read on a line that parses whole, under an error an unclosed bracket runs to the end of the file').",
+  "truth": {
+    "edges": [
+      "plotit2.m plotit2 -calls-> checkReady @ checkReady.m",
+      "plotit2.m plotit2 -calls-> getTime @ getTime.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "the calls inside the region the unclosed bracket swallows, on lines with a token of the error (`t1 = getTime;`), are not read",
+      "why": "step 10 spec rules out repairing an error region (step 10)"
+    }
+  ]
+}

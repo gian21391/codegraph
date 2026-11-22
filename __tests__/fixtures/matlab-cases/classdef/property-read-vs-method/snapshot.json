@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "Gen.m Gen::all -calls-> Gen::build @ Gen.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "Gen.m:11 calls:Gen::Gain",
+      "Gen.m:9 calls:Gen::verbose"
+    ]
+  }
+}

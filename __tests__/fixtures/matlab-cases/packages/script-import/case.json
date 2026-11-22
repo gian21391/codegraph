@@ -1,0 +1,11 @@
+{
+  "why": "An import in a script's code holds in the script, not in the script's local functions (MATLAB doc 'import'; harvested from matlab-resolution.test.ts 'holds a script's import in the script's code, not in its local functions').",
+  "truth": {
+    "edges": [
+      "s.m s.m -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ],
+    "noEdges": [
+      "s.m loc -calls-> imp::onlyImp @ +imp/onlyImp.m"
+    ]
+  }
+}

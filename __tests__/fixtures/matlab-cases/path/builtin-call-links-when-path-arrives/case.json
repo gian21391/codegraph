@@ -1,0 +1,16 @@
+{
+  "why": "A call of a built-in's name that linked nowhere with no path links to the project's copy once a startup puts that copy ahead of MATLAB's own folders, as a fresh index does (harvested from matlab-path.test.ts review case 9, H5).",
+  "truth": {},
+  "steps": [
+    {
+      "edit": {
+        "startup.m": "addpath('app');\naddpath('lib1');\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> disp @ lib1/disp.m"
+        ]
+      }
+    }
+  ]
+}

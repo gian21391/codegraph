@@ -1,0 +1,21 @@
+{
+  "why": "eval's code is read where it is known: a conditional eval, nested eval, evalc and the catch code of `eval(try, catch)` all call what they name; code that does not parse, or a name built from an unknown part, calls nothing (MATLAB doc 'eval', 'evalc'; harvested from matlab-dynamic.test.ts 'MATLAB code run by eval').",
+  "truth": {
+    "edges": [
+      "evals.m evals -calls-> helperA @ helperA.m",
+      "evals.m evals -calls-> onErr @ onErr.m",
+      "evals.m evals -calls-> innerB @ innerB.m",
+      "evals.m evals -calls-> quietC @ quietC.m"
+    ],
+    "noEdges": [
+      {
+        "from": "evals.m",
+        "to": "brokenB"
+      },
+      {
+        "from": "evals.m",
+        "to": "setProc"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "gui2.m gui2 -calls-> myfun @ myfun.m",
+      "gui2.m gui2 -references-> go_hole @ go_hole.m",
+      "gui2.m gui2 -references-> go_lower @ go_lower.m",
+      "gui2.m gui2 -references-> go_menu @ go_menu.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

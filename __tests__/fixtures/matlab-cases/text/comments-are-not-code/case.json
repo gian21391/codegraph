@@ -1,0 +1,22 @@
+{
+  "why": "A `%%` section title, a `%` line and a trailing `%` comment are comments, whatever names they hold (MATLAB doc 'Add Comments to Code').",
+  "truth": {
+    "edges": [
+      "s.m s.m -calls-> helperC4 @ helperC4.m"
+    ],
+    "noEdges": [
+      {
+        "from": "s.m",
+        "to": "helperC1"
+      },
+      {
+        "from": "s.m",
+        "to": "helperC2"
+      },
+      {
+        "from": "s.m",
+        "to": "helperC3"
+      }
+    ]
+  }
+}

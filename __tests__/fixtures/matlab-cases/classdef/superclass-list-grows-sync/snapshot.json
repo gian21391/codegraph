@@ -1,0 +1,37 @@
+{
+  "index": {
+    "edges": [
+      "C.m C -extends-> A @ A.m",
+      "main.m main -calls-> A::fromA @ A.m",
+      "main.m main -instantiates-> C @ C.m"
+    ],
+    "rows": [
+      "main.m:4 calls:C::fromB"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "C.m C -extends-> A @ A.m",
+        "C.m C -extends-> B @ B.m",
+        "main.m main -calls-> A::fromA @ A.m",
+        "main.m main -calls-> B::fromB @ B.m",
+        "main.m main -instantiates-> C @ C.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "C.m C -extends-> B @ B.m",
+        "main.m main -calls-> B::fromB @ B.m",
+        "main.m main -instantiates-> C @ C.m"
+      ],
+      "rows": [
+        "main.m:3 calls:C::fromA"
+      ],
+      "dormant": []
+    }
+  ]
+}

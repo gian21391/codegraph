@@ -1,0 +1,14 @@
+{
+  "why": "With a path in force, a case variant off the path nearer the caller than the path's copy does not stop the call reaching the path's exact-case copy (project rule; harvested from matlab-path.test.ts 'MATLAB path: resolution', lib1/tool.m vs app/sub/Tool.m).",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> tool @ lib1/tool.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "app/sub/Tool.m"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "why": "A nested function shares a variable with its parent only when the parent assigns it; a name only the nested function assigns is a call in the parent, and sibling nested functions have separate workspaces (MATLAB doc 'Nested Functions'; harvested from matlab-extraction.test.ts 'MATLAB nested-function workspaces').",
+  "truth": {
+    "edges": [
+      "outer.m outer -calls-> total @ total.m",
+      "sibs.m sibs::B -calls-> total @ total.m",
+      "outer.m outer -calls-> outer::compute @ outer.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main2.m",
+        "to": "total"
+      },
+      "sibs.m sibs::A -calls-> total @ total.m"
+    ]
+  }
+}

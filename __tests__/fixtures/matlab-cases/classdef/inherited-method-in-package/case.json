@@ -1,0 +1,11 @@
+{
+  "why": "A subclass's object reaches a method only its package superclass defines, and the superclass written in full is the class it extends (MATLAB doc 'Subclass Syntax', 'Packages Create Namespaces'; harvested from matlab-resolution.test.ts 'resolves inherited methods and superclasses through the classdef').",
+  "truth": {
+    "edges": [
+      "+geom/Circle.m geom::Circle -extends-> geom::Shape @ +geom/Shape.m",
+      "+geom/Circle.m geom::Circle::area -calls-> geom::Shape::describe @ +geom/Shape.m",
+      "main.m main -calls-> geom::Shape::describe @ +geom/Shape.m",
+      "main.m main -instantiates-> geom::Circle @ +geom/Circle.m"
+    ]
+  }
+}

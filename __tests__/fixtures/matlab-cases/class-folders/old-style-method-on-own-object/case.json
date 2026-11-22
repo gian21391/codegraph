@@ -1,0 +1,8 @@
+{
+  "why": "Inside an old-style class's method, a call in function syntax on the method's own object dispatches to the class's method file (MATLAB doc 'Class Folders', object dispatch on the first argument).",
+  "truth": {
+    "edges": [
+      "@Poly/show.m Poly::show -calls-> Poly::value @ @Poly/value.m"
+    ]
+  }
+}

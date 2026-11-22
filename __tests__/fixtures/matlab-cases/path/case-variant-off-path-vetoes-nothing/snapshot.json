@@ -1,0 +1,9 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> tool @ lib1/tool.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

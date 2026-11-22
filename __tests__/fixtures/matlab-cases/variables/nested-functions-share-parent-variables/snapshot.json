@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "main2.m main2 -calls-> main2::nest @ main2.m",
+      "outer.m outer -calls-> outer::compute @ outer.m",
+      "outer.m outer -calls-> total @ total.m",
+      "sibs.m sibs::B -calls-> total @ total.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

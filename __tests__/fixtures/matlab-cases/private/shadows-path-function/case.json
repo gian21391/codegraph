@@ -1,0 +1,19 @@
+{
+  "why": "A private function comes before a function on the path, for callers beside the private/ folder only (MATLAB doc 'Function Precedence Order'; harvested from matlab-resolution.test.ts 'reaches a project function named like a built-in', lib/private/normpdf.m).",
+  "truth": {
+    "edges": [
+      "lib/useP.m useP -calls-> tool @ lib/private/tool.m",
+      "useTop.m useTop -calls-> tool @ tool.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/useP.m",
+        "at": "tool.m"
+      },
+      {
+        "from": "useTop.m",
+        "at": "lib/private/tool.m"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "why": "A member written without an argument list on a variable of no stated class is a field read, even when one class has a method of the name: no edge and no row (project rule; harvested from matlab-dispatch.test.ts 'links nothing on a variable of no stated class, even with one method of the name'). The anchor: the same member on a variable of a stated class is that class's method.",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "reader.m"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "reader.m"
+      }
+    ],
+    "edges": [
+      "use.m use -calls-> Meas::rate @ Meas.m"
+    ]
+  }
+}

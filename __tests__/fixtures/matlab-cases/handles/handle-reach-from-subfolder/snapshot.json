@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "sub/other.m other -calls-> pathfn @ pathfn.m"
+    ],
+    "rows": [
+      "sub/other.m:2 function_ref:privhelp",
+      "sub/other.m:3 function_ref:Circle"
+    ],
+    "dormant": []
+  }
+}

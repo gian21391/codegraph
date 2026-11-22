@@ -1,0 +1,62 @@
+{
+  "why": "A script runs in its caller's workspace, so a global it declares is a variable there after the run: kept dormant while nothing carries the name, linked when a function does, and a call again once the file is a function (project rule; harvested from matlab-dormant.test.ts 'MATLAB script workspaces').",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> globs.m @ globs.m"
+    ],
+    "dormant": [
+      "f.m:3 calls:G"
+    ],
+    "noRows": [
+      "f.m:3 calls:G"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "G.m": "function r = G(x)\nr = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "f.m f -calls-> G @ G.m"
+        ],
+        "noDormant": [
+          "f.m:3 calls:G"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "G.m": null
+      },
+      "truth": {
+        "dormant": [
+          "f.m:3 calls:G"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "globs.m": "function globs()\nglobal G\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "f.m:3 calls:G"
+        ],
+        "edges": [
+          "f.m f -calls-> globs @ globs.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "globs.m": "global G\n"
+      },
+      "truth": {
+        "dormant": [
+          "f.m:3 calls:G"
+        ]
+      }
+    }
+  ]
+}

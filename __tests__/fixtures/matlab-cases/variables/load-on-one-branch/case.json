@@ -1,0 +1,43 @@
+{
+  "why": "A load on one branch of an if marks no read on the branch that excludes it, and marks a read after the if; a `clear all` after the if ends it again (MATLAB doc 'load', 'clear'; harvested from matlab-dynamic.test.ts).",
+  "truth": {
+    "rows": [
+      "c.m:5 calls:Other"
+    ],
+    "dormant": [
+      "c.m:7 calls:After"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "c.m": "function c(f, u)\nif u\n  load(f)\nend\nclear all\na = Other(1);\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "c.m:6 calls:Other"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Other.m": "function y = Other(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "c.m c -calls-> Other @ Other.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Other.m": null
+      },
+      "truth": {
+        "rows": [
+          "c.m:6 calls:Other"
+        ]
+      }
+    }
+  ]
+}

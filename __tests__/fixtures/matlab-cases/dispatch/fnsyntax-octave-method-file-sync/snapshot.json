@@ -1,0 +1,38 @@
+{
+  "index": {
+    "edges": [
+      "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+      "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m"
+      ],
+      "rows": [
+        "app/@Node/show.m:3 calls:kids"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/@Node/show.m Node::show -calls-> Node::kids @ app/@Node/kids.m",
+        "lib/Base.m Base::kids -calls-> Node::kids @ app/@Node/kids.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/@Node/Node.m Node -extends-> Base @ lib/Base.m",
+        "app/@Node/show.m Node::show -calls-> Base::kids @ lib/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

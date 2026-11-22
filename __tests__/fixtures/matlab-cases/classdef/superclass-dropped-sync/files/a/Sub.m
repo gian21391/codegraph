@@ -1,0 +1,2 @@
+classdef Sub < Mid
+end

@@ -1,0 +1,2 @@
+function quietC(varargin)
+end

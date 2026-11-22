@@ -1,0 +1,35 @@
+{
+  "why": "After a line `x:y:` that ends in a colon, the grammar's error recovery cuts the next line's first word (`tally` to `ally`, with a lone `t`): no piece links or leaves a row, and the same calls link once that line is a comment (step 10, matlab-extraction.test.ts 'links nothing to a piece of a word and leaves no row of one').",
+  "truth": {
+    "edges": [
+      "whole.m whole.m -calls-> tally @ tally.m",
+      "whole.m whole.m -calls-> scanit @ scanit.m"
+    ],
+    "noEdges": [
+      {
+        "from": "cut.m",
+        "to": "ally"
+      },
+      {
+        "from": "cut.m",
+        "to": "t"
+      }
+    ],
+    "noRows": [
+      {
+        "name": "ally"
+      },
+      {
+        "name": "t"
+      }
+    ],
+    "noDormant": [
+      {
+        "name": "ally"
+      },
+      {
+        "name": "t"
+      }
+    ]
+  }
+}

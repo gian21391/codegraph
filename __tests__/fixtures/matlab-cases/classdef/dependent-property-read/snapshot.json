@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "user.m user -instantiates-> Model @ Model.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "user.m:3 calls:Model::Total"
+    ]
+  }
+}

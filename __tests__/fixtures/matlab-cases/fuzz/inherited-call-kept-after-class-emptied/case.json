@@ -1,0 +1,43 @@
+{
+  "why": "`Widget < Mid` names the root `Mid.m` (its own folder's copy comes first), which has no `plot`, so `w.plot(1)` reaches no method (MATLAB doc 'Function Precedence Order'; project rule: with no path config a caller takes its own folder's copy). Once `Widget.m` is emptied it is an empty MATLAB script (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): `w = Widget()` is a live row, and nothing links to `Widget` or `plot`. Today the index links `w.plot` into the other copy's `Mid::plot`, and the sync after the empty keeps that edge where a fresh index drops it (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer).",
+  "truth": {
+    "edges": [
+      "Widget.m Widget -extends-> Mid @ Mid.m",
+      "util.m util.m -instantiates-> Widget @ Widget.m"
+    ],
+    "noEdges": [
+      "util.m util.m -calls-> Mid::plot @ tools/Mid.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Widget.m": ""
+      },
+      "truth": {
+        "rows": [
+          "util.m:1 calls:Widget"
+        ],
+        "noEdges": [
+          {
+            "from": "util.m",
+            "to": "Widget"
+          },
+          {
+            "from": "util.m",
+            "to": "plot"
+          }
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S11-fuzz-4",
+    "fails": [
+      "index: unwanted edge util.m util.m -calls-> Mid::plot @ tools/Mid.m",
+      "step 1 (synced): unwanted edge util.m util.m -calls-> Mid::plot @ tools/Mid.m (matches {\"from\":\"util.m\",\"to\":\"plot\"})",
+      "step 1 (Widget.m): edges differ; only synced: [\"util.m util.m -calls-> Mid::plot @ tools/Mid.m\"]; only fresh: []",
+      "step 1 (Widget.m): rows differ; only synced: []; only fresh: [\"util.m:2 calls:Widget::plot\"]"
+    ]
+  }
+}

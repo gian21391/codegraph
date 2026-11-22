@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> Gauge::read @ @Gauge/read.M",
+      "main.m main -instantiates-> Gauge @ @Gauge/Gauge.M"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Gauge/read.M:2 calls:Gauge::V"
+    ]
+  }
+}

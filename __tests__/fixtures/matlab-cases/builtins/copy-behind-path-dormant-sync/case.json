@@ -1,0 +1,55 @@
+{
+  "why": "While the project's copy of a built-in stands after MATLAB's own folders, its calls are dormant; a startup that moves it ahead links them, and moving it back puts them back to sleep; a sync ends where a fresh index does (MATLAB doc 'addpath'; harvested from matlab-dormant.test.ts 'a built-in's call that only the path could give a project copy of').",
+  "truth": {
+    "dormant": [
+      "app/play.m:2 calls:sound"
+    ],
+    "noEdges": [
+      {
+        "from": "app/play.m"
+      }
+    ],
+    "noRows": [
+      {
+        "name": "sound"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "startup.m": "addpath('app');\naddpath('extra', '-begin');\n"
+      },
+      "truth": {
+        "edges": [
+          "app/play.m play -calls-> sound @ extra/sound.m"
+        ],
+        "noDormant": [
+          {
+            "name": "sound"
+          }
+        ],
+        "noRows": [
+          {
+            "name": "sound"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "startup.m": "addpath('app');\naddpath('extra', '-end');\n"
+      },
+      "truth": {
+        "dormant": [
+          "app/play.m:2 calls:sound"
+        ],
+        "noEdges": [
+          {
+            "from": "app/play.m"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "outer.m outer -calls-> outer::compute @ outer.m",
+      "outer.m outer -calls-> total @ total.m",
+      "shared.m shared -calls-> shared::nest @ shared.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

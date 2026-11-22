@@ -1,0 +1,22 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "Plotter.m:6 calls:grid",
+        "useGrid.m:3 calls:grid"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

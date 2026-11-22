@@ -1,0 +1,9 @@
+{
+  "why": "feval of a literal name dispatches on the object passed next as a call written with it would: the class's method on a known object, nothing on a parameter when no function of the name exists (MATLAB doc 'feval'; harvested from matlab-dynamic.test.ts 'dispatches on the object passed next').",
+  "truth": {
+    "edges": [
+      "measure.m measure -calls-> Shape::area @ Shape.m",
+      "measure.m measure -instantiates-> Shape @ Shape.m"
+    ]
+  }
+}

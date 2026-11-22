@@ -1,0 +1,49 @@
+{
+  "why": "A helper a sync adds to a class folder's private/ answers its methods' calls, and deleting it leaves them unlinked, as a fresh index does (MATLAB doc 'Private Functions'; project rule for sync).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "@K/m2.m",
+        "to": "ph"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@K/private/ph.m": "function ph(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "@K/m2.m K::m2 -calls-> ph @ @K/private/ph.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@K/private/ph.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "@K/m2.m",
+            "to": "ph"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/ph.m": "function ph(x)\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "@K/m2.m",
+            "to": "ph"
+          }
+        ]
+      }
+    }
+  ]
+}

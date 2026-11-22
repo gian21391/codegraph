@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "lib/inreach.m inreach -calls-> lib/private/privstub.m @ lib/private/privstub.m"
+    ],
+    "rows": [
+      "main.m:2 calls:privstub"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "f.m f -calls-> fieldName @ fieldName.m",
+      "f.m f -calls-> pickOne @ pickOne.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

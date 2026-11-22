@@ -1,0 +1,19 @@
+{
+  "why": "A project copy of a built-in in a folder the startup adds with '-end' stands behind MATLAB's own folders, so MATLAB's function runs and the call does not link; a copy ahead of them, or a name MATLAB lacks, links (MATLAB doc 'addpath': '-end'; harvested from matlab-path.test.ts 'MATLAB's own functions come before a folder put after them').",
+  "truth": {
+    "edges": [
+      "lib/caller.m caller -calls-> optimset @ lib/optimset.m",
+      "lib/caller.m caller -calls-> tool @ extra/tool.m"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/caller.m",
+        "to": "sound"
+      },
+      {
+        "from": "lib/caller.m",
+        "to": "split"
+      }
+    ]
+  }
+}

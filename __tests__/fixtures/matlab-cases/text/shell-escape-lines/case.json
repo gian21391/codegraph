@@ -1,0 +1,19 @@
+{
+  "why": "`!` hands the rest of its line to the operating system's shell, so a name on it is no MATLAB call; the next line is code again (MATLAB doc 'Run External Commands, Scripts, and Programs': the `!` operator).",
+  "truth": {
+    "edges": [
+      "f.m f -calls-> helperW @ helperW.m",
+      "sh.m sh.m -calls-> helperW @ helperW.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "helperZ"
+      },
+      {
+        "from": "sh.m",
+        "to": "helperZ"
+      }
+    ]
+  }
+}
