@@ -1,5 +1,5 @@
 {
-  "why": "When a class folder's classdef `@widget/widget.m` is rewritten as a function file (an old-style constructor; MATLAB goes by the file's name), a handle `@widget` must follow it to the constructor `widget::widget`, as a fresh index has it; a sync keeps the edge to the class node (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: before the rewrite the handle names the classdef class.",
+  "why": "When a class folder's classdef `@widget/widget.m` is rewritten as a function file (an old-style constructor; MATLAB goes by the file's name), a handle `@widget` must follow it to the constructor `widget::widget`, as a fresh index has it; a sync kept the edge to the class node until step 13, which compares the kinds of a name's definitions in a file (S11-fuzz-9; project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: before the rewrite the handle names the classdef class.",
   "truth": {
     "edges": [
       "private/h.m private/h.m -references-> widget @ @widget/widget.m"
@@ -19,13 +19,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-9",
-    "fails": [
-      "step 1 (synced): missing edge private/h.m private/h.m -references-> widget::widget @ @widget/widget.m",
-      "step 1 (synced): unwanted edge private/h.m private/h.m -references-> widget @ @widget/widget.m",
-      "step 1 (@widget/widget.m): edges differ; only synced: [\"private/h.m private/h.m -references-> widget @ @widget/widget.m\"]; only fresh: [\"private/h.m private/h.m -references-> widget::widget @ @widget/widget.m\"]"
-    ]
-  }
+  ]
 }

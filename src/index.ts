@@ -1725,7 +1725,8 @@ export class CodeGraph {
           const rebound = this.orchestrator.resurrectStaleResolutionEdges(
             definitionDelta,
             result.changedFilePaths ?? [],
-            edgesBeforeRetry
+            edgesBeforeRetry,
+            result.matlabRelinked
           );
           // And the failed refs under those names: a call that failed only
           // because two definitions shared its name (`x.go()` with `go` in two

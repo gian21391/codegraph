@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "app/u.m u -calls-> A::reset @ A.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "app/u.m:2 calls:A.reset"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/u.m u -calls-> A::reset @ A.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

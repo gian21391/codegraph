@@ -1,0 +1,29 @@
+{
+  "index": {
+    "edges": [
+      "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
+      "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "app/apply_all.m:2 calls:set_mode"
+      ],
+      "dormant": [
+        "app/gui.m:2 function_ref:set_mode"
+      ]
+    },
+    {
+      "edges": [
+        "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
+        "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

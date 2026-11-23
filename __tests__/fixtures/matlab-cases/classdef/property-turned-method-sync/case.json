@@ -1,0 +1,33 @@
+{
+  "why": "`g.level()` on an object of a class reads its property while `level` is one, and calls its method once `level` is a method of the class (MATLAB doc 'Method Invocation', 'Ordinary Methods'); turning the property into a method of the same name and back keeps every name the file defines, and each step must end where a fresh index ends (project rule; step 13).",
+  "truth": {
+    "edges": [
+      "user.m user -instantiates-> Gauge @ Gauge.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Gauge.m": "classdef Gauge\n    methods\n        function v = level(obj)\n            v = 0;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> Gauge::level @ Gauge.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Gauge.m": "classdef Gauge\n    properties\n        level = 0;\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "user.m",
+            "to": "level"
+          }
+        ]
+      }
+    }
+  ]
+}

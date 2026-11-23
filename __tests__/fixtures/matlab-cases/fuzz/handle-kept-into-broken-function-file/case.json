@@ -1,5 +1,5 @@
 {
-  "why": "A function file that gains a line MATLAB cannot parse before its function line defines nothing another file can reach, so a handle `@f` elsewhere must lose its edge, as a fresh index has it; a sync keeps it (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer; the same shape as S11-fuzz-2).",
+  "why": "A function file that gains a line MATLAB cannot parse before its function line defines nothing another file can reach, so a handle `@f` elsewhere must lose its edge, as a fresh index has it; a sync kept it until step 13, which compares which function of a file is its main one (S11-fuzz-2b; project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer; the same shape as S11-fuzz-2).",
   "truth": {
     "edges": [
       "user.m user.m -references-> f @ f.m"
@@ -19,13 +19,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-2b",
-    "fails": [
-      "step 1 (synced): unwanted edge user.m user.m -references-> f @ f.m (matches {\"from\":\"user.m\",\"to\":\"f\"})",
-      "step 1 (f.m): edges differ; only synced: [\"user.m user.m -references-> f @ f.m\"]; only fresh: []",
-      "step 1 (f.m): rows differ; only synced: []; only fresh: [\"user.m:1 function_ref:f\"]"
-    ]
-  }
+  ]
 }

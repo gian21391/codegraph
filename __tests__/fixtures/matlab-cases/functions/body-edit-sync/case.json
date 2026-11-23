@@ -1,0 +1,22 @@
+{
+  "why": "An edit of a function's body changes nothing another file reaches (MATLAB doc 'Create Functions in Files'): the call and the handle stay linked, and the sync's definition delta stays empty (step 13; pinned in matlab-sync.test.ts 'a function file whose main function is renamed inside the file, or whose body changes, keeps an empty definition delta').",
+  "truth": {
+    "edges": [
+      "a/user.m user -calls-> gain @ tools/gain.m",
+      "a/user.m user -references-> gain @ tools/gain.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "tools/gain.m": "function y = gain(x)\n% scaled\nk = 3;\ny = k * x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "a/user.m user -calls-> gain @ tools/gain.m",
+          "a/user.m user -references-> gain @ tools/gain.m"
+        ]
+      }
+    }
+  ]
+}

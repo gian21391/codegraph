@@ -5780,6 +5780,55 @@ export class QueryBuilder {
   }
 
   /**
+   * Every resolution edge into a MATLAB node named one of `names`, with no
+   * per-name ceiling, in the shape of {@link getResolutionEdgesByTargetName}:
+   * what a sync rebinds for a name whose MATLAB definitions it changed
+   * (SyncResult.matlabRelinked). Left out, the edges no change in another
+   * file can move: a bare name (`helper(x)`, `@helper`) linked to a local or
+   * nested function of the caller's own file, which MATLAB looks up before
+   * anything on the path and reaches from no other file (doc 'Function
+   * Precedence Order', 'Local Functions'), when the file imports no name
+   * that ends in it (an `import pkg.helper` comes before the local function,
+   * and `+pkg/helper.m` lies in another file). A call written another way
+   * that landed there (`pkg.helper(x)`, `helper(obj)` on an object of a
+   * class) is still taken.
+   */
+  getMatlabRebindEdgesByTargetName(names: readonly string[]): Array<Edge & { edgeId: number; sourceFilePath: string; sourceLanguage: Language }> {
+    const out: Array<Edge & { edgeId: number; sourceFilePath: string; sourceLanguage: Language }> = [];
+    for (let i = 0; i < names.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = names.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT e.*, src.file_path AS source_file_path, src.language AS source_language
+             FROM edges e
+             JOIN nodes tgt ON tgt.id = e.target
+             JOIN nodes src ON src.id = e.source
+            WHERE tgt.name IN (${placeholders})
+              AND tgt.language = 'matlab'
+              AND ${RESOLUTION_EDGE_SQL}
+              AND (src.file_path != tgt.file_path
+                OR tgt.kind != 'function'
+                OR COALESCE(tgt.is_exported, 0) != 0
+                OR (CASE WHEN json_valid(e.metadata) THEN json_extract(e.metadata, '$.refName') END) IS NOT tgt.name
+                OR EXISTS (SELECT 1 FROM nodes imp
+                            WHERE imp.file_path = src.file_path AND imp.kind = 'import'
+                              AND (imp.name = tgt.name OR substr(imp.name, -length(tgt.name) - 1) = '.' || tgt.name)))`
+        )
+        .all(...chunk) as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
+      for (const row of rows) {
+        out.push({
+          ...rowToEdge(row),
+          edgeId: row.id,
+          sourceFilePath: row.source_file_path,
+          sourceLanguage: row.source_language,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
    * The resolution edges out of route nodes that a change to `filePaths` can
    * move: from a route in another file, to a node of one of `filePaths`, or to
    * a value declared beside the route — what a route rendering
@@ -6240,6 +6289,49 @@ export class QueryBuilder {
       // NUL-joined: a path or a symbol name can contain a space, never a NUL.
       for (const row of rows) pairs.add(`${row.file_path}\0${row.name}`);
     }
+    return pairs;
+  }
+
+  /**
+   * The `file\0name` pairs of {@link getNodeNamePairsByFiles}, each with what
+   * another file's resolution reads of the pair's definitions after a third
+   * NUL: every node of the name in the file, as its kind, qualified name,
+   * whether it is exported (a MATLAB function file's main function, not a
+   * local one), static, and whether a class is written with `classdef` (else
+   * an old-style class folder's), sorted, so a second definition of the name
+   * counts too. Nothing of a body, a line or a signature's parameters: a
+   * body-only edit keeps every pair. Nor a method's `Access` or `Abstract`
+   * attribute, which no resolution reads (the override synthesizer reads
+   * `Access = private`, and synthesis is redone on every MATLAB sync). A sync
+   * compares them before and after to see a name whose definitions changed
+   * though the name stayed (a function file turned into a script, a method
+   * made static). With a `filter`, only the nodes it admits count.
+   */
+  getNodeFactPairsByFiles(filePaths: string[], filter: NodeFilter = {}): Set<string> {
+    const facts = new Map<string, string[]>();
+    if (filePaths.length === 0) return new Set();
+    const where = nodeFilterSql(filter);
+    for (let i = 0; i < filePaths.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = filePaths.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(`SELECT file_path, name, kind, qualified_name, is_exported, is_static,
+                         (kind IN ('class', 'enum') AND signature LIKE 'classdef%') AS classdef
+                    FROM nodes WHERE file_path IN (${placeholders})${where.sql}`)
+        .all(...chunk, ...where.params) as Array<{
+          file_path: string; name: string; kind: string; qualified_name: string; is_exported: number | null;
+          is_static: number | null; classdef: number;
+        }>;
+      for (const row of rows) {
+        const key = `${row.file_path}\0${row.name}`;
+        const fact = [row.kind, row.qualified_name, row.is_exported ? 1 : 0, row.is_static ? 1 : 0, row.classdef ? 1 : 0].join('|');
+        const list = facts.get(key);
+        if (list) list.push(fact);
+        else facts.set(key, [fact]);
+      }
+    }
+    const pairs = new Set<string>();
+    for (const [key, list] of facts) pairs.add(`${key}\0${list.sort().join(';')}`);
     return pairs;
   }
 

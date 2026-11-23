@@ -1,0 +1,47 @@
+{
+  "why": "The first function in a function file is the one MATLAB runs by the file's name, and the ones after it are local functions no other file reaches (MATLAB doc 'Local Functions'). A local `helper` of `pack.m` moved first becomes what `pack(…)` runs, and the old main function a local one: another file's `pack(1)` still reaches `pack.m`, and its `helper(2)` the function file `helper.m`, before and after; each step must end where a fresh index ends (project rule; step 13).",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> pack @ tools/pack.m",
+      "user.m user -calls-> helper @ lib/helper.m"
+    ],
+    "noEdges": [
+      {
+        "from": "user.m",
+        "to": "helper",
+        "at": "tools/pack.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "tools/pack.m": "function z = helper(x)\nz = x;\nend\nfunction y = pack(x)\ny = helper(x) + 1;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> pack @ tools/pack.m",
+          "user.m user -calls-> helper @ lib/helper.m"
+        ],
+        "noEdges": [
+          {
+            "from": "user.m",
+            "to": "helper",
+            "at": "tools/pack.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "tools/pack.m": "function y = pack(x)\ny = helper(x) + 1;\nend\nfunction z = helper(x)\nz = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> pack @ tools/pack.m",
+          "user.m user -calls-> helper @ lib/helper.m"
+        ]
+      }
+    }
+  ]
+}

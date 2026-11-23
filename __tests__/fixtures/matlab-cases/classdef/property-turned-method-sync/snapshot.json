@@ -1,0 +1,30 @@
+{
+  "index": {
+    "edges": [
+      "user.m user -instantiates-> Gauge @ Gauge.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "user.m:3 calls:Gauge::level"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "user.m user -calls-> Gauge::level @ Gauge.m",
+        "user.m user -instantiates-> Gauge @ Gauge.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "user.m user -instantiates-> Gauge @ Gauge.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "user.m:3 calls:Gauge::level"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "why": "MATLAB calls a function file by its file name, whatever name its function line declares (MATLAB doc 'Create Functions in Files': the file name and the name of the first function should match, and MATLAB goes by the file name when they differ), so renaming the declared name inside `scale.m` changes nothing another file reaches: the call stays linked, and the sync's definition delta stays empty (step 13; pinned in matlab-sync.test.ts 'a function file whose main function is renamed inside the file, or whose body changes, keeps an empty definition delta').",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> scale @ tools/scale.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "tools/scale.m": "function y = resize(x)\ny = 2 * x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> scale @ tools/scale.m"
+        ],
+        "noRows": [
+          {
+            "file": "user.m",
+            "name": "scale"
+          }
+        ]
+      }
+    }
+  ]
+}

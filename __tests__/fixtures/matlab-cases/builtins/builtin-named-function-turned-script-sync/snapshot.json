@@ -1,0 +1,44 @@
+{
+  "index": {
+    "edges": [
+      "app/a.m a -calls-> disp @ lib/disp.m",
+      "app/a.m a -references-> disp @ lib/disp.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "app/a.m:2 calls:disp",
+        "app/a.m:3 function_ref:disp"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/a.m a -calls-> disp @ lib/disp.m",
+        "app/a.m a -references-> disp @ lib/disp.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "app/a.m:2 calls:disp",
+        "app/a.m:3 function_ref:disp"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/a.m a -calls-> disp @ lib/disp.m",
+        "app/a.m a -references-> disp @ lib/disp.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

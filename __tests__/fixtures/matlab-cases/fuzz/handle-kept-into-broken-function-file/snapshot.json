@@ -8,10 +8,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "user.m user.m -references-> f @ f.m"
+      "edges": [],
+      "rows": [
+        "user.m:1 function_ref:f"
       ],
-      "rows": [],
       "dormant": []
     }
   ]

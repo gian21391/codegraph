@@ -1,0 +1,59 @@
+{
+  "why": "A project function named for a built-in, on the path, is what a call or a handle of its name reaches (MATLAB doc 'Function Precedence Order'). With a statement before its function line the file is a script and its function local, which no other file reaches (doc 'Local Functions'; step 2), and with a stray `end` there it does not parse and offers no main function (step 12): the call and the handle are the built-in's, no edge. Each turn keeps the names the file defines, and only what they offer changes, so each step must end where a fresh index ends (project rule; step 13), the insert filter's built-in reach among it.",
+  "truth": {
+    "edges": [
+      "app/a.m a -calls-> disp @ lib/disp.m",
+      "app/a.m a -references-> disp @ lib/disp.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/disp.m": "x = 1;\nfunction disp(x)\n%DISP project copy\nfprintf('%d', x);\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/a.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/disp.m": "function disp(x)\n%DISP project copy\nfprintf('%d', x);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/a.m a -calls-> disp @ lib/disp.m",
+          "app/a.m a -references-> disp @ lib/disp.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/disp.m": "end\nfunction disp(x)\n%DISP project copy\nfprintf('%d', x);\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/a.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/disp.m": "function disp(x)\n%DISP project copy\nfprintf('%d', x);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/a.m a -calls-> disp @ lib/disp.m",
+          "app/a.m a -references-> disp @ lib/disp.m"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "user.m user -calls-> scale @ tools/scale.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "user.m user -calls-> scale @ tools/scale.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

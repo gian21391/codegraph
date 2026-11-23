@@ -1,5 +1,5 @@
 {
-  "why": "A sync must end where a fresh index ends (project rule): when the method a parameter's dotted call was guessed to reach becomes a static method, a fresh index drops the guess and leaves a failed row, but a sync keeps the old edge. Found by the step 11 fuzzer. The truth takes no side on whether the guess should stand for a static method (MATLAB lets an object call its class's static method); it pins only that sync equals fresh. The anchor: before the edit, the guess links.",
+  "why": "A sync must end where a fresh index ends (project rule): when the method a parameter's dotted call was guessed to reach becomes a static method, a fresh index drops the guess and leaves a failed row, but a sync kept the old edge until step 13, which compares whether a method is static (S11-fuzz-10). Found by the step 11 fuzzer. The truth takes no side on whether the guess should stand for a static method (MATLAB lets an object call its class's static method); it pins only that sync equals fresh. The anchor: before the edit, the guess links.",
   "truth": {
     "edges": [
       "private/util.m util -calls-> pkg::Widget::reset @ +pkg/Widget.m"
@@ -11,12 +11,5 @@
         "+pkg/Widget.m": "classdef Widget\n    properties\n    end\n    methods\n        function r = g(obj, x)\n        end\n    end\n    methods (Static)\n        function r = reset(x)\n        end\n    end\nend\n"
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-10",
-    "fails": [
-      "step 1 (+pkg/Widget.m): edges differ; only synced: [\"private/util.m util -calls-> pkg::Widget::reset @ +pkg/Widget.m\"]; only fresh: []",
-      "step 1 (+pkg/Widget.m): rows differ; only synced: []; only fresh: [\"private/util.m:2 calls:a.reset\"]"
-    ]
-  }
+  ]
 }

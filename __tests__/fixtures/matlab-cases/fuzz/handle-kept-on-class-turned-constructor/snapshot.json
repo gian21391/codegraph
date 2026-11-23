@@ -9,7 +9,7 @@
   "steps": [
     {
       "edges": [
-        "private/h.m private/h.m -references-> widget @ @widget/widget.m"
+        "private/h.m private/h.m -references-> widget::widget @ @widget/widget.m"
       ],
       "rows": [],
       "dormant": []

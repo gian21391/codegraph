@@ -8,10 +8,11 @@
  * link by design (a row dropped before its target existed) are pinned with
  * the drop rules in matlab-resolution.test.ts.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
+import { ExtractionOrchestrator } from '../src/extraction';
 import { allEdges, dormantRows, syncedAndFresh, syncedAndFreshEachStep, tempDir, unresolvedRows, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
@@ -635,6 +636,217 @@ describe('MATLAB sync in a project with Objective-C', () => {
       await cg.sync();
       expect(cg.getFiles().find((f) => f.path === 'setup_paths.m')?.language).toBe('objc');
       expect(allEdges(cg).filter((e) => e.startsWith('main.m '))).toEqual([]);
+      expect(calls).toEqual([]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MATLAB sync follows a change in what a file defines, though its names stay', () => {
+  const expectEachStepFresh = (run: Awaited<ReturnType<typeof syncedAndFreshEachStep>>, steps: Array<Record<string, string | null>>): void => {
+    run.forEach((step, i) => {
+      const what = `step ${i} ${JSON.stringify(Object.keys(steps[i]!))}`;
+      expect(step.synced, `${what} edges`).toEqual(step.fresh);
+      expect(step.syncedRows, `${what} rows`).toEqual(step.freshRows);
+      expect(step.syncedDormant, `${what} dormant rows`).toEqual(step.freshDormant);
+    });
+  };
+
+  it('when a function file with more than 500 callers becomes a script, and back, and is deleted and added back: every caller moves to the farther copy and returns', async () => {
+    // 26 files of 21 calls each (546, past the rebind's per-name ceiling of 500)
+    // reach app/drift.m; a statement put before its function line makes the
+    // function local, out of every other file's reach, and the farther
+    // lib/old/drift.m answers them (a script with local functions counts as no
+    // script: step 2); taking the statement out brings every one back. So do
+    // deleting the file and adding it back.
+    const DRIFT = 'function y = drift(x)\ny = x;\nend\n';
+    const gen: Record<string, string> = {};
+    for (let i = 1; i <= 26; i++) gen[`app/gen/g${i}.m`] = `function g${i}\n${'v = drift(1);\n'.repeat(21)}end\n`;
+    const steps = [{ 'app/drift.m': `x = 1;\n${DRIFT}` }, { 'app/drift.m': DRIFT }, { 'app/drift.m': null }, { 'app/drift.m': DRIFT }];
+    const run = await syncedAndFreshEachStep({ ...gen, 'app/drift.m': DRIFT, 'lib/old/drift.m': 'function y = drift(x)\ny = 2 * x;\nend\n' }, ...steps);
+    expectEachStepFresh(run, steps);
+    const into = (step: { synced: string[] }, file: string) => step.synced.filter((e) => e.endsWith(`-calls-> drift @ ${file}`));
+    expect(run.map((step) => [into(step, 'app/drift.m').length, into(step, 'lib/old/drift.m').length])).toEqual([[0, 546], [546, 0], [0, 546], [546, 0]]);
+  }, 240_000);
+
+  /** `n` files `dir/<stem><i>.m`, each a function of `calls` lines `line`. */
+  const callers = (dir: string, stem: string, n: number, calls: number, line: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (let i = 0; i < n; i++) out[`${dir}/${stem}${i}.m`] = `function ${stem}${i}(p)\n${line.repeat(calls)}end\n`;
+    return out;
+  };
+  /** How many synced calls end at `target` (`A::reset @ A.m`). */
+  const into = (step: { synced: string[] }, target: string) => step.synced.filter((e) => e.endsWith(` -calls-> ${target}`)).length;
+
+  it('when a method other classes also define turns static and back, more than 500 calls on a parameter link to the one class left and go again', async () => {
+    // `p.reset()` on a parameter of no stated class links only when one class
+    // defines a non-static `reset` (matlab-dispatch.test.ts, step 9): 600 such
+    // calls are ambiguous while A and B both do, and link to A's while B's is static.
+    const B = (attrs: string) => `classdef B\n    methods${attrs}\n        function r = reset(obj)\n            r = 2;\n        end\n    end\nend\n`;
+    const steps = [{ 'B.m': B(' (Static)') }, { 'B.m': B('') }];
+    const run = await syncedAndFreshEachStep({
+      ...callers('app', 'u', 30, 20, 'p.reset();\n'),
+      'A.m': 'classdef A\n    methods\n        function r = reset(obj)\n            r = 1;\n        end\n    end\nend\n',
+      'B.m': B(''),
+    }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => into(step, 'A::reset @ A.m'))).toEqual([600, 0]);
+  }, 120_000);
+
+  it('when a static method with more than 500 calls gains a second definition of its name in its class, and loses it, every call fails and links again', async () => {
+    // Two methods of one name in a class leave its call failed, as for
+    // fuzz/call-kept-into-duplicate-method (MATLAB rejects such a class).
+    const UTIL = (extra: string) => `classdef Util\n    methods (Static)\n        function r = go(x)\n            r = x;\n        end\n${extra}    end\nend\n`;
+    const steps = [{ 'Util.m': UTIL('        function r = go(x, y)\n            r = y;\n        end\n') }, { 'Util.m': UTIL('') }];
+    const run = await syncedAndFreshEachStep({ ...callers('app', 'c', 30, 20, 'Util.go(1);\n'), 'Util.m': UTIL('') }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => into(step, 'Util::go @ Util.m'))).toEqual([0, 600]);
+  }, 120_000);
+
+  it('when a method turns into a property of the same name and back, more than 500 guessed calls of it on a parameter in another class go and return', async () => {
+    // `A.reset()` on a capitalised parameter is taken for an A, with two
+    // classes defining `reset`, unless a class has a property `reset` (step 9;
+    // dispatch/receiver-guess-blocked-by-property-sync): C.m keeps its names,
+    // only the kind of its `reset` changes, and the edges end in A.m.
+    const cls = (name: string, body: string) => `classdef ${name}\n${body}end\n`;
+    const METHOD = '    methods\n        function r = reset(obj)\n            r = 1;\n        end\n    end\n';
+    const steps = [{ 'C.m': cls('C', '    properties\n        reset = 1;\n    end\n') }, { 'C.m': cls('C', METHOD) }];
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) gen[`app/u${i}.m`] = `function u${i}(A)\n${'A.reset();\n'.repeat(20)}end\n`;
+    const run = await syncedAndFreshEachStep({ ...gen, 'A.m': cls('A', METHOD), 'C.m': cls('C', METHOD) }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => into(step, 'A::reset @ A.m'))).toEqual([0, 600]);
+  }, 120_000);
+
+  it('when a class folder\'s classdef turns into an old-style constructor and back, more than 500 reads of the class\'s name on its objects go and return', async () => {
+    // The resolver links `obj.widget` in a method of a classdef class to its
+    // constructor, and an old-style object is a struct, whose member is a
+    // field (class-folders/classdef-to-old-style-member-reads-sync): only the
+    // classdef flag of `widget` changes, and the edges end at its own node.
+    const CLASSDEF = 'classdef widget\n    methods\n        function obj = widget()\n        end\n    end\nend\n';
+    const steps = [{ '@widget/widget.m': "function obj = widget()\nobj = class(struct(), 'widget');\nend\n" }, { '@widget/widget.m': CLASSDEF }];
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) gen[`@widget/peek${i}.m`] = `function peek${i}(obj)\n${'v = obj.widget;\n'.repeat(20)}end\n`;
+    const run = await syncedAndFreshEachStep({ ...gen, '@widget/widget.m': CLASSDEF }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => into(step, 'widget::widget @ @widget/widget.m'))).toEqual([0, 600]);
+  }, 120_000);
+
+  it('when a package function with more than 500 callers is made local, and back, every call goes and returns', async () => {
+    // `pkg.tool(1)` reaches +pkg/tool.m's main function by its full name
+    // (MATLAB doc 'Packages Create Namespaces'); behind a statement it is a
+    // script's local function, which no other file reaches ('Local Functions').
+    const TOOL = 'function r = tool(x)\nr = x;\nend\n';
+    const steps = [{ '+pkg/tool.m': `x = 1;\n${TOOL}` }, { '+pkg/tool.m': TOOL }];
+    const run = await syncedAndFreshEachStep({ ...callers('app', 'q', 30, 20, 'pkg.tool(1);\n'), '+pkg/tool.m': TOOL }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => into(step, 'pkg::tool @ +pkg/tool.m'))).toEqual([0, 600]);
+  }, 120_000);
+
+  it('when a function file with more than 500 callers is made local or broken, and back, with a farther script or stub of its name', async () => {
+    // Made local (a statement before the function line) or unreadable (a stray
+    // `end` there), app/ramp.m answers no other file. A farther script answers
+    // the statements alone (`ramp;`: matlab-lookup.ts step 7), a call with
+    // arguments never running a script; a farther stub, help text of a MEX
+    // function, answers both forms (its step 8).
+    const RAMP = 'function y = ramp(x)\ny = x;\nend\n';
+    const gen = callers('app', 'g', 30, 10, 'ramp;\nv = ramp(1);\n');
+    const toScript = [{ 'app/ramp.m': `x = 1;\n${RAMP}` }, { 'app/ramp.m': RAMP }, { 'app/ramp.m': `end\n${RAMP}` }, { 'app/ramp.m': RAMP }];
+    const script = await syncedAndFreshEachStep({ ...gen, 'app/ramp.m': RAMP, 'lib/old/ramp.m': 'a = 1;\nb = 2;\n' }, ...toScript);
+    expectEachStepFresh(script, toScript);
+    expect(script.map((step) => [into(step, 'ramp @ app/ramp.m'), into(step, 'lib/old/ramp.m @ lib/old/ramp.m')])).toEqual([[0, 300], [600, 0], [0, 300], [600, 0]]);
+    const toStub = [{ 'app/ramp.m': `x = 1;\n${RAMP}` }, { 'app/ramp.m': RAMP }];
+    const stub = await syncedAndFreshEachStep({ ...gen, 'app/ramp.m': RAMP, 'lib/old/ramp.m': '% RAMP help text of a MEX function\n' }, ...toStub);
+    expectEachStepFresh(stub, toStub);
+    expect(stub.map((step) => [into(step, 'ramp @ app/ramp.m'), into(step, 'lib/old/ramp.m @ lib/old/ramp.m')])).toEqual([[0, 600], [600, 0]]);
+  }, 120_000);
+
+  it('a local function of a name more than 500 calls reach, each in its own file, added to one more file and removed: the rebind re-opens none of those calls', async () => {
+    // A file's own local function comes before anything on the path and no
+    // other file reaches it (MATLAB doc 'Function Precedence Order', 'Local
+    // Functions'): a copy added or removed elsewhere moves none of those calls.
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) gen[`app/w${i}.m`] = `function w${i}()\n${'common_helper(1);\n'.repeat(25)}end\nfunction common_helper(x)\nend\n`;
+    const steps = [{ 'app/z.m': 'function z()\nend\nfunction common_helper(x)\nend\n' }, { 'app/z.m': 'function z()\nend\n' }];
+    const rebind = vi.spyOn(ExtractionOrchestrator.prototype, 'resurrectStaleResolutionEdges');
+    try {
+      const run = await syncedAndFreshEachStep({ ...gen, 'app/z.m': 'function z()\nend\n' }, ...steps);
+      expectEachStepFresh(run, steps);
+      expect(run.map((step) => step.synced.filter((e) => / -calls-> common_helper @ /.test(e)).length)).toEqual([750, 750]);
+      // Both syncs rebound `common_helper` (a definition of it came and went), and re-opened no edge.
+      expect(rebind.mock.calls.map(([names, , , relinked]) => [names, relinked])).toEqual([[['common_helper'], ['common_helper']], [['common_helper'], ['common_helper']]]);
+      expect(rebind.mock.results.map((r) => r.value)).toEqual([0, 0]);
+    } finally {
+      rebind.mockRestore();
+    }
+  }, 120_000);
+
+  it('a local function more than 500 calls reach in a file that imports the name: a package function of it added and removed takes every call and gives it back', async () => {
+    // An explicitly imported name comes before a local function (MATLAB doc
+    // 'Function Precedence Order'): `import pkg.helper` hands `helper(1)` to
+    // +pkg/helper.m once it exists, and back to the local function without it.
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 24; i++) gen[`app/m${i}.m`] = `function m${i}()\nimport pkg.helper\n${'helper(1);\n'.repeat(25)}end\nfunction helper(x)\nend\n`;
+    const steps = [{ '+pkg/helper.m': 'function helper(x)\nend\n' }, { '+pkg/helper.m': null }];
+    const run = await syncedAndFreshEachStep({ ...gen, 'app/other.m': 'function other()\nend\n' }, ...steps);
+    expectEachStepFresh(run, steps);
+    expect(run.map((step) => [into(step, 'pkg::helper @ +pkg/helper.m'), step.synced.filter((e) => /^app\/(m\d+)\.m \1 -calls-> helper @ app\/\1\.m$/.test(e)).length])).toEqual([[600, 0], [0, 600]]);
+  }, 120_000);
+
+  it('a function file whose main function is renamed inside the file, or whose body changes, keeps an empty definition delta', async () => {
+    const root = tempDir('cg-matlab-delta-');
+    writeTree(root, {
+      'tools/scale.m': 'function y = scale(x)\ny = 2 * x;\nend\nfunction z = helper(x)\nz = x;\nend\n',
+      'user.m': 'function user()\ny = scale(2);\nend\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const edges = allEdges(cg);
+      expect(edges).toContain('user.m user -calls-> scale @ tools/scale.m');
+      // MATLAB goes by the file's name: the declared name is the signature's alone.
+      writeTree(root, { 'tools/scale.m': 'function y = resize(x)\ny = 2 * x;\nend\nfunction z = helper(x)\nz = x;\nend\n' });
+      const renamed = await cg.sync();
+      expect(renamed.filesModified).toBe(1);
+      expect(renamed.definitionDelta).toBeUndefined();
+      expect(renamed.matlabRelinked).toBeUndefined();
+      writeTree(root, { 'tools/scale.m': 'function y = resize(x)\n% scaled\nk = 3;\ny = k * x;\nend\nfunction z = helper(x)\nz = -x;\nend\n' });
+      const body = await cg.sync();
+      expect(body.filesModified).toBe(1);
+      expect(body.definitionDelta).toBeUndefined();
+      expect(body.matlabRelinked).toBeUndefined();
+      expect(allEdges(cg)).toEqual(edges);
+      // A statement before the function line: the same names, the function local now.
+      writeTree(root, { 'tools/scale.m': 'k = 3;\nfunction y = scale(x)\ny = 2 * x;\nend\nfunction z = helper(x)\nz = x;\nend\n' });
+      const script = await cg.sync();
+      expect(script.definitionDelta).toEqual(['scale']);
+      expect(script.matlabRelinked).toEqual(['scale']);
+      expect(allEdges(cg).filter((e) => e.startsWith('user.m '))).toEqual([]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a sync of a project with no MATLAB file reads no MATLAB definition facts', async () => {
+    const root = tempDir('cg-objc-delta-');
+    writeTree(root, {
+      'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n- (void)go {\n}\n@end\n',
+      'objc/Thing.h': '#import <Foundation/Foundation.h>\n@interface Thing : NSObject\n- (void)go;\n@end\n',
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const queries = (cg as unknown as { queries: { getNodeFactPairsByFiles: (...a: unknown[]) => Set<string> } }).queries;
+      const calls: unknown[][] = [];
+      const read = queries.getNodeFactPairsByFiles.bind(queries);
+      queries.getNodeFactPairsByFiles = (...a: unknown[]) => {
+        calls.push(a);
+        return read(...a);
+      };
+      writeTree(root, { 'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n- (void)go {\n    [self stop];\n}\n- (void)stop {\n}\n@end\n' });
+      const result = await cg.sync();
+      expect(result.filesModified).toBe(1);
       expect(calls).toEqual([]);
     } finally {
       cg.close();

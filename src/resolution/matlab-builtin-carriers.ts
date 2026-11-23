@@ -100,7 +100,13 @@ export interface MatlabCarrierInput {
   extracted: ReadonlySet<string>;
   addedPaths: readonly string[];
   removedPaths: readonly string[];
-  /** `file\0name` of every MATLAB node (MATLAB_NODES) of the files the sync replaced or removed, read before. */
+  /**
+   * `file\0name\0facts` of every MATLAB node (MATLAB_NODES) of the files
+   * the sync replaced or removed, read before, with what another file's
+   * resolution reads of the name's definitions there (see
+   * QueryBuilder.getNodeFactPairsByFiles): a function file turned into a
+   * script, or a method made static, changes a pair with no name.
+   */
   matlabPairsBefore: ReadonlySet<string>;
   /** The same of the files the sync extracted, read after. */
   matlabPairsAfter: ReadonlySet<string>;
@@ -168,8 +174,12 @@ const noChange = (): MatlabCarrierChange => ({ gained: [], lost: [], unreached: 
 
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
 
-/** A `file\0name` pair's name. */
-const nameOf = (pair: string): string => pair.slice(pair.indexOf('\0') + 1);
+/** A `file\0name` pair's name (of a `file\0name\0facts` one too: see MatlabCarrierInput.matlabPairsBefore). */
+const nameOf = (pair: string): string => {
+  const start = pair.indexOf('\0') + 1;
+  const end = pair.indexOf('\0', start);
+  return end < 0 ? pair.slice(start) : pair.slice(start, end);
+};
 
 /** A symbol's or a `.m` file's name as the name a call is parked under (`f.m` → `f`), or null when no call can be. */
 function stemOf(name: string): string | null {

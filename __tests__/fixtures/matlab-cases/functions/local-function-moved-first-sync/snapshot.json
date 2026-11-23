@@ -1,0 +1,31 @@
+{
+  "index": {
+    "edges": [
+      "tools/pack.m pack -calls-> helper @ tools/pack.m",
+      "user.m user -calls-> helper @ lib/helper.m",
+      "user.m user -calls-> pack @ tools/pack.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "tools/pack.m pack -calls-> helper @ lib/helper.m",
+        "user.m user -calls-> helper @ lib/helper.m",
+        "user.m user -calls-> pack @ tools/pack.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "tools/pack.m pack -calls-> helper @ tools/pack.m",
+        "user.m user -calls-> helper @ lib/helper.m",
+        "user.m user -calls-> pack @ tools/pack.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

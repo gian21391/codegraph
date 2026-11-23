@@ -8,10 +8,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "private/util.m util -calls-> pkg::Widget::reset @ +pkg/Widget.m"
+      "edges": [],
+      "rows": [
+        "private/util.m:2 calls:a.reset"
       ],
-      "rows": [],
       "dormant": []
     }
   ]

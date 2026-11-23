@@ -1,0 +1,33 @@
+{
+  "why": "`A.reset()` on a capitalised parameter, with two unrelated classes defining `reset`, is taken for an object of the class it is named after, a marked guess (step 9; the case dispatch/receiver-named-after-class); while a class has a property `reset`, the call may be a property's read and no class is guessed (matlab-lookup.ts, variableMethod). When `C.m`'s method `reset` turns into a property of the same name and back, `C.m` keeps every name it defines and only the kind of its `reset` changes, while the edge that must go ends in `A.m`, which the sync leaves alone: each step must end where a fresh index ends (project rule; step 13).",
+  "truth": {
+    "edges": [
+      "app/u.m u -calls-> A::reset @ A.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "C.m": "classdef C\n    properties\n        reset = 1;\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/u.m",
+            "to": "reset"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "C.m": "classdef C\n    methods\n        function r = reset(obj)\n            r = 1;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/u.m u -calls-> A::reset @ A.m"
+        ]
+      }
+    }
+  ]
+}

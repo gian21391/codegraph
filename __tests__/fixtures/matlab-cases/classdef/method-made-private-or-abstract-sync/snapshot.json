@@ -1,0 +1,61 @@
+{
+  "index": {
+    "edges": [
+      "+shapes/Circle.m shapes::Circle::area -calls-> shapes::Ring::area @ +shapes/Ring.m",
+      "+shapes/Ring.m shapes::Ring -extends-> shapes::Circle @ +shapes/Circle.m",
+      "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m",
+      "user.m user -instantiates-> shapes::Circle @ +shapes/Circle.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "+shapes/Circle.m:7 calls:shapes::Circle::r"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "+shapes/Ring.m shapes::Ring -extends-> shapes::Circle @ +shapes/Circle.m",
+        "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m",
+        "user.m user -instantiates-> shapes::Circle @ +shapes/Circle.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "+shapes/Circle.m:7 calls:shapes::Circle::r"
+      ]
+    },
+    {
+      "edges": [
+        "+shapes/Circle.m shapes::Circle::area -calls-> shapes::Ring::area @ +shapes/Ring.m",
+        "+shapes/Ring.m shapes::Ring -extends-> shapes::Circle @ +shapes/Circle.m",
+        "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m",
+        "user.m user -instantiates-> shapes::Circle @ +shapes/Circle.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "+shapes/Circle.m:7 calls:shapes::Circle::r"
+      ]
+    },
+    {
+      "edges": [
+        "+shapes/Circle.m shapes::Circle::area -calls-> shapes::Ring::area @ +shapes/Ring.m",
+        "+shapes/Ring.m shapes::Ring -extends-> shapes::Circle @ +shapes/Circle.m",
+        "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m",
+        "user.m user -instantiates-> shapes::Circle @ +shapes/Circle.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "+shapes/Circle.m shapes::Circle::area -calls-> shapes::Ring::area @ +shapes/Ring.m",
+        "+shapes/Ring.m shapes::Ring -extends-> shapes::Circle @ +shapes/Circle.m",
+        "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m",
+        "user.m user -instantiates-> shapes::Circle @ +shapes/Circle.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "+shapes/Circle.m:7 calls:shapes::Circle::r"
+      ]
+    }
+  ]
+}

@@ -10,10 +10,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "+pkg/Mid.m +pkg/Mid.m -calls-> size @ +pkg/private/size.m"
+      "edges": [],
+      "rows": [
+        "+pkg/Mid.m:1 calls:size"
       ],
-      "rows": [],
       "dormant": [
         "+pkg/Mid.m:1 calls:w"
       ]

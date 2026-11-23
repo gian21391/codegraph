@@ -1,0 +1,77 @@
+{
+  "why": "A function file that gains a statement before its function line becomes a script, and its function a local one, out of reach of every other file (MATLAB doc 'Local Functions'); a script with local functions counts as no script (accepted in step 2), so a call of the name from another folder goes to the farther function file of the name, and comes back when the statement goes. Each step must end where a fresh index ends (project rule), however the callers are spread, an argument's flow among them (`runner('drift')` into `feval(fn, 1)`, the argument synthesizer's edge, whose name is looked up where the sink is): step 13 (a sync follows a change in what a file defines).",
+  "truth": {
+    "edges": [
+      "app/a/run_a.m run_a -calls-> drift @ app/drift.m",
+      "app/b/run_b.m run_b -references-> drift @ app/drift.m",
+      "app/c/runner.m runner -calls-> drift @ app/drift.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/a/run_a.m",
+        "to": "drift",
+        "at": "lib/old/drift.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/drift.m": "x = 1;\nfunction y = drift(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/a/run_a.m run_a -calls-> drift @ lib/old/drift.m",
+          "app/b/run_b.m run_b -references-> drift @ lib/old/drift.m",
+          "app/c/runner.m runner -calls-> drift @ lib/old/drift.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/a/run_a.m",
+            "to": "drift",
+            "at": "app/drift.m"
+          },
+          {
+            "from": "app/b/run_b.m",
+            "to": "drift",
+            "at": "app/drift.m"
+          },
+          {
+            "from": "app/c/runner.m",
+            "to": "drift",
+            "at": "app/drift.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/drift.m": "function y = drift(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/a/run_a.m run_a -calls-> drift @ app/drift.m",
+          "app/b/run_b.m run_b -references-> drift @ app/drift.m",
+          "app/c/runner.m runner -calls-> drift @ app/drift.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/a/run_a.m",
+            "to": "drift",
+            "at": "lib/old/drift.m"
+          },
+          {
+            "from": "app/b/run_b.m",
+            "to": "drift",
+            "at": "lib/old/drift.m"
+          },
+          {
+            "from": "app/c/runner.m",
+            "to": "drift",
+            "at": "lib/old/drift.m"
+          }
+        ]
+      }
+    }
+  ]
+}

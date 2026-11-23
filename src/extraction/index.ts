@@ -196,6 +196,19 @@ export interface SyncResult {
    */
   definitionDelta?: string[];
   /**
+   * The names of `definitionDelta` whose MATLAB definitions this sync changed
+   * (see MatlabCarrierChange.relinked): added to a file or taken from one, or
+   * changed in place though the name stayed, in what other files reach (a
+   * function file turned into a script, whose function is local now; a
+   * method made static; a second method of the name). Their edges are
+   * rebound past the rebind's per-name ceiling, as their failed rows are
+   * resolved again past the retry's: the edges into a changed file's
+   * definitions of the name may all go, and the edges into its other copies
+   * may all come (a caller's answer turns on which copy is reachable, not on
+   * how common the name is).
+   */
+  matlabRelinked?: string[];
+  /**
    * Modified ES modules whose `export … from` statements changed: a re-export
    * that points at another module now (`export { foo } from './a'` →
    * `'./b'`), one taken away or added, or a clause that passes other names on.
@@ -3762,19 +3775,34 @@ export class ExtractionOrchestrator {
    *   skipped — their references were re-resolved from scratch moments ago;
    * - very common names are skipped by the per-name ceiling in
    *   `getResolutionEdgesByTargetName`, counted over the edges up to
-   *   `countedUpToEdgeId` when given (those before the sync's failed-ref retry).
+   *   `countedUpToEdgeId` when given (those before the sync's failed-ref retry),
+   *   except a MATLAB name in `matlabRelinked` (see SyncResult.matlabRelinked),
+   *   whose edges into MATLAB nodes are all taken, but the ones from a file
+   *   into its own local function (see getMatlabRebindEdgesByTargetName).
    *
    * Returns the number of references resurrected.
    */
-  resurrectStaleResolutionEdges(definitionDelta: string[], changedFilePaths: string[], countedUpToEdgeId?: number): number {
+  resurrectStaleResolutionEdges(
+    definitionDelta: string[],
+    changedFilePaths: string[],
+    countedUpToEdgeId?: number,
+    matlabRelinked: readonly string[] = []
+  ): number {
     if (definitionDelta.length === 0) return 0;
     const alreadyFresh = new Set(changedFilePaths);
     const candidates = this.queries.getResolutionEdgesByTargetName(definitionDelta, undefined, countedUpToEdgeId);
+    // A name whose MATLAB definitions changed (SyncResult.matlabRelinked): every
+    // edge into a MATLAB node of it, however many, as a fresh index would bind
+    // each again, but a file's call of its own local function, which no other
+    // file can move (see getMatlabRebindEdgesByTargetName).
+    if (matlabRelinked.length > 0) candidates.push(...this.queries.getMatlabRebindEdgesByTargetName(matlabRelinked));
 
     const edgeIds: number[] = [];
     const refs: UnresolvedReference[] = [];
+    const seen = new Set<number>();
     for (const e of candidates) {
-      if (alreadyFresh.has(e.sourceFilePath)) continue;
+      if (alreadyFresh.has(e.sourceFilePath) || seen.has(e.edgeId)) continue;
+      seen.add(e.edgeId);
       const ref = resurrectRefFromDroppedEdge(e);
       if (!ref) continue; // no stamp — never delete what we cannot restore
       edgeIds.push(e.edgeId);
@@ -4112,21 +4140,26 @@ export class ExtractionOrchestrator {
     // BEFORE their nodes are replaced/deleted. Compared against the post-store
     // pairs below to derive `definitionDelta` (CG-33).
     const pairsBefore = new Set<string>();
-    // The same pairs of the MATLAB nodes alone, of the callable ones among
-    // them (no property, constant, enumeration member or field), and of the
-    // ones a member call written with arguments can reach (a method, a class,
-    // a package's function, a `.m` file in a class or package folder), for a
-    // MATLAB member call's carriers (see resolution/matlab-builtin-carriers):
-    // a property turned into a method of the same name changes the second and
-    // leaves the first as it was, and a local function turned into a classdef
-    // method changes the third alone.
+    // The same pairs of the MATLAB nodes alone, each with what another
+    // file's resolution reads of the name's definitions in the file (its
+    // kinds, qualified names, which function is a function file's main one,
+    // static-ness and the like, how many: see getNodeFactPairsByFiles), of
+    // the callable ones among them (no property, constant, enumeration
+    // member or field), and of the ones a member call written with arguments
+    // can reach (a method, a class, a package's function, a `.m` file in a
+    // class or package folder), for a MATLAB member call's carriers (see
+    // resolution/matlab-builtin-carriers): a property turned into a method of
+    // the same name changes the second and the third, a local function turned
+    // into a classdef method the third alone, and either the first's facts,
+    // as a function file turned into a script does, which keeps every name
+    // (its function is local now).
     const trackMatlab = this.queries.hasFilesOfLanguage('matlab');
     const matlabPairsBefore = new Set<string>();
     const callablePairsBefore = new Set<string>();
     const memberPairsBefore = new Set<string>();
     const sampleMatlabPairs = (files: string[]): void => {
       if (!trackMatlab) return;
-      for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_NODES)) matlabPairsBefore.add(pair);
+      for (const pair of this.queries.getNodeFactPairsByFiles(files, MATLAB_NODES)) matlabPairsBefore.add(pair);
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_CALLABLE_NODES)) callablePairsBefore.add(pair);
       for (const pair of this.queries.getNodeNamePairsByFiles(files, MATLAB_MEMBER_NODES)) memberPairsBefore.add(pair);
     };
@@ -4462,6 +4495,25 @@ export class ExtractionOrchestrator {
     const nameOf = (pair: string) => pair.slice(pair.indexOf('\0') + 1);
     for (const pair of pairsBefore) if (!pairsAfter.has(pair)) deltaNames.add(nameOf(pair));
     for (const pair of pairsAfter) if (!pairsBefore.has(pair)) deltaNames.add(nameOf(pair));
+    // A MATLAB name a file defines before and after, whose definitions there
+    // changed what other files reach (a function file turned into a script
+    // keeps its function, local now; a method made static; a class folder's
+    // classdef rewritten as an old-style constructor; a second method of the
+    // name): it joins the delta as a name defined anew does, and the
+    // carriers below relink it (its edges are rebound past the rebind's
+    // ceiling: `matlabRelinked`). Read from the MATLAB pairs with their
+    // facts, which a body-only edit leaves as they were.
+    const watchMatlab = trackMatlab || this.queries.hasFilesOfLanguage('matlab');
+    const matlabPairsAfter = watchMatlab ? this.queries.getNodeFactPairsByFiles(filesToIndex, MATLAB_NODES) : new Set<string>();
+    if (matlabPairsBefore.size > 0 && matlabPairsAfter.size > 0) {
+      const keyOf = (pair: string) => pair.slice(0, pair.indexOf('\0', pair.indexOf('\0') + 1));
+      const keysAfter = new Map<string, string>();
+      for (const pair of matlabPairsAfter) keysAfter.set(keyOf(pair), pair);
+      for (const pair of matlabPairsBefore) {
+        const after = keysAfter.get(keyOf(pair));
+        if (after !== undefined && after !== pair) deltaNames.add(nameOf(keyOf(pair)));
+      }
+    }
     // A file stored in another language than it had defines each of its
     // names anew, before and after, as a removed file and an added one do
     // (see storeExtractionResult).
@@ -4484,11 +4536,10 @@ export class ExtractionOrchestrator {
     // to be resolved by the sweep; a failed one no longer answered sleeps.
     // A name whose MATLAB definitions changed has its failed rows resolved
     // again, every one, past the retry's ceiling (MatlabCarrierChange.relinked).
-    const watchMatlab = trackMatlab || this.queries.hasFilesOfLanguage('matlab');
     const carriers = matlabCarrierChanges(this.queries, {
       deltaNames, extracted: new Set(filesToIndex), addedPaths: addedFilePaths, removedPaths: removedFilePaths,
       matlabPairsBefore,
-      matlabPairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_NODES) : new Set(),
+      matlabPairsAfter,
       callablePairsBefore,
       callablePairsAfter: watchMatlab ? this.queries.getNodeNamePairsByFiles(filesToIndex, MATLAB_CALLABLE_NODES) : new Set(),
       memberPairsBefore,
@@ -4496,6 +4547,8 @@ export class ExtractionOrchestrator {
       unreadBefore,
       reachingBefore: carrierInputs.reaching,
     });
+    // The delta's names among them, whose edges the rebind takes past its ceiling (SyncResult.matlabRelinked).
+    const matlabRelinked = carriers.relinked.filter((name) => deltaNames.has(name));
     const tCarriers = Date.now();
     const { step: carrierStep, flipMs, scanMs } = this.matlabCarrierStepOf(carriers, new Set(filesToIndex));
     if (ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep)) {
@@ -4542,6 +4595,7 @@ export class ExtractionOrchestrator {
       ...(addedFilePaths.length > 0 ? { addedFilePaths } : {}),
       ...(failedFilePaths.length > 0 ? { failedFilePaths } : {}),
       definitionDelta: definitionDelta.length > 0 ? definitionDelta : undefined,
+      ...(matlabRelinked.length > 0 ? { matlabRelinked } : {}),
       ...(reExportsChanged.length > 0 ? { reExportsChangedFilePaths: reExportsChanged } : {}),
       ...(removedFilePaths.length > 0 ? { removedFilePaths } : {}),
       ...(detectedFrameworks ? { detectedFrameworks } : {}),

@@ -8,10 +8,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "user.m user.m -calls-> g @ g.m"
+      "edges": [],
+      "rows": [
+        "user.m:1 calls:g"
       ],
-      "rows": [],
       "dormant": []
     }
   ]

@@ -1,0 +1,34 @@
+{
+  "index": {
+    "edges": [
+      "app/a/run_a.m run_a -calls-> drift @ app/drift.m",
+      "app/b/run_b.m run_b -references-> drift @ app/drift.m",
+      "app/c/runner.m runner -calls-> drift @ app/drift.m",
+      "app/c/use_runner.m use_runner -calls-> runner @ app/c/runner.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/a/run_a.m run_a -calls-> drift @ lib/old/drift.m",
+        "app/b/run_b.m run_b -references-> drift @ lib/old/drift.m",
+        "app/c/runner.m runner -calls-> drift @ lib/old/drift.m",
+        "app/c/use_runner.m use_runner -calls-> runner @ app/c/runner.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/a/run_a.m run_a -calls-> drift @ app/drift.m",
+        "app/b/run_b.m run_b -references-> drift @ app/drift.m",
+        "app/c/runner.m runner -calls-> drift @ app/drift.m",
+        "app/c/use_runner.m use_runner -calls-> runner @ app/c/runner.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "why": "A handle to a built-in nothing in the project could answer keeps no row (step 8, the built-in discard), and an Octave file answers no call (step 4; Octave is not read): once the empty script `lib/disp.m` (a script of nothing, step 11's ruling) turns to Octave, a file added later that takes `@disp` keeps no row, as a fresh index of the same files has it; the class's method `disp` is reached only through an object of the class (MATLAB doc 'Methods That Modify Default Behavior'). A sync in a long-lived process kept a failed row until step 13 (s402-c12, found by the step 11 fuzzer).",
+  "truth": {},
+  "steps": [
+    {
+      "edit": {
+        "lib/disp.m": "endfunction"
+      }
+    },
+    {
+      "edit": {
+        "lib/run.m": "function varargout = run(varargin)\n    c = arrayfun(@disp, {1, 2});\n    y = g(1);\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m run -calls-> g @ lib/g.m"
+        ],
+        "noRows": [
+          "lib/run.m:2 function_ref:disp"
+        ]
+      }
+    }
+  ]
+}

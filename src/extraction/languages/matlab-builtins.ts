@@ -305,12 +305,19 @@ export function withoutUnanswerableMatlabBuiltins<R extends { referenceName: str
  * `.m` files already stored, read at the first MATLAB file a run stores (or
  * by `loadStored`), and of every file a run is about to store (`expect`),
  * which a file it stores before them may call. It grows, and is read again
- * after a sync removes a `.m` file (`forget`), so a name no file is named for
- * any more keeps no call a fresh index would drop.
+ * after a sync removes a `.m` file (`forget`), or stores one named for a
+ * built-in whose text answers no call now (see `expect`), so a name no file
+ * answers for any more keeps no call a fresh index would drop.
  */
 export class MatlabInsertFilter {
   private reachable: Set<string> | null = null;
   private expected: string[] = [];
+  /**
+   * The `.m` files named for a built-in that a run expects with Octave or
+   * binary text: the index may still hold one's earlier text (it is stored
+   * later in the run), which answered calls of its name.
+   */
+  private readonly silent = new Set<string>();
 
   /**
    * `storedPaths` lists the paths of the MATLAB files the index holds whose
@@ -329,15 +336,27 @@ export class MatlabInsertFilter {
    * discards it, never an edge. But for a file named for a built-in, which is
    * read now (there are few): one of Octave or binary text answers no call
    * (Octave's `datestr.m`, MATLAB Compiler's encrypted `pause.m`), and the
-   * resolver would discard the rows its name kept. (A name an earlier
-   * state of such a file made reachable stays so: rows kept, never edges.)
+   * resolver would discard the rows its name kept. When such a file's
+   * earlier text answered calls (an empty `disp.m` a long-lived process
+   * indexed, turned to Octave since), the names are read again without it,
+   * as a fresh index of the files reads them: a later file's `@disp` keeps
+   * no row, which the resolver would keep failed while a class's method
+   * `disp` carries the name.
    */
   expect(paths: readonly string[]): void {
+    const answering: string[] = [];
     for (const p of paths) {
-      if (!p.toLowerCase().endsWith('.m') || this.answersNoCall(p)) continue;
-      if (this.reachable) addMatlabReachableNames([p], this.reachable);
-      else this.expected.push(p);
+      if (!p.toLowerCase().endsWith('.m')) continue;
+      if (!this.answersNoCall(p)) {
+        this.silent.delete(p);
+        answering.push(p);
+      } else if (!this.silent.has(p)) {
+        this.silent.add(p);
+        this.reachable = null;
+      }
     }
+    if (this.reachable) addMatlabReachableNames(answering, this.reachable);
+    else this.expected.push(...answering);
   }
 
   /** Whether `p`, a `.m` file named for a built-in, holds Octave or binary text. */
@@ -375,7 +394,8 @@ export class MatlabInsertFilter {
   private names(): Set<string> {
     if (!this.reachable) {
       this.reachable = new Set();
-      addMatlabReachableNames(this.storedPaths(), this.reachable);
+      const stored = [...this.storedPaths()];
+      addMatlabReachableNames(this.silent.size === 0 ? stored : stored.filter((p) => !this.silent.has(p)), this.reachable);
       addMatlabReachableNames(this.expected, this.reachable);
       this.expected = [];
     }

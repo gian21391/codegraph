@@ -1,0 +1,41 @@
+{
+  "why": "A method called on an object of its class links to it (MATLAB doc 'Method Invocation'; matlab-resolution.test.ts). Made `Access = private`, the call from outside the class errors in MATLAB (doc 'Method Attributes'), and made `Abstract`, the class can no longer be constructed (doc 'Abstract Classes and Class Members'). No resolution reads either attribute today, so a sync's definition delta leaves both out (step 13), and the override synthesizer, which reads `Access = private`, is redone on every MATLAB sync. This case guards that each step still ends where a fresh index ends (project rule), the subclass's override among it: once resolution reads either attribute, a sync that does not put the method's name in its delta keeps the old edge and this case fails.",
+  "truth": {
+    "edges": [
+      "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "While `area` is private or abstract the call from `user.m` still links to it.",
+      "why": "The resolver does not read `Access` or `Abstract`: a resolution rule, for step 15."
+    }
+  ],
+  "steps": [
+    {
+      "edit": {
+        "+shapes/Circle.m": "classdef Circle\n    properties\n        r = 1;\n    end\n    methods (Access = private)\n        function a = area(obj)\n            a = pi * obj.r^2;\n        end\n    end\nend\n"
+      }
+    },
+    {
+      "edit": {
+        "+shapes/Circle.m": "classdef Circle\n    properties\n        r = 1;\n    end\n    methods\n        function a = area(obj)\n            a = pi * obj.r^2;\n        end\n    end\nend\n"
+      }
+    },
+    {
+      "edit": {
+        "+shapes/Circle.m": "classdef Circle\n    properties\n        r = 1;\n    end\n    methods (Abstract)\n        a = area(obj)\n    end\nend\n"
+      }
+    },
+    {
+      "edit": {
+        "+shapes/Circle.m": "classdef Circle\n    properties\n        r = 1;\n    end\n    methods\n        function a = area(obj)\n            a = pi * obj.r^2;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "user.m user -calls-> shapes::Circle::area @ +shapes/Circle.m"
+        ]
+      }
+    }
+  ]
+}
