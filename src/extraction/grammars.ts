@@ -636,9 +636,11 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
   }
 
   // `.m` is Objective-C's implementation extension and MATLAB's only one, so
-  // it is decided per file by content, like `.inc`. An explicit codegraph.json
-  // mapping for `.m` is the user's answer and is not second-guessed.
-  if (lang === 'objc' && ext === '.m' && source && !(overrides && overrides[ext]) && looksLikeMatlab(source)) {
+  // it is decided per file by content, like `.inc` — an empty file's too (an
+  // empty MATLAB script); with no content given, the extension's mapping
+  // stands. An explicit codegraph.json mapping for `.m` is the user's answer
+  // and is not second-guessed.
+  if (lang === 'objc' && ext === '.m' && source !== undefined && !(overrides && overrides[ext]) && looksLikeMatlab(source)) {
     return 'matlab';
   }
 
@@ -703,8 +705,11 @@ const C_LINE_COMMENT = /^[ \t]*(?:\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
  * `%` line, `end;` or `...` in plain C); a weaker MATLAB shape makes it
  * MATLAB; and so does any other content left once C comments and the
  * directives a comment may read as are set aside, since a MATLAB script may
- * be nothing but statements (`c_obs = zeros(100, 100, 100);`). An empty,
- * comment-only or directive-only file stays Objective-C. Text inside a MATLAB
+ * be nothing but statements (`c_obs = zeros(100, 100, 100);`). A file of
+ * nothing else — empty, white space or a BOM only, or MATLAB comments only (a
+ * `%` line, `%{ … %}` blocks, an unclosed `%{`) — is MATLAB too: an empty
+ * MATLAB script, or one of comments (the user's rulings, step 11). One of C
+ * comments only or of directives only stays Objective-C. Text inside a MATLAB
  * `%{ … %}` block comment is no evidence either way (read with the
  * extractor's nesting rule). Per file, so a full index and a sync of one
  * edited file always agree.
@@ -716,7 +721,11 @@ export function looksLikeMatlab(source: string): boolean {
   if (C_DECLARATION_SIGNAL.test(text)) return false;
   const code = text.replace(C_LINE_COMMENT, '');
   if (MATLAB_WEAK_SIGNAL.test(code) || OCTAVE_KEYWORD_LINE.test(code)) return true;
-  return /\S/.test(code.replace(AMBIGUOUS_DIRECTIVE_LINE, ''));
+  if (/\S/.test(code.replace(AMBIGUOUS_DIRECTIVE_LINE, ''))) return true;
+  // Nothing is left but C comments and directives, or nothing at all: the
+  // former stays Objective-C, and white space and MATLAB block comments alone
+  // (blanked in `text`) are an empty MATLAB script, or one of comments.
+  return !/\S/.test(text);
 }
 
 /** A PHP open tag: `<?php` in any case, or the short echo `<?=` (never `<?xml`). */

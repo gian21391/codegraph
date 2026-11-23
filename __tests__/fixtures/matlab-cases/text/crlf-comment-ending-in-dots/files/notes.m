@@ -1,0 +1,6 @@
+function notes()
+% the next step ...
+tailT(3);
+x = 1; % so far ...
+missingN(4);
+end

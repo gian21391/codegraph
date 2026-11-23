@@ -1,0 +1,48 @@
+{
+  "why": "A `%{` after code on its line is a line comment, not a block comment's start (MATLAB doc 'Add Comments to Code': the markers must appear alone on their lines), so the root `startup.m` runs both `addpath` lines and `lib2` is on the path (MATLAB doc 'addpath'; matlab-path.test.ts 'MATLAB path: a root startup.m'): `toolA(1)` calls `lib2/toolA.m`, and never the copy in `lib3`, which no line adds. The anchor: `x()`, in `lib`, which the first line adds, links in either reading. This guards the path evaluation, which parses the startup code again and must read it as the extractor does (step 12), in LF and in CRLF (the step).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> toolA @ lib2/toolA.m",
+      "main.m main -calls-> x @ lib/x.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "at": "lib3/toolA.m"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "main.m",
+        "name": "toolA"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "startup.m": {
+          "base64": "YWRkcGF0aCgnbGliJykgJXsNCmFkZHBhdGgoJ2xpYjInKQ0K"
+        }
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> toolA @ lib2/toolA.m",
+          "main.m main -calls-> x @ lib/x.m"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "at": "lib3/toolA.m"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "main.m",
+            "name": "toolA"
+          }
+        ]
+      }
+    }
+  ]
+}

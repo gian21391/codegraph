@@ -1,5 +1,5 @@
 {
-  "why": "An empty `off/disp.m` is an empty MATLAB script (the user's ruling (step 11)) that comes before the built-in (no path config: every folder in reach; MATLAB doc 'Function Precedence Order'), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): so `disp(a.data)` is a live row, before and after an unrelated file holding only `end` is added. Today the empty file reads as Objective-C and the call is a dormant row in a fresh index, which the sync that adds the unrelated file drops (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: the script's read `a.data` of a name it never assigns is a dormant row in every state.",
+  "why": "An empty `off/disp.m` is an empty MATLAB script (the user's ruling (step 11)) that comes before the built-in (no path config: every folder in reach; MATLAB doc 'Function Precedence Order'), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): so `disp(a.data)` is a live row, before and after an unrelated file holding only `end` is added. Until step 12 the empty file read as Objective-C and the call was a dormant row in a fresh index, which the sync that adds the unrelated file dropped (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: the script's read `a.data` of a name it never assigns is a dormant row in every state.",
   "truth": {
     "rows": [
       "tools/max.m:1 calls:disp"
@@ -37,16 +37,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-1",
-    "fails": [
-      "index: missing row tools/max.m:1 calls:disp",
-      "index: unwanted dormant row tools/max.m:1 calls:disp",
-      "step 1 (synced): missing row tools/max.m:1 calls:disp",
-      "step 1 (fresh): missing row tools/max.m:1 calls:disp",
-      "step 1 (fresh): unwanted dormant row tools/max.m:1 calls:disp",
-      "step 1 (+pkg/+sub/run.m): dormant rows differ; only synced: []; only fresh: [\"tools/max.m:1 calls:disp\"]"
-    ]
-  }
+  ]
 }

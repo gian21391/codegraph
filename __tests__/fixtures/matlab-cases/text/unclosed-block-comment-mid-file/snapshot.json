@@ -1,0 +1,22 @@
+{
+  "index": {
+    "edges": [
+      "tool.m tool -calls-> keepA @ keepA.m"
+    ],
+    "rows": [
+      "tool.m:3 calls:missingK"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "tool.m tool -calls-> keepA @ keepA.m"
+      ],
+      "rows": [
+        "tool.m:3 calls:missingK"
+      ],
+      "dormant": []
+    }
+  ]
+}

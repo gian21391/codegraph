@@ -3,9 +3,10 @@
     "edges": [
       "data.m data.m -calls-> g @ g.m"
     ],
-    "rows": [],
+    "rows": [
+      "data.m:1 calls:disp"
+    ],
     "dormant": [
-      "data.m:1 calls:disp",
       "h.m:1 calls:a"
     ]
   },
@@ -16,7 +17,6 @@
       ],
       "rows": [],
       "dormant": [
-        "data.m:1 calls:disp",
         "h.m:1 calls:a"
       ]
     }

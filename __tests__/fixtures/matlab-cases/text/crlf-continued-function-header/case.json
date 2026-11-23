@@ -1,0 +1,52 @@
+{
+  "why": "A `...` at a line's end continues the line under CRLF as under LF (MATLAB doc 'Continue Long Statements on Multiple Lines'; project rule: text form changes nothing), so a function header continued before its `=` and inside its parameters is the header of `spanOf`: the call links, and the parameters `v` and `w` are the function's variables, never calls. The step turns the file to LF with the same bytes otherwise, and nothing changes.",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> spanOf @ spanOf.m"
+    ],
+    "noRows": [
+      {
+        "file": "spanOf.m",
+        "name": "v"
+      },
+      {
+        "file": "spanOf.m",
+        "name": "w"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "spanOf.m",
+        "name": "v"
+      },
+      {
+        "file": "spanOf.m",
+        "name": "w"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "spanOf.m": {
+          "base64": "ZnVuY3Rpb24gW2xvLCBoaV0gLi4uCiAgICA9IHNwYW5PZih2LCAuLi4KICAgIHcpCmxvID0gbWluKHYpOwpoaSA9IG1heCh3KTsKZW5kCg=="
+        }
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> spanOf @ spanOf.m"
+        ],
+        "noRows": [
+          {
+            "file": "spanOf.m",
+            "name": "v"
+          },
+          {
+            "file": "spanOf.m",
+            "name": "w"
+          }
+        ]
+      }
+    }
+  ]
+}

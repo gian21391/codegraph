@@ -1,15 +1,18 @@
 {
   "index": {
-    "edges": [],
+    "edges": [
+      "main.m main -calls-> notes.m @ notes.m"
+    ],
     "rows": [
-      "main.m:2 calls:notes"
+      "user.m:2 calls:notes"
     ],
     "dormant": []
   },
   "steps": [
     {
       "edges": [
-        "main.m main -calls-> notes.m @ notes.m"
+        "main.m main -calls-> notes.m @ notes.m",
+        "user.m user -calls-> notes.m @ notes.m"
       ],
       "rows": [],
       "dormant": []

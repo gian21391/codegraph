@@ -1,0 +1,34 @@
+{
+  "why": "An empty `.m`, one of white space only and one of a BOM only are each an empty MATLAB script (the user's ruling (step 11)): a statement naming one runs it, so it links to the script's file, and a call with arguments or an output is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments').",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> blankA.m @ blankA.m",
+      "main.m main -calls-> blankB.m @ blankB.m",
+      "main.m main -calls-> blankC.m @ blankC.m"
+    ],
+    "rows": [
+      "main.m:5 calls:blankA",
+      "main.m:6 calls:blankB",
+      "main.m:7 calls:blankC"
+    ],
+    "noRows": [
+      "main.m:2 calls:blankA",
+      "main.m:3 calls:blankB",
+      "main.m:4 calls:blankC"
+    ],
+    "noDormant": [
+      {
+        "file": "main.m",
+        "name": "blankA"
+      },
+      {
+        "file": "main.m",
+        "name": "blankB"
+      },
+      {
+        "file": "main.m",
+        "name": "blankC"
+      }
+    ]
+  }
+}

@@ -11,18 +11,5 @@
         "name": "emptyScr"
       }
     ]
-  },
-  "known": [
-    {
-      "what": "Today an empty .m reads as Objective-C, so no script node answers `emptyScr` and the statement is a live row.",
-      "why": "Pinned in matlab-extraction.test.ts \"keeps Objective-C .m files Objective-C\" (an empty file: the extension's mapping stands); the ruling changes that answer."
-    }
-  ],
-  "pendingBug": {
-    "id": "S11-ruling-empty",
-    "fails": [
-      "index: missing edge main.m main -calls-> emptyScr.m @ emptyScr.m",
-      "index: unwanted row main.m:2 calls:emptyScr (matches {\"file\":\"main.m\",\"name\":\"emptyScr\"})"
-    ]
   }
 }

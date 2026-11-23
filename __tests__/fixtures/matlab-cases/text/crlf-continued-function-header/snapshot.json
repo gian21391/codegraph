@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> spanOf @ spanOf.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> spanOf @ spanOf.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

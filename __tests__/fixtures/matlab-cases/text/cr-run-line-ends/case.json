@@ -1,0 +1,107 @@
+{
+  "why": "A file whose lines end in `\\r\\r\\n`, as some editors write them, reads as its LF copy (project rule, step 12: a run of `\\r` before a `\\n` is one line end, for the grammar and for every reader of the text alike): the `%{ … %}` block in `f` hides its call, `helpdoc.m` is `%` help text and a block comment, so a help-text stub (matlab-resolution.test.ts 'MATLAB stubs: the help text of a MEX function'), which answers the call `helpdoc(1)` and the statement `helpdoc` alike, and the code in its block is no call. The step turns every file to LF and nothing changes.",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> helpdoc.m @ helpdoc.m",
+      "f.m f -calls-> shownA @ shownA.m"
+    ],
+    "noEdges": [
+      {
+        "from": "f.m",
+        "to": "hiddenA"
+      },
+      {
+        "from": "helpdoc.m",
+        "to": "old"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "main.m",
+        "name": "helpdoc"
+      },
+      {
+        "file": "f.m",
+        "name": "hiddenA"
+      },
+      {
+        "file": "helpdoc.m",
+        "name": "old"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "f.m",
+        "name": "hiddenA"
+      },
+      {
+        "file": "helpdoc.m",
+        "name": "old"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "f.m": {
+          "base64": "ZnVuY3Rpb24gZigpCiV7CmhpZGRlbkEoMSk7CiV9CnNob3duQSgyKTsKZW5kCg=="
+        },
+        "helpdoc.m": {
+          "base64": "JSBIRUxQRE9DICBoZWxwIHRleHQgb2YgYSBjb21waWxlZCBmdW5jdGlvbgolewpvbGQoMSk7CiV9Cg=="
+        },
+        "hiddenA.m": {
+          "base64": "ZnVuY3Rpb24gaGlkZGVuQSh4KQplbmQK"
+        },
+        "main.m": {
+          "base64": "ZnVuY3Rpb24gbWFpbigpCmhlbHBkb2MoMSk7CmhlbHBkb2MKZW5kCg=="
+        },
+        "old.m": {
+          "base64": "ZnVuY3Rpb24gb2xkKHgpCmVuZAo="
+        },
+        "shownA.m": {
+          "base64": "ZnVuY3Rpb24gc2hvd25BKHgpCmVuZAo="
+        }
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> helpdoc.m @ helpdoc.m",
+          "f.m f -calls-> shownA @ shownA.m"
+        ],
+        "noEdges": [
+          {
+            "from": "f.m",
+            "to": "hiddenA"
+          },
+          {
+            "from": "helpdoc.m",
+            "to": "old"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "main.m",
+            "name": "helpdoc"
+          },
+          {
+            "file": "f.m",
+            "name": "hiddenA"
+          },
+          {
+            "file": "helpdoc.m",
+            "name": "old"
+          }
+        ],
+        "noDormant": [
+          {
+            "file": "f.m",
+            "name": "hiddenA"
+          },
+          {
+            "file": "helpdoc.m",
+            "name": "old"
+          }
+        ]
+      }
+    }
+  ]
+}

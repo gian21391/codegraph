@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "setupS.m setupS.m -calls-> pkg::f @ +pkg/f.m",
+      "setupS.m setupS.m -calls-> showIt @ showIt.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -2734,8 +2734,11 @@ export class ExtractionOrchestrator {
      * in-process synchronously as the no-worker fallback. The language is resolved
      * here on the main thread, where the codegraph.json overrides are loaded.
      */
-    const parseFile = (filePath: string, content: string): Promise<ExtractionResult> => {
-      const language = detectLanguage(filePath, content, overrides, this.rootDir);
+    const parseFile = (
+      filePath: string,
+      content: string,
+      language: Language = detectLanguage(filePath, content, overrides, this.rootDir),
+    ): Promise<ExtractionResult> => {
       const names = this.frameworksForFile(filePath, frameworkNames);
       if (!pool) return Promise.resolve(extractFromSource(filePath, content, language, names));
       return pool.requestParse({ filePath, content, language, frameworkNames: names });
@@ -3185,15 +3188,18 @@ export class ExtractionOrchestrator {
             .map(line => /^\s*\/\//.test(line) ? '' : line)
             .join('\n');
 
+          // The file's language is its own text's, not the stripped text's: a
+          // `.m` of `//` lines only is Objective-C, and blank once stripped,
+          // which reads as an empty MATLAB script.
+          const language = detectLanguage(filePath, fullContent, overrides, this.rootDir);
           let result: ExtractionResult;
           try {
-            result = await parseFile(filePath, stripped);
+            result = await parseFile(filePath, stripped, language);
           } catch {
             continue;
           }
 
           // Same undecoded-transport hazard as the first retry pass (#1541).
-          const language = detectLanguage(filePath, fullContent, overrides, this.rootDir);
           result = materializeKernelResult(result, filePath, language);
 
           if (result.nodes.length > 0 || result.errors.length === 0) {

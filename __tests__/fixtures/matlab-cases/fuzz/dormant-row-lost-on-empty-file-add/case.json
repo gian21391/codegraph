@@ -1,5 +1,5 @@
 {
-  "why": "An empty `run.m` added at the root is an empty MATLAB script ahead of the built-in `run` (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): so after the add, `f = run({})` is a live row (before it, the built-in's call: no edge and no row). Today a fresh index after the add keeps the call as a dormant row and the sync keeps no row (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: the script's other call, `g(2)`, links.",
+  "why": "An empty `run.m` added at the root is an empty MATLAB script ahead of the built-in `run` (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): so after the add, `f = run({})` is a live row (before it, the built-in's call: no edge and no row). Until step 12 (the empty file read as Objective-C) a fresh index after the add kept the call as a dormant row and the sync kept no row (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer). The anchor: the script's other call, `g(2)`, links.",
   "truth": {
     "edges": [
       "+Pkg/disp.m +Pkg/disp.m -calls-> g @ g.m"
@@ -37,14 +37,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-3",
-    "fails": [
-      "step 1 (synced): missing row +Pkg/disp.m:1 calls:run",
-      "step 1 (fresh): missing row +Pkg/disp.m:1 calls:run",
-      "step 1 (fresh): unwanted dormant row +Pkg/disp.m:1 calls:run",
-      "step 1 (run.m): dormant rows differ; only synced: []; only fresh: [\"+Pkg/disp.m:1 calls:run\"]"
-    ]
-  }
+  ]
 }

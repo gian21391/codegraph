@@ -1,0 +1,21 @@
+{
+  "why": "`end` is a MATLAB keyword (`iskeyword`), never a name a program calls: a stray `end` in a script, which the grammar's error recovery reads as the name of a call of the next line's text, makes no row of any kind (project rule: a name the parser made out of text is not a name, step 10). The anchors: the script's calls the parse keeps link (broken/broken-line-keeps-other-calls). Until step 12 the `end` was a dormant row (found by the step 11 fuzzer, family F).",
+  "truth": {
+    "edges": [
+      "setupS.m setupS.m -calls-> pkg::f @ +pkg/f.m",
+      "setupS.m setupS.m -calls-> showIt @ showIt.m"
+    ],
+    "noRows": [
+      {
+        "file": "setupS.m",
+        "name": "end"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "setupS.m",
+        "name": "end"
+      }
+    ]
+  }
+}

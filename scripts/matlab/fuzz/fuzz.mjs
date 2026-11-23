@@ -66,13 +66,31 @@ export function caseSetup(seed, caseIndex, { bigEvery = 0, profile = 'default' }
 }
 
 /**
- * Files a comment can be prepended to: MATLAB text with code in it, no Octave
- * marks, no BOM (a BOM counts as a column of line 1, so code that leaves line
- * 1 moves a column too: true, but no finding of this oracle's).
+ * The lines of `text` outside its `%{ … %}` block comments (MATLAB doc 'Add
+ * Comments to Code': each marker alone on its line, blocks nest; an unclosed
+ * `%{` runs to the end of the file).
+ */
+function outsideBlockComments(text) {
+  let depth = 0;
+  return text.split(/\r*\n/).filter((line) => {
+    if (/^[ \t]*%\{[ \t]*$/.test(line)) return void depth++;
+    if (depth > 0) return void (/^[ \t]*%\}[ \t]*$/.test(line) && depth--);
+    return true;
+  });
+}
+
+/**
+ * Files a comment can be prepended to: MATLAB text with code in it (a line
+ * outside every block comment that is no comment), no Octave marks, no BOM (a
+ * BOM counts as a column of line 1, so code that leaves line 1 moves a column
+ * too: true, but no finding of this oracle's). A file with no code — empty,
+ * or of block comments only — is a script of nothing, and a `%` line put
+ * before it makes it help text, a stub (the user's rulings, step 11; the stub
+ * rule): a change of what the file is, not a move of its lines.
  */
 function prependable(files) {
   return Object.keys(files).filter((p) => p.endsWith('.m') && isText(files[p]) && !files[p].includes('@implementation') && !files[p].startsWith('\uFEFF')
-    && !/^\s*#|endfunction/m.test(files[p]) && /^\s*[^%\s]/m.test(files[p].replace(/^﻿/, '')));
+    && !/^\s*#|endfunction/m.test(files[p]) && outsideBlockComments(files[p]).some((line) => /^\s*[^%\s]/.test(line)));
 }
 
 /** A metamorphic variant to check at this step: `{ kind, path?, k? }`. */

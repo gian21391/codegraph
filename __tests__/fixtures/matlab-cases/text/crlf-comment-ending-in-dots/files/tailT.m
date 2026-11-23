@@ -1,0 +1,2 @@
+function tailT(k)
+end

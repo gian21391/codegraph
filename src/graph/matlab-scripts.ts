@@ -7,14 +7,16 @@
  *
  * A script is a MATLAB file on the path — outside every package (`+pkg/`),
  * class folder (`@Cls/`) and `private/` folder, its name an identifier — that
- * defines no function, method or class, with code in it: a file of comments
- * only is the help text of a MEX function of that name (`lcaPut.m` beside
+ * defines no function, method or class, with code in it — or with nothing in
+ * it at all: an empty file, or one of block comments only, is a script of
+ * nothing (the user's rulings, step 11). A file of `%` help-text lines only
+ * is the help text of a MEX function of that name (`lcaPut.m` beside
  * `lcaPut.mexa64`), which is what MATLAB runs, and an Octave file (whose
  * functions go unread) is no script either; nor is a binary (matlabUnreadReason),
  * MATLAB Compiler's encrypted `.m` files (`V1MCC4000MEC…`) in a deployed
  * runtime tree.
  *
- * That file of comments only is a stub (isMatlabStubFile): the help text of a
+ * That file of `%` help-text lines is a stub (isMatlabStubFile): the help text of a
  * function compiled as a MEX file, shipped as P-code or as a Java class, which
  * the index never reads. A call of its name that nothing else answers links to
  * it (../resolution/matlab-lookup), so the help is what the call reaches. One
@@ -26,7 +28,7 @@ import { readFileSync } from 'fs';
 import type { Node } from '../types';
 import { validatePathWithinRoot } from '../utils';
 import { matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
-import { maskMatlabBlockComments, matlabUnreadReason } from '../extraction/languages/matlab-syntax';
+import { MATLAB_LINE_END, maskMatlabBlockComments, matlabUnreadReason } from '../extraction/languages/matlab-syntax';
 
 /** What the rule reads: satisfied by the resolver's context, and by a `CodeGraph` plus the project's files. */
 export interface MatlabScriptLookup {
@@ -64,9 +66,10 @@ const DEFINING_KINDS: ReadonlySet<string> = new Set(['function', 'method', 'clas
 
 /**
  * What a MATLAB file's nodes and text make it, wherever it is: a `script`
- * (code, and no function, method or class), a `stub` (no code either: every
- * line a comment or blank, outside or inside `%{ … %}` blocks), or `none` (it
- * defines something, cannot be read, or is no MATLAB text: matlabUnreadReason).
+ * (code, or nothing at all, and no function, method or class), a `stub` (no
+ * code, and a `%` help-text line: every line a comment or blank, outside or
+ * inside `%{ … %}` blocks), or `none` (it defines something, cannot be read,
+ * or is no MATLAB text: matlabUnreadReason). See textVerdict.
  */
 type MatlabFileVerdict = 'script' | 'stub' | 'none';
 
@@ -111,8 +114,29 @@ export function isMatlabStubFile(file: Node, lookup: MatlabScriptLookup): boolea
   return plainFileVerdict(file, lookup) === 'stub';
 }
 
-/** What MATLAB source holds: a statement (a line that is no comment, outside every `%{ … %}` block), none, or no MATLAB text at all. */
+/**
+ * What MATLAB source holds: a statement (a line that is no comment, outside
+ * every `%{ … %}` block) makes a script; with none, a `%` line outside every
+ * block is help text, a stub's; with neither — an empty file, white space
+ * only, block comments only, an unclosed `%{` — it is a script of nothing, as
+ * MATLAB runs it (the user's rulings, step 11); no MATLAB text at all is none.
+ */
 function textVerdict(source: string | null): MatlabFileVerdict {
   if (source === null || matlabUnreadReason(source) !== null) return 'none';
-  return maskMatlabBlockComments(source).split(/\r?\n/).some((line) => !/^\s*(?:%.*)?$/.test(line)) ? 'script' : 'stub';
+  const lines = maskMatlabBlockComments(source).split(MATLAB_LINE_END);
+  if (lines.some(isStatementLine)) return 'script';
+  return lines.some((line) => /^\s*%/.test(line)) ? 'stub' : 'script';
+}
+
+/** A line of MATLAB source, block comments masked, that is a statement: neither blank nor a `%` comment. */
+const isStatementLine = (line: string): boolean => !/^\s*(?:%.*)?$/.test(line);
+
+/**
+ * Whether MATLAB source holds a statement (a line that is no comment, outside
+ * every `%{ … %}` block), as textVerdict reads it. Source without one — empty,
+ * white space, a BOM, comments only — defines nothing and makes no name: a
+ * stub or a script of nothing.
+ */
+export function matlabTextHoldsStatement(source: string): boolean {
+  return maskMatlabBlockComments(source).split(MATLAB_LINE_END).some(isStatementLine);
 }

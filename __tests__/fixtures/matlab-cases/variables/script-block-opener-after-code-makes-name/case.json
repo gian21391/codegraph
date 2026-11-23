@@ -1,0 +1,34 @@
+{
+  "why": "A `%{` after code on its line is a line comment, not a block comment's start (MATLAB doc 'Add Comments to Code': the markers must appear alone on their lines), so the script `setupS` assigns `missingQ` on its next line, and once `main` runs it (MATLAB doc 'Scripts vs. Functions': a script runs in its caller's workspace) `missingQ(2)` may index that variable: a dormant row, never a live one (project rule; matlab-dormant.test.ts 'MATLAB script workspaces: a name a script its scope ran makes is a variable, kept dormant'). This guards the script-workspace pass, which parses the script again and must read it as the extractor does (step 12), in LF and in CRLF (the step).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> setupS.m @ setupS.m"
+    ],
+    "dormant": [
+      "main.m:3 calls:missingQ"
+    ],
+    "noRows": [
+      "main.m:3 calls:missingQ"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "setupS.m": {
+          "base64": "YSA9IDE7ICV7DQptaXNzaW5nUSA9IDI7DQo="
+        }
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> setupS.m @ setupS.m"
+        ],
+        "dormant": [
+          "main.m:3 calls:missingQ"
+        ],
+        "noRows": [
+          "main.m:3 calls:missingQ"
+        ]
+      }
+    }
+  ]
+}

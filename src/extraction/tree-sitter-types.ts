@@ -76,6 +76,11 @@ export interface LanguageExtractor {
    * grammar mis-parses inside enum bodies). MUST preserve byte offsets (replace
    * removed text with spaces, keep newlines) so node positions and getNodeText
    * stay correct; the returned string is used for both parsing and extraction.
+   * The one exception is MATLAB's (matlabParseText), which drops the `\r` of
+   * each CRLF: every line and column stays, and the offsets are those of the
+   * returned text, which is all extraction reads (MATLAB asks for neither
+   * `signatureAsWritten` nor `reExportAsWritten`, the readers of the file as
+   * written, which need the offsets kept).
    * `filePath` lets a transform key off the concrete file extension when one
    * language id serves several dialects (C++ also parses `.metal` shaders).
    */

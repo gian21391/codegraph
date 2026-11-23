@@ -1,0 +1,6 @@
+function [lo, hi] ...
+    = spanOf(v, ...
+    w)
+lo = min(v);
+hi = max(w);
+end

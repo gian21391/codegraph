@@ -1,0 +1,48 @@
+{
+  "why": "A function header continued with `...` before its `=` is the header under CRLF as under LF (MATLAB doc 'Continue Long Statements on Multiple Lines'), so `dfit`'s `feval` of its parameter `regr` calls the function its caller passes there, `regA` (MATLAB doc 'feval'; matlab-argument-flow.test.ts 'links a feval of a parameter to each function the callers pass, a name looked up where the sink is, a handle where it was written'), and `regr` is no call. This guards the argument synthesis, which parses the file again and must read it as the extractor does (step 12: CRLF reads as LF); the step turns the file to LF and nothing changes.",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> dfit @ dfit.m",
+      "dfit.m dfit -calls-> regA @ regA.m"
+    ],
+    "noRows": [
+      {
+        "file": "dfit.m",
+        "name": "regr"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "dfit.m",
+        "name": "regr"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "dfit.m": {
+          "base64": "ZnVuY3Rpb24gW20sIHBdIC4uLgogICAgPSBkZml0KFMsIHJlZ3IpCkYgPSBmZXZhbChyZWdyLCBTKTsKbSA9IEY7IHAgPSAxOwplbmQK"
+        }
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> dfit @ dfit.m",
+          "dfit.m dfit -calls-> regA @ regA.m"
+        ],
+        "noRows": [
+          {
+            "file": "dfit.m",
+            "name": "regr"
+          }
+        ],
+        "noDormant": [
+          {
+            "file": "dfit.m",
+            "name": "regr"
+          }
+        ]
+      }
+    }
+  ]
+}

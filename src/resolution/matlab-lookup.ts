@@ -23,7 +23,7 @@
  *      so does a callback given as text that is one (`'Callback',
  *      'refresh_plots'`), a reference to the script it runs.
  *   8. Last, when nothing above answers: a stub, the help text of a MEX
- *      function of the name (`lcaGet.m`, comments only, beside the
+ *      function of the name (`lcaGet.m`, `%` help text only, beside the
  *      `lcaGet.mexa64` the index never reads; see ../graph/matlab-scripts),
  *      for a call of any form: its file node, the help being what the call
  *      reaches. One in a `private/` folder in reach first, then by the path
@@ -38,8 +38,8 @@
  *      arguments takes the stub only when the path rules pick it over
  *      every script of the name, and else nothing (MATLAB would run the
  *      script, and the call would error). A nearer `.m` of the name that the
- *      index reads as no MATLAB (Octave, binary, empty) blocks no farther
- *      stub, though MATLAB would find that file first.
+ *      index reads as no MATLAB (Octave, binary) blocks no farther stub,
+ *      though MATLAB would find that file first; an empty one is a script.
  *
  * An import holds in the function that makes it and the functions nested in
  * it, not in the file's other functions. Of several equally near same-named

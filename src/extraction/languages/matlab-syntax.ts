@@ -40,6 +40,31 @@ const OCTAVE_LINE = new RegExp(`^[ \\t]*(?:#|(?:${KEYWORDS})[ \\t]*(?:[;,%#].*)?
 /** Cheap pre-check for OCTAVE_LINE. */
 const OCTAVE_HINT = new RegExp(`^[ \\t]*(?:#|(?:${KEYWORDS})\\b)`, 'm');
 
+/**
+ * MATLAB's keywords (`iskeyword`). None is ever a name a program calls or
+ * refers to: an overloaded `end` method is called through indexing, never by
+ * name, and a keyword a parse error leaves where a name would be (a stray
+ * `end` the grammar's recovery reads as a call) names nothing.
+ */
+const MATLAB_KEYWORDS: ReadonlySet<string> = new Set([
+  'break', 'case', 'catch', 'classdef', 'continue', 'else', 'elseif', 'end', 'for', 'function', 'global', 'if',
+  'otherwise', 'parfor', 'persistent', 'return', 'spmd', 'switch', 'try', 'while',
+]);
+
+/** Whether a reference's name (`f`, `pkg::f`, `v.m`) has a keyword for one of its parts, and so names nothing (see MATLAB_KEYWORDS). */
+export function hasMatlabKeywordPart(name: string): boolean {
+  return name.split(/::|\./).some((part) => MATLAB_KEYWORDS.has(part));
+}
+
+/**
+ * A MATLAB line end: a `\n` and the run of `\r` before it (LF, CRLF, and the
+ * `\r\r\n` an editor sometimes writes), which every MATLAB reader here splits
+ * or drops lines by, so that all of them read a file's lines as the grammar is
+ * given them (matlabParseText). A lone `\r` is no line end. Global, for
+ * `replace`; `split` takes it as well.
+ */
+export const MATLAB_LINE_END = /\r*\n/g;
+
 const BLOCK_OPEN = /^[ \t]*%\{[ \t]*$/;
 const BLOCK_CLOSE = /^[ \t]*%\}[ \t]*$/;
 
@@ -51,7 +76,7 @@ const BLOCK_CLOSE = /^[ \t]*%\}[ \t]*$/;
  */
 export function maskMatlabBlockComments(source: string): string {
   if (!source.includes('%{')) return source;
-  const lines = source.split(/\r?\n/);
+  const lines = source.split(MATLAB_LINE_END);
   let depth = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -64,6 +89,35 @@ export function maskMatlabBlockComments(source: string): string {
     }
   }
   return lines.join('\n');
+}
+
+/** A `%{` ending a line that holds something before it (`x = 1; %{`): no block comment's start. Multiline. */
+const OPENER_AFTER_TEXT = /^([ \t]*\S.*?%)\{([ \t]*)$/gm;
+
+/**
+ * A MATLAB file's text as the grammar is given it — by the extractor and by
+ * every reader that parses a file again — so that the grammar reads what MATLAB
+ * reads:
+ *
+ * - CRLF reads as LF: the `\r`s before each `\n` are dropped (MATLAB_LINE_END). The grammar reads
+ *   a `\r` at a line end as text in places (`function [a, b] ...` continued
+ *   onto `= f(x)` is no header then), and MATLAB reads none. Only the `\r`
+ *   bytes go, so every line and column is the file's own; a lone `\r` stays.
+ * - A `%{` with text before it on its line (`x = 1; %{`) is no block
+ *   comment's start (MATLAB doc 'Add Comments to Code': the markers count
+ *   only alone on their lines, as maskMatlabBlockComments reads them), but
+ *   the grammar opens a block at any `%{` that ends a line. Its `{` becomes a
+ *   space, so the `%` is a line comment's, in place: every offset, line and
+ *   column stays. The grammar closes a block only at a `%}` alone on its
+ *   line, and nests one at a `%{` alone, as the mask does, so the two agree.
+ *
+ * What a node's text reads is then the file's own, but for the dropped `\r`s
+ * and those `{`s (inside a comment).
+ */
+export function matlabParseText(source: string): string {
+  let text = source.includes('\r') ? source.replace(MATLAB_LINE_END, '\n') : source;
+  if (text.includes('%{')) text = text.replace(OPENER_AFTER_TEXT, '$1 $2');
+  return text;
 }
 
 /** A character after which a `'` is a transpose, not the start of a string. */
@@ -90,8 +144,9 @@ export function blankMatlabCommentsAndStrings(source: string): string {
   for (let lineStart = 0; lineStart <= source.length; ) {
     const nl = source.indexOf('\n', lineStart);
     const lineEnd = nl < 0 ? source.length : nl;
-    // The line's text, a `\r` before its break left alone.
-    const end = lineEnd > lineStart && source[lineEnd - 1] === '\r' ? lineEnd - 1 : lineEnd;
+    // The line's text, the run of `\r` before its break (MATLAB_LINE_END) or the file's end left alone.
+    let end = lineEnd;
+    while (end > lineStart && source[end - 1] === '\r') end--;
     const line = source.slice(lineStart, end);
     if (depth > 0 || BLOCK_OPEN.test(line)) {
       if (BLOCK_OPEN.test(line)) depth++;

@@ -3,7 +3,9 @@
     "edges": [
       "off/user.m off/user.m -calls-> g @ g.m"
     ],
-    "rows": [],
+    "rows": [
+      "off/user.m:1 calls:plot"
+    ],
     "dormant": []
   },
   "steps": [
@@ -11,7 +13,9 @@
       "edges": [
         "off/user.m off/user.m -calls-> g @ g.m"
       ],
-      "rows": [],
+      "rows": [
+        "off/user.m:1 calls:plot"
+      ],
       "dormant": []
     }
   ]

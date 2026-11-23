@@ -1,0 +1,15 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> blankA.m @ blankA.m",
+      "main.m main -calls-> blankB.m @ blankB.m",
+      "main.m main -calls-> blankC.m @ blankC.m"
+    ],
+    "rows": [
+      "main.m:5 calls:blankA",
+      "main.m:6 calls:blankB",
+      "main.m:7 calls:blankC"
+    ],
+    "dormant": []
+  }
+}

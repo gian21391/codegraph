@@ -1,0 +1,80 @@
+{
+  "why": "An unclosed `%{` alone on its line comments out the rest of the file (MATLAB doc 'Add Comments to Code'), in LF and in CRLF (the step), so the code before it is read and nothing after it is: the call before it links and its unanswered call is a live row, and neither call after it is a link or a row of any kind.",
+  "truth": {
+    "edges": [
+      "tool.m tool -calls-> keepA @ keepA.m"
+    ],
+    "rows": [
+      "tool.m:3 calls:missingK"
+    ],
+    "noEdges": [
+      {
+        "from": "tool.m",
+        "to": "lostB"
+      }
+    ],
+    "noRows": [
+      {
+        "file": "tool.m",
+        "name": "lostB"
+      },
+      {
+        "file": "tool.m",
+        "name": "missingL"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "tool.m",
+        "name": "lostB"
+      },
+      {
+        "file": "tool.m",
+        "name": "missingL"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "tool.m": {
+          "base64": "ZnVuY3Rpb24gdG9vbCgpDQprZWVwQSgxKTsNCm1pc3NpbmdLKDIpOw0KJXsNCmxvc3RCKDMpOw0KbWlzc2luZ0woNCk7DQplbmQNCg=="
+        }
+      },
+      "truth": {
+        "edges": [
+          "tool.m tool -calls-> keepA @ keepA.m"
+        ],
+        "rows": [
+          "tool.m:3 calls:missingK"
+        ],
+        "noEdges": [
+          {
+            "from": "tool.m",
+            "to": "lostB"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "tool.m",
+            "name": "lostB"
+          },
+          {
+            "file": "tool.m",
+            "name": "missingL"
+          }
+        ],
+        "noDormant": [
+          {
+            "file": "tool.m",
+            "name": "lostB"
+          },
+          {
+            "file": "tool.m",
+            "name": "missingL"
+          }
+        ]
+      }
+    }
+  ]
+}

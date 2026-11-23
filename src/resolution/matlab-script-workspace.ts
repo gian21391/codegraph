@@ -63,6 +63,7 @@ import type { MaybeYield } from './cooperative-yield';
 import { getParser, loadGrammarsForLanguages } from '../extraction/grammars';
 import { matlabScriptMadeNames } from '../extraction/languages/matlab';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { matlabParseText } from '../extraction/languages/matlab-syntax';
 import { indexedMatlabScriptLookup, isMatlabScriptFile } from '../graph/matlab-scripts';
 import { hashContent, readSourceText } from '../file-limits';
 import { validatePathWithinRoot } from '../utils';
@@ -239,10 +240,12 @@ export async function settleMatlabScriptWorkspaces(
     let tree: ReturnType<NonNullable<typeof parser>['parse']> = null;
     let out: { entry: MatlabScriptEntry; keep: boolean };
     try {
-      tree = parser.parse(read);
+      // Read as the extractor reads the file (see matlabParseText).
+      const text = matlabParseText(read);
+      tree = parser.parse(text);
       // A parse that did not finish is no verdict on the text; one with errors is.
       if (!tree) out = { entry: { script: true, names: NO_NAMES }, keep: false };
-      else out = { entry: { script: true, names: tree.rootNode.hasError ? NO_NAMES : matlabScriptMadeNames(tree.rootNode, read, run.targetPath) }, keep };
+      else out = { entry: { script: true, names: tree.rootNode.hasError ? NO_NAMES : matlabScriptMadeNames(tree.rootNode, text, run.targetPath) }, keep };
     } catch {
       out = { entry: { script: true, names: NO_NAMES }, keep: false };
     } finally {

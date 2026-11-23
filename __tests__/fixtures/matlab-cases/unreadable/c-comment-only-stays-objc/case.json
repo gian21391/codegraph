@@ -1,0 +1,17 @@
+{
+  "why": "A `.m` of C comments only (`//`, `/* … */`) is Objective-C, as `.m` detection has always read one (matlab-extraction.test.ts 'keeps directive-only, comment-only and plain-C files Objective-C'): no MATLAB file of that name, so a statement naming it reaches nothing and stays a live row. Only a file of MATLAB comments, or of nothing, is a MATLAB script (the user's rulings (step 11)). The anchor: the function's other call links.",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> keepK @ keepK.m"
+    ],
+    "noEdges": [
+      {
+        "from": "main.m",
+        "to": "cnote"
+      }
+    ],
+    "rows": [
+      "main.m:2 calls:cnote"
+    ]
+  }
+}

@@ -6,8 +6,6 @@
       "plotit2.m plotit2.m -calls-> soundDone @ soundDone.m"
     ],
     "rows": [],
-    "dormant": [
-      "plotit2.m:8 calls:end"
-    ]
+    "dormant": []
   }
 }

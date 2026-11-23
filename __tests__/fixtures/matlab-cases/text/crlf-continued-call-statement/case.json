@@ -1,0 +1,11 @@
+{
+  "why": "A call statement continued with `...` over CRLF line ends is one statement, as under LF (MATLAB doc 'Continue Long Statements on Multiple Lines'; project rule: text form changes nothing): both calls of `combineC` link, and the call nothing answers is a live row on the line it is written on.",
+  "truth": {
+    "edges": [
+      "runner.m runner -calls-> combineC @ combineC.m"
+    ],
+    "rows": [
+      "runner.m:6 calls:missingQ"
+    ]
+  }
+}

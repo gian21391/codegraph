@@ -1,14 +1,20 @@
 {
-  "why": "A `.m` that is one whole-file `%{ … %}` block comment is a MATLAB script of comments, the same as an empty one, so a statement naming it links to it, and a `%` line put before it changes nothing (the user's ruling (step 11)).",
+  "why": "A `.m` that is one whole-file `%{ … %}` block comment is a MATLAB script of comments, the same as an empty one (the user's ruling (step 11)): a statement naming it runs it, so `notes` in `main` links to it, and a call with an argument is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so `notes(1)` in `user` links nowhere and is a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'). A file whose first comment is `%` help text is a help-text stub (the stub rule, matlab-lookup step 8; matlab-resolution.test.ts 'MATLAB stubs: the help text of a MEX function'), and a file of block comments only is a script: once the step puts a `%` line before the block, the file is help text, so the call with an argument links to it too, and the statement still does.",
   "truth": {
     "edges": [
       "main.m main -calls-> notes.m @ notes.m"
     ],
-    "noRows": [
+    "rows": [
+      "user.m:2 calls:notes"
+    ],
+    "noEdges": [
       {
-        "file": "main.m",
-        "name": "notes"
+        "from": "user.m",
+        "to": "notes"
       }
+    ],
+    "noRows": [
+      "main.m:2 calls:notes"
     ]
   },
   "steps": [
@@ -18,22 +24,20 @@
       },
       "truth": {
         "edges": [
-          "main.m main -calls-> notes.m @ notes.m"
+          "main.m main -calls-> notes.m @ notes.m",
+          "user.m user -calls-> notes.m @ notes.m"
         ],
         "noRows": [
           {
             "file": "main.m",
             "name": "notes"
+          },
+          {
+            "file": "user.m",
+            "name": "notes"
           }
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-ruling-comments",
-    "fails": [
-      "index: missing edge main.m main -calls-> notes.m @ notes.m",
-      "index: unwanted row main.m:2 calls:notes (matches {\"file\":\"main.m\",\"name\":\"notes\"})"
-    ]
-  }
+  ]
 }

@@ -51,6 +51,7 @@ import type { CallSiteRow } from './graph';
 import { findNamedCopybooks, type NamedCopybook } from './graph/cobol-copybooks';
 import { MATLAB_PATH_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from './graph/matlab-search-path';
 import { MATLAB_UNREAD_CODE } from './extraction/languages/matlab-syntax';
+import { indexedMatlabScriptLookup, matlabTextHoldsStatement } from './graph/matlab-scripts';
 import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock, escapesRoot } from './utils';
 import type { FileWatcher, WatchOptions, PendingFile } from './sync';
@@ -3169,9 +3170,26 @@ export class CodeGraph {
     for (const { language, parsed } of this.queries.getParsedFileCounts()) {
       if (!yieldsSymbols(language)) continue;
       parsedFilesByLanguage[language] = parsed;
-      if (parsed === 0) unparsedLanguages.push(language);
+      if (parsed === 0 && (language !== 'matlab' || this.someMatlabFileHoldsCode())) unparsedLanguages.push(language);
     }
     return { parsedFilesByLanguage, unparsedLanguages };
+  }
+
+  /**
+   * Whether some MATLAB file of the index holds a statement, so could have
+   * yielded a symbol. An empty `.m`, or one of white space or comments only,
+   * is MATLAB (an empty script or help text, see graph/matlab-scripts) and can
+   * define nothing: an Objective-C project's empty placeholder `.m` files are
+   * no sign of a MATLAB parser that isn't working. A file that can't be read
+   * counts as holding code.
+   */
+  private someMatlabFileHoldsCode(): boolean {
+    const lookup = indexedMatlabScriptLookup(this, this.projectRoot);
+    return this.queries.getAllFiles().some((file) => {
+      if (file.language !== 'matlab') return false;
+      const text = lookup.readFile(file.path);
+      return text === null || matlabTextHoldsStatement(text);
+    });
   }
 
   // ===========================================================================

@@ -1,6 +1,8 @@
 {
   "index": {
     "edges": [
+      "f.m f -calls-> looseB @ looseB.m",
+      "g.m g -calls-> looseB @ looseB.m",
       "h.m h -calls-> looseB @ looseB.m"
     ],
     "rows": [],

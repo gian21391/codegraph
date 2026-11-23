@@ -220,8 +220,8 @@ export function reopenMatlabNamesakes(
       if (node.kind === 'file' && fresh.has(node.filePath)) continue;
       // The rebind's, unless a definition's own file (it may hold more calls than the rebind takes of one name).
       // Nor a symbol named like a file the delta holds alone (`foo` for `foo.m` gone or come): a stub comes after
-      // it, an empty, Octave or encrypted file blocks nothing, and a new script's statements are reopened with the
-      // script runs.
+      // it, an Octave or encrypted file blocks nothing, and a new script's (an empty file's too) statements are
+      // reopened with the script runs.
       if ((delta.has(node.name) || (node.kind !== 'file' && stems.has(node.name))) && !exactFiles.has(node.name)) continue;
       for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(node.id, node.filePath, 'matlab')) {
         if (fresh.has(edge.sourceFilePath) || seenEdges.has(edge.edgeId)) continue;

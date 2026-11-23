@@ -6,12 +6,5 @@
       "g.m g -calls-> looseB @ looseB.m",
       "h.m h -calls-> looseB @ looseB.m"
     ]
-  },
-  "pendingBug": {
-    "id": "S11-text-1",
-    "fails": [
-      "index: missing edge f.m f -calls-> looseB @ looseB.m",
-      "index: missing edge g.m g -calls-> looseB @ looseB.m"
-    ]
   }
 }

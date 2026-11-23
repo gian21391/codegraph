@@ -1,11 +1,10 @@
 {
   "index": {
     "edges": [
-      "main.m main -calls-> ctlScr.m @ ctlScr.m"
+      "main.m main -calls-> ctlScr.m @ ctlScr.m",
+      "main.m main -calls-> emptyScr.m @ emptyScr.m"
     ],
-    "rows": [
-      "main.m:2 calls:emptyScr"
-    ],
+    "rows": [],
     "dormant": []
   }
 }

@@ -78,6 +78,7 @@ import { MATLAB_ARG_PLACES, argItemsOf, spreadItem, type MatlabArgItem, type Mat
 import { getParser, loadGrammarsForLanguages } from '../extraction/grammars';
 import { CALLEE, matlabParamSinks, matlabParameterNames, type MatlabParamSink } from '../extraction/languages/matlab';
 import { PARAM_SINK_CALLS } from '../extraction/languages/matlab-interp';
+import { matlabParseText } from '../extraction/languages/matlab-syntax';
 import { admits } from '../extraction/languages/matlab-guards';
 import { MATLAB_CELLFUN_NAMES } from '../extraction/languages/matlab-builtins';
 import { NAME_SHAPED } from '../extraction/languages/matlab-values';
@@ -248,9 +249,11 @@ export async function matlabArgumentEdges(queries: QueryBuilder, ctx: Resolution
     // Not a nested function: its parameters are variables of the workspace it shares, which nothing here follows.
     const own = fns.filter((fn) => !qualified.has(fn.qualifiedName.slice(0, Math.max(0, fn.qualifiedName.lastIndexOf('::')))));
     if (own.length === 0) continue;
-    const content = ctx.readFile(file);
-    if (content === null) continue;
-    const lines = content.split(/\r?\n/);
+    const read = ctx.readFile(file);
+    if (read === null) continue;
+    // Read as the extractor reads the file (see matlabParseText).
+    const content = matlabParseText(read);
+    const lines = content.split('\n');
     const sites = new Set<string>();
     const bySite = new Map<string, Node>();
     for (const fn of own) {

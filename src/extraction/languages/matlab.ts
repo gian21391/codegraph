@@ -4,7 +4,7 @@ import { getNodeText } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { getParser } from '../grammars';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
-import { matlabUnreadReason } from './matlab-syntax';
+import { MATLAB_LINE_END, hasMatlabKeywordPart, matlabParseText, matlabUnreadReason } from './matlab-syntax';
 import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
 import { COMPUTED_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
@@ -215,7 +215,7 @@ function helpText(children: readonly SyntaxNode[], source: string): string | und
   const comment = children.find((c) => c.type === 'comment');
   if (!comment) return undefined;
   const text = getNodeText(comment, source)
-    .split(/\r?\n/)
+    .split(MATLAB_LINE_END)
     .map((l) => l.replace(/^\s*%[{}]?\s?/, '').trimEnd())
     .join('\n')
     .trim();
@@ -1228,7 +1228,8 @@ function addRef(
   column = at.startPosition.column,
 ): void {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
-  if (!fromNodeId || !name) return;
+  // A keyword is never a name (see hasMatlabKeywordPart).
+  if (!fromNodeId || !name || hasMatlabKeywordPart(name)) return;
   const candidates = matlabRefCandidates(facts);
   ctx.addUnresolvedReference({
     fromNodeId,
@@ -2665,6 +2666,8 @@ function walkFile(node: SyntaxNode, ctx: ExtractorContext): void {
 // ---------------------------------------------------------------------------
 
 export const matlabExtractor: LanguageExtractor = {
+  // The text the grammar reads: CRLF as LF, and a `%{` after code no block comment's start (see matlabParseText).
+  preParse: matlabParseText,
   functionTypes: [], // function_definition is a function, method, nested or local function — decided in visitNode
   classTypes: [],
   methodTypes: [],

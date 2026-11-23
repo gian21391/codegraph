@@ -25,6 +25,20 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const HAS_SYMBOL = 'export function alpha(): number { return 1; }\n';
 const NO_SYMBOL = '// nothing here but a comment\n';
+/**
+ * An Objective-C project with `.m` files that hold no code: empty (placeholders),
+ * white space, MATLAB comments only. Each is MATLAB (an empty script, or help
+ * text) and can define nothing, so none says a MATLAB parser isn't working.
+ */
+const OBJC_WITH_CODELESS_M = {
+  'Foo.h': '#import <Foundation/Foundation.h>\n@interface Foo : NSObject\n- (void)go;\n@end\nvoid bar(int n);\n',
+  'Main.m': '#import "Foo.h"\nint main(void) {\n  Foo *f = [[Foo alloc] init];\n  [f go];\n  bar(1);\n  Placeholder();\n  return 0;\n}\n',
+  'Foo.m': '',
+  'Placeholder.m': '',
+  'bar.m': '',
+  'Blank.m': ' \r\n\t\n',
+  'Notes.m': '% NOTES  help text\n%{\nold(1);\n%}\n',
+};
 
 describe('status language coverage', () => {
   let dir: string;
@@ -90,6 +104,22 @@ describe('status language coverage', () => {
         parsedFilesByLanguage: { lua: 0, typescript: 1 },
         unparsedLanguages: ['lua'],
       });
+      cg.close();
+    });
+
+    it('names no language for MATLAB files that hold no code, as an Objective-C project\'s empty .m files', async () => {
+      const cg = await indexed(OBJC_WITH_CODELESS_M);
+
+      expect(cg.getStats().filesByLanguage.matlab).toBe(5);
+      expect(cg.getLanguageCoverage().parsedFilesByLanguage.matlab).toBe(0);
+      expect(cg.getLanguageCoverage().unparsedLanguages).toEqual([]);
+      cg.close();
+    });
+
+    it('names MATLAB when one of its files holds code and none yielded a symbol', async () => {
+      const cg = await indexed({ ...OBJC_WITH_CODELESS_M, 'runMe.m': 'disp(1);\n' });
+
+      expect(cg.getLanguageCoverage().unparsedLanguages).toEqual(['matlab']);
       cg.close();
     });
 
@@ -178,6 +208,16 @@ describe('status language coverage', () => {
       expect(languageRow(stdout, 'lua')).toBe('  lua             1  (0 with symbols)');
       expect(stdout).toMatch(/No symbols came from any lua file .* \.nvim\.lua/);
       expect(stdout).toContain('Index is up to date');
+    });
+
+    it('says nothing of the kind about an Objective-C project whose .m files of no code are MATLAB, and passes --strict', async () => {
+      await indexedAndClosed(OBJC_WITH_CODELESS_M);
+
+      const { code, stdout } = status('--strict');
+
+      expect(languageRow(stdout, 'matlab')).toBe('  matlab          5  (0 with symbols)');
+      expect(stdout).not.toContain('No symbols came from');
+      expect(code).toBe(0);
     });
 
     it('says nothing of the kind about a healthy index', async () => {

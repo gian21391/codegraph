@@ -6,16 +6,17 @@
  * `catch`, lambdas, `Name=Value` arguments, imports, calls of built-ins' names,
  * class signatures and attributes.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import * as fs from 'fs';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { CodeGraph } from '../src';
 import { extractFromSource, preloadLanguagesForFiles } from '../src/extraction';
 import { detectLanguage, getParser, isLanguageSupported } from '../src/extraction/grammars';
 import { matlabPathScope } from '../src/extraction/languages/matlab-path';
+import { matlabParseText } from '../src/extraction/languages/matlab-syntax';
 import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, withoutUnanswerableMatlabBuiltins, addMatlabReachableNames } from '../src/extraction/languages/matlab-builtins';
 import { MATLAB_BASE_NAMES, MATLAB_METHOD_NAMES } from '../src/extraction/languages/matlab-builtin-names';
-import { edgesFrom, indexOfProject, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
+import { allEdges, edgesFrom, indexOfProject, tempDir, useAllGrammars, writeTree } from './matlab-helpers';
 
 useAllGrammars();
 
@@ -79,11 +80,60 @@ describe('MATLAB .m detection', () => {
     // A `%` format string or a C `end` variable never flips a file with an Objective-C shape.
     expect(detectLanguage('Log.m', '#include <stdio.h>\nvoid f(void) {\n  printf("%d", 1);\n}\n')).toBe('objc');
     expect(detectLanguage('Cat.m', '@interface Foo (Bar)\n- (void)baz;\n@end\n% not matlab\n')).toBe('objc');
-    // Plain C with no directive at all, and an empty file: the extension's mapping stands.
+    // Plain C with no directive at all: the extension's mapping stands.
     expect(detectLanguage('plain.m', 'int x = 1;\n')).toBe('objc');
     expect(detectLanguage('plain.m', 'NSInteger add(NSInteger a, NSInteger b) {\n  return a + b;\n}\n')).toBe('objc');
-    expect(detectLanguage('empty.m', '')).toBe('objc');
-    expect(detectLanguage('empty.m', '\n\n')).toBe('objc');
+  });
+
+  it('reads an empty .m, and one of MATLAB comments only, as MATLAB (the rulings of step 11)', () => {
+    // An empty MATLAB script: empty, white space only, a BOM only.
+    for (const code of ['', '\n\n', ' \t\r\n', '\uFEFF', '\uFEFF\r\n']) expect(detectLanguage('empty.m', code), JSON.stringify(code)).toBe('matlab');
+    // A MATLAB script of comments: `%` lines, block comments (nested, CRLF), an unclosed `%{`.
+    for (const code of [
+      '% help text\n',
+      '%{\nfunction y = f(x)\ny = x;\nend\n%}\n',
+      '%{\r\nold code\r\n%}\r\n',
+      '  %{\n%{\ninner\n%}\nouter\n%}\n',
+      '%{\n#include <stdio.h>\nint x;\n',
+    ]) expect(detectLanguage('notes.m', code), JSON.stringify(code)).toBe('matlab');
+    // No content given: the extension's mapping stands.
+    expect(detectLanguage('notes.m')).toBe('objc');
+  });
+
+  it('indexes an Objective-C project with an empty .m in it as before, and warns of nothing', async () => {
+    const objc = {
+      'AppDelegate.h': '#import <Foundation/Foundation.h>\n@interface AppDelegate : NSObject\n- (void)start;\n@end\n',
+      'AppDelegate.m': '#import "AppDelegate.h"\n#import "Util.h"\n@implementation AppDelegate\n- (void)start {\n  utilRun(1);\n}\n@end\n',
+      'Util.h': 'void utilRun(int n);\n',
+      'Util.m': '#include "Util.h"\nvoid utilRun(int n) {\n  (void)n;\n}\n',
+    };
+    const indexOf = async (files: Record<string, string>) => {
+      const root = tempDir('cg-objc-control-');
+      const logged: string[] = [];
+      const spies = (['warn', 'error'] as const).map((level) => vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' '))));
+      try {
+        writeTree(root, files);
+        const cg = await CodeGraph.init(root, { index: true });
+        try {
+          const files_ = cg.getFiles().map((f) => `${f.path} ${f.language} ${JSON.stringify(f.errors ?? [])}`).sort();
+          const nodes = cg.getFiles().flatMap((f) => cg.getNodesInFile(f.path).map((n) => `${n.filePath} ${n.kind} ${n.qualifiedName} ${n.startLine}:${n.startColumn}-${n.endLine}:${n.endColumn}`)).sort();
+          return { files: files_, nodes, edges: allEdges(cg), logged };
+        } finally {
+          cg.close();
+        }
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+    const before = await indexOf(objc);
+    const after = await indexOf({ ...objc, 'Placeholder.m': '' });
+    expect(before.edges.length).toBeGreaterThan(0);
+    expect(after.files).toEqual([...before.files, 'Placeholder.m matlab []'].sort());
+    expect(after.nodes.filter((n) => !n.startsWith('Placeholder.m '))).toEqual(before.nodes);
+    expect(after.edges).toEqual(before.edges);
+    expect(after.logged).toEqual(before.logged);
+    expect(after.logged.filter((l) => /matlab|\.m\b/i.test(l))).toEqual([]);
   });
 
   it('honours an explicit codegraph.json mapping for .m', () => {
@@ -221,6 +271,21 @@ describe('Octave files (unsupported)', () => {
   });
 });
 
+describe('MATLAB text as the grammar is given it', () => {
+  it('reads CRLF as LF, and a `%{` after code as a line comment in place', () => {
+    // The `\r` before each `\n` goes (a run of them too); a lone `\r` stays.
+    expect(matlabParseText('a = 1;\r\nb = 2;\r\r\nc\rd\n')).toBe('a = 1;\nb = 2;\nc\rd\n');
+    // A `%{` with text before it ends no block: its `{` is a space, every offset kept.
+    const code = 'x = 1; %{\nf(2);\n  y %{  \n%{\ng(3);\n%}\n%{ text\n';
+    const read = matlabParseText(code);
+    expect(read).toBe('x = 1; % \nf(2);\n  y %   \n%{\ng(3);\n%}\n%{ text\n');
+    expect(read.length).toBe(code.length);
+    // Text with neither is handed over as it is.
+    const plain = 'function f()\n%{\nold\n%}\nend\n';
+    expect(matlabParseText(plain)).toBe(plain);
+  });
+});
+
 describe('MATLAB text the parser cannot read', () => {
   // physbase's shapes: an optics table (`2660 W20  81.15 …` reads as the
   // number 2660, a comma the parser put in, and the command `W20`), a
@@ -264,10 +329,11 @@ describe('MATLAB text the parser cannot read', () => {
     // next function too, as rows of that matrix inside one `ERROR`. A line
     // that parses whole in it is code (`soundtada;`); one with a token of the
     // error's own is not (`t1 = gettime;`, its `=` an error of the matrix's;
-    // `soundtada;` after `end`, split into `s` and `oundtada`).
+    // `soundtada;` after `end`, split into `s` and `oundtada`). The `end` the
+    // error reads as a call on line 8 is a keyword, never a name (step 12).
     const code = 'function plotit(v)\ncheckforao;\nt0 = gettime;\nif v\n  x = [1 2\nend\nsoundtada;\nend\nfunction other()\nsoundtada;\nt1 = gettime;\nend\n';
     const refs = extractFromSource('plotit.m', code, 'matlab').unresolvedReferences.map((u) => `${u.line} ${u.referenceName}`);
-    expect(refs).toEqual(['2 checkforao', '3 gettime', '8 end', '10 soundtada']);
+    expect(refs).toEqual(['2 checkforao', '3 gettime', '10 soundtada']);
   });
 
   it('warns in terms that are true for MATLAB, and as before for other languages', () => {

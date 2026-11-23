@@ -1,0 +1,20 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> toolA @ lib2/toolA.m",
+      "main.m main -calls-> x @ lib/x.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "main.m main -calls-> toolA @ lib2/toolA.m",
+        "main.m main -calls-> x @ lib/x.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

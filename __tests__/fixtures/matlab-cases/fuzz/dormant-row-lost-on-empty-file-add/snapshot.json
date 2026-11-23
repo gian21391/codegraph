@@ -11,7 +11,9 @@
       "edges": [
         "+Pkg/disp.m +Pkg/disp.m -calls-> g @ g.m"
       ],
-      "rows": [],
+      "rows": [
+        "+Pkg/disp.m:1 calls:run"
+      ],
       "dormant": []
     }
   ]

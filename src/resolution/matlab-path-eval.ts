@@ -51,7 +51,7 @@ import type { Node as SyntaxNode, Tree } from 'web-tree-sitter';
 import { getNodeText } from '../extraction/tree-sitter-helpers';
 import { bracesIndex, callArgs, childField, commandItems, errorVariable, namedChildren, stringLiteral } from '../extraction/languages/matlab-values';
 import { MATLAB_BUILTINS } from '../extraction/languages/matlab-builtins';
-import { blankMatlabCommentsAndStrings } from '../extraction/languages/matlab-syntax';
+import { blankMatlabCommentsAndStrings, matlabParseText } from '../extraction/languages/matlab-syntax';
 import { matlabFileStem } from '../extraction/languages/matlab-path';
 import { MATLAB_COMPUTERS, dirOf } from '../graph/matlab-search-path';
 import type { MatlabProjectAccess } from './matlab-path-access';
@@ -611,8 +611,10 @@ class PathEvaluation {
     return text;
   }
 
-  private parseText(source: string): ParsedFile | null {
-    if (source.length > MAX_EVAL_TEXT * 10) return null;
+  private parseText(text: string): ParsedFile | null {
+    if (text.length > MAX_EVAL_TEXT * 10) return null;
+    // Read as the extractor reads a file (see matlabParseText); every node's text is read from this text too.
+    const source = matlabParseText(text);
     let tree: Tree | null = null;
     try {
       tree = this.project.parse(source);
