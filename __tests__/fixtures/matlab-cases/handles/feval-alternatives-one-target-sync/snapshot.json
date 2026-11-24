@@ -1,0 +1,45 @@
+{
+  "index": {
+    "edges": [
+      "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m",
+      "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "lib/run_it.m:4 calls:f",
+        "lib/run_it.m:4 calls:pkg::f"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run_it.m run_it -calls-> f @ f.m"
+      ],
+      "rows": [
+        "lib/run_it.m:4 calls:pkg::f"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m",
+        "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m",
+        "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

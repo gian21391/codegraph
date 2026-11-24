@@ -4,19 +4,19 @@
  * A MATLAB function often calls what its caller names: the name, a handle or
  * code arrives as an argument, and only the call sites say what it is.
  *
- *   % dacefit.m — 55 call sites, each passing a literal: dacefit(S, Y, 'regpoly0', 'corrgauss', …)
- *   function [dmodel, perf] = dacefit(S, Y, regr, corr, theta0, lob, upb)
- *   F = feval(regr, S);
+ *   % fitmodel.m — many call sites, each passing a literal: fitmodel(S, Y, 'basis0', 'kernexp', …)
+ *   function [fmodel, info] = fitmodel(S, Y, basisf, kernf, opts)
+ *   F = feval(basisf, S);
  *
- *   function varargout = intlat(varargin)                % a switchyard
- *   [varargout{1:nargout}] = feval(varargin{:});         % intlat('LoadLattice', h) → its local LoadLattice
+ *   function varargout = intgrid(varargin)                % a switchyard
+ *   [varargout{1:nargout}] = feval(varargin{:});         % intgrid('LoadLattice', h) → its local LoadLattice
  *
  * Extraction sees both halves and links neither. Its value interpreter (see
  * extraction/languages/matlab-interp.ts) gives a function's parameters what
  * the caller passed as a symbolic value, so a dynamic call that reads one is a
- * parameter sink — `feval(regr)`, `str2func(varargin{1})`, `feval(cfg.winfunc,
+ * parameter sink — `feval(basisf)`, `str2func(varargin{1})`, `feval(cfg.taperfn,
  * n)` (a field of one, two levels at most), `fh(x)` on a parameter,
- * `feval(['ft_' method])` (a template: the text around one parameter), code
+ * `feval(['tk_' method])` (a template: the text around one parameter), code
  * `eval` runs. And every call of the project's records what its arguments
  * hold where the code says (the `args` fact, carried to the edge as
  * `metadata.args`): names, handles, short code, structs the caller built, or
@@ -32,14 +32,14 @@
  * are found again here. The functions some edge carrying `args` reaches are
  * listed first, without their records; a function's text is tested next
  * (sinkUses: a place a sink call names on its line, or a parameter it
- * calls, also through a statement that copies the parameter, `r = regr;
+ * calls, also through a statement that copies the parameter, `r = basisf;
  * feval(r)`); only then are the records into the functions that pass read,
  * each function's on its own (and its callers' when a value is followed
  * back), and a function walked where one of those places is passed a text,
  * a handle or a struct (a handle, for a parameter it calls). The walk is the
  * extractor's own (matlabParamSinks: one parse per file, the same frames and
  * interpretation, only the functions asked for). A sink that reads a
- * parameter through anything else (`r = [regr]; feval(r)`) is passed over:
+ * parameter through anything else (`r = [basisf]; feval(r)`) is passed over:
  * silent, as the spec allows. A sink whose running depends on what a caller
  * passes (a branch, or an exit before it, on a parameter: see
  * extraction/languages/matlab-guards.ts) takes only the values that reach
@@ -47,10 +47,10 @@
  * Each sink then takes every
  * value its callers pass at its parameter's place, the template around it
  * applied, and makes the edge a literal written there would have made:
- *   • a name (`'regpoly0'`) is looked up where the sink is — its file's
+ *   • a name (`'basis0'`) is looked up where the sink is — its file's
  *     local functions first, its private folder, the path (matlab-lookup.ts):
- *     what `feval('regpoly0')` written in dacefit reaches;
- *   • a handle (`@regpoly1`) names what it named where it was written: it is
+ *     what `feval('basis0')` written in fitmodel reaches;
+ *   • a handle (`@basis1`) names what it named where it was written: it is
  *     looked up where the caller is;
  *   • code (`'helper(3)'`) is read as code `eval` runs in the function, its
  *     calls looked up there; a name nothing answers is dropped.
@@ -62,8 +62,8 @@
  * (`feval`, `fh(x)`, a call in eval'd code) or `references` (`str2func`,
  * `cellfun` and the other function takers, a handle in eval'd code), at the
  * sink's place, `provenance: 'heuristic'`, `synthesizedBy:
- * 'matlab-argument'`, with `param` (`regr`, `varargin{1}`, `cfg.winfunc`),
- * `sink` (`feval`), `value` (`'regpoly0'`, `@regpoly1`) and `registeredAt` =
+ * 'matlab-argument'`, with `param` (`basisf`, `varargin{1}`, `cfg.taperfn`),
+ * `sink` (`feval`), `value` (`'basis0'`, `@basis1`) and `registeredAt` =
  * where that value is passed (`test/dacefit_test.m:12`) — its first
  * production site before a test's. A pair the graph already has is skipped.
  * A sink that takes more distinct values than the caller's cap links none of
@@ -450,11 +450,11 @@ function placesOf(params: readonly string[], k: number): number {
  * The argument places, as bit masks, whose parameter a function's text names
  * on a sink call's line (`sink`), and those whose parameter it calls
  * (`handle`), each also through a variable a statement copies the parameter
- * to (`action = varargin{1}; feval(action, …)`, `r = regr; feval(r)`): every
+ * to (`action = varargin{1}; feval(action, …)`, `r = basisf; feval(r)`): every
  * place a sink may read when its parameters cannot be read (null). A line
  * continued with `...` is read with the next. The test is on text, before
  * the function is parsed: a superset of the sinks the walk finds, apart from
- * one reading a parameter through anything else (`r = [regr]`).
+ * one reading a parameter through anything else (`r = [basisf]`).
  */
 function sinkUses(text: string, params: readonly string[] | null): { sink: number; handle: number } {
   if (params === null) return { sink: ALL_PLACES, handle: 0 };

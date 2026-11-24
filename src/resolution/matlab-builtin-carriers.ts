@@ -13,7 +13,10 @@
  * judged only when their own file is extracted. So a sync that gives a
  * built-in's name its first carrier — the first `.m` file of that name, or
  * the first such symbol of it anywhere (a property turned into a method of
- * the name counts) — extracts again the MATLAB files that name it, and one
+ * the name counts) — writes again the calls of it in the MATLAB files that
+ * name it, as their extraction does (a file that imports, or defines the
+ * name, is extracted again in full: see addMatlabBuiltinRows in
+ * ../extraction), and one
  * that takes the last carrier away, or the last `.m` file of the name,
  * deletes the rows a fresh index would not keep, dormant ones too. (A `.m`
  * file of Octave or binary text carries no name: one whose text turns to
@@ -143,7 +146,7 @@ export interface MatlabCarrierInput {
 }
 
 export interface MatlabCarrierChange {
-  /** The built-ins' names a MATLAB call's row is kept for now and was not before: the files naming them are extracted again. */
+  /** The built-ins' names a MATLAB call's row is kept for now and was not before: their calls in the files naming them are written again. */
   gained: string[];
   /** The built-ins' names no symbol carries any more: every row of a call of the name goes. */
   lost: string[];

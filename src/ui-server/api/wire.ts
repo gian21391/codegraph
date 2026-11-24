@@ -17,6 +17,7 @@
 
 import type { Edge, EdgeKind, Language, Node, NodeKind } from '../../types';
 import { isTestFile } from '../../search/query-utils';
+import { matlabShownColumn } from '../../extraction/languages/matlab-places';
 
 // =============================================================================
 // Caps and thresholds
@@ -193,7 +194,7 @@ export function toWireEdge(edge: Edge): WireEdge {
   const meta = (edge.metadata ?? {}) as Record<string, unknown>;
   const wire: WireEdge = { kind: edge.kind };
   if (typeof edge.line === 'number') wire.line = edge.line;
-  if (typeof edge.column === 'number') wire.col = edge.column;
+  if (typeof edge.column === 'number') wire.col = matlabShownColumn(edge.column);
   if (typeof meta.confidence === 'number') wire.confidence = meta.confidence;
   if (typeof meta.resolvedBy === 'string') wire.resolvedBy = meta.resolvedBy;
   if (edge.provenance) wire.provenance = edge.provenance;

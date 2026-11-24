@@ -18,8 +18,8 @@ import { MATLAB_BASE_NAMES, MATLAB_METHOD_NAMES } from './matlab-builtin-names';
  * deleted rather than kept as an unresolved reference (see
  * ../../resolution/matlab-failures), and one nothing in the project could
  * answer is never written at all (see MatlabInsertFilter). Drawn from the
- * names most often left unresolved across PlatEMO, the Robotics Toolbox,
- * fieldtrip, DeepLearnToolbox, PRMLT and a 17k-file accelerator-physics
+ * names most often left unresolved across six real MATLAB code bases, a
+ * 17k-file one among them
  * codebase (the hand-written names).
  *
  * A bare call goes by its name alone: `numel(obj)` on a method's own object
@@ -186,7 +186,7 @@ export const MATLAB_METHOD_ONLY_NAMES: ReadonlySet<string> = new Set(MATLAB_METH
 
 /**
  * MATLAB functions whose first argument may name a function as text
- * (`cellfun('myfun', c)`, `fzero('froot', x0)`, `ode45('rhs', …)`): that
+ * (`cellfun('myfun', c)`, `fzero('fbase', x0)`, `ode45('rhs', …)`): that
  * text references the function. Not the deprecated `quad`, `quadl` and
  * `quadv`, a name projects reuse for their own functions (an accelerator
  * lattice's `quad('QF', 0.34, …)` makes a quadrupole, and names no function).
@@ -208,7 +208,7 @@ export const MATLAB_CELLFUN_NAMES: ReadonlySet<string> = new Set([
 /**
  * MATLAB's constructors and setters of graphics objects, GUI components and
  * timers, whose name/value arguments may give a callback as code
- * (`uicontrol('Callback', 'corgui(''ShowResp'')')`, `set(h, 'KeyPressFcn',
+ * (`uicontrol('Callback', 'dialpane(''ViewGain'')')`, `set(h, 'KeyPressFcn',
  * 'onkey')`), and `struct`, which GUI code builds callback tables with. Only
  * these: any other function given `'Callback', 'go'` (a project's own
  * `myfun('Callback', 'go')`, `strrep(s, 'Callback', …)`) takes text, as far
@@ -380,6 +380,11 @@ export class MatlabInsertFilter {
    */
   loadStored(): void {
     if (this.expected.length > 0) this.names();
+  }
+
+  /** Whether a bare call of `name` reaches a `.m` file outside its own file (see addMatlabReachableNames): one the filter keeps. */
+  reaches(name: string): boolean {
+    return this.names().has(name);
   }
 
   /** `result` without the built-in calls nothing in the project could answer; `result` itself for any other language. */

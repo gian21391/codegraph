@@ -5,14 +5,14 @@
  *   - A script has no symbol but its file (`setup_paths.m`): the file is what
  *     a name of one asks for, the file's code its body, and a script on a
  *     flow is a hop the gather (symbols, not files) never reaches. So is a
- *     stub's (`lcaGet.m`, the help text of a MEX function): its help is all
+ *     stub's (`chanGet.m`, the help text of a MEX function): its help is all
  *     the project holds of the function.
- *   - A class folder keeps each method in a file of its own (`@SerialLink/
- *     fdyn.m`), and a script is a file of its own, where no other query token
+ *   - A class folder keeps each method in a file of its own (`@ChainLink/
+ *     fsim.m`), and a script is a file of its own, where no other query token
  *     is named beside it: the graph corroborates a bare word instead — the
  *     class the query also names contains the method (the class-folder pass's
- *     edge, "SerialLink fdyn accel rne"), or a function the query also names
- *     runs the script ("BeamLine globals").
+ *     edge, "ChainLink fsim accel rne"), or a function the query also names
+ *     runs the script ("TrackSeg globals").
  *
  * Made once per explore call, and only for an index that holds MATLAB: one
  * that holds none asks nothing more of it.
@@ -71,7 +71,7 @@ export function matlabExploreFor(index: CodeGraph, projectRoot: string): MatlabE
 
 /**
  * The copies first that the most MATLAB calls link to, then by path: the copy
- * the project's code reaches (13 copies of `lcaGet.m` across labCA's versions
+ * the project's code reaches (13 copies of `chanGet.m` across a library's versions
  * and platform folders), with no path model at query time. Explore shows the
  * first of many.
  */

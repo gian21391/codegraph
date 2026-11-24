@@ -1,4 +1,4 @@
 function use()
-m = Meas();
+m = Kalib();
 r = m.rate();
 end

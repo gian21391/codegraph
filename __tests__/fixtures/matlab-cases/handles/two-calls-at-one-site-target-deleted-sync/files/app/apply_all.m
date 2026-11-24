@@ -1,3 +1,3 @@
 function apply_all()
-eval('set_mode(''a'',''x''); set_mode(''b'',''y'');');
+eval('arm_state(''a'',''x''); arm_state(''b'',''y'');');
 end

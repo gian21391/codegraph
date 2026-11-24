@@ -12,7 +12,7 @@
       }
     ],
     "edges": [
-      "use.m use -calls-> Meas::rate @ Meas.m"
+      "use.m use -calls-> Kalib::rate @ Kalib.m"
     ]
   }
 }

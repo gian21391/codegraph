@@ -3,32 +3,32 @@
     "edges": [],
     "rows": [],
     "dormant": [
-      "Vehicle.m:4 calls:Vehicle::deriv"
+      "Vehicle.m:4 calls:Vehicle::dxstate"
     ]
   },
   "steps": [
     {
       "edges": [
         "Bike.m Bike -extends-> Vehicle @ Vehicle.m",
-        "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+        "Vehicle.m Vehicle::run -calls-> Bike::dxstate @ Bike.m"
       ],
       "rows": [
-        "Vehicle.m:4 calls:Vehicle::deriv"
+        "Vehicle.m:4 calls:Vehicle::dxstate"
       ],
       "dormant": []
     },
     {
       "edges": [
         "Bike.m Bike -extends-> Vehicle @ Vehicle.m",
-        "Vehicle.m Vehicle::deriv -calls-> Bike::deriv @ Bike.m",
-        "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+        "Vehicle.m Vehicle::dxstate -calls-> Bike::dxstate @ Bike.m",
+        "Vehicle.m Vehicle::run -calls-> Vehicle::dxstate @ Vehicle.m"
       ],
       "rows": [],
       "dormant": []
     },
     {
       "edges": [
-        "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+        "Vehicle.m Vehicle::run -calls-> Vehicle::dxstate @ Vehicle.m"
       ],
       "rows": [],
       "dormant": []

@@ -1,6 +1,6 @@
 classdef Bike < Vehicle
     methods
-        function d = deriv(veh, t, u)
+        function d = dxstate(veh, t, u)
             d = 1;
         end
     end

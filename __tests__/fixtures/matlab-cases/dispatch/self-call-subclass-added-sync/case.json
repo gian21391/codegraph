@@ -10,25 +10,25 @@
   "steps": [
     {
       "edit": {
-        "Bike.m": "classdef Bike < Vehicle\n    methods\n        function deriv(veh, t)\n        end\n    end\nend\n"
+        "Bike.m": "classdef Bike < Vehicle\n    methods\n        function dxstate(veh, t)\n        end\n    end\nend\n"
       },
       "truth": {
         "edges": [
-          "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+          "Vehicle.m Vehicle::run -calls-> Bike::dxstate @ Bike.m"
         ]
       }
     },
     {
       "edit": {
-        "Vehicle.m": "classdef Vehicle < handle\n    methods\n        function run(veh)\n            veh.deriv(1);\n        end\n        function deriv(veh, t)\n        end\n    end\nend\n"
+        "Vehicle.m": "classdef Vehicle < handle\n    methods\n        function run(veh)\n            veh.dxstate(1);\n        end\n        function dxstate(veh, t)\n        end\n    end\nend\n"
       },
       "truth": {
         "edges": [
-          "Vehicle.m Vehicle::deriv -calls-> Bike::deriv @ Bike.m",
-          "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+          "Vehicle.m Vehicle::dxstate -calls-> Bike::dxstate @ Bike.m",
+          "Vehicle.m Vehicle::run -calls-> Vehicle::dxstate @ Vehicle.m"
         ],
         "noEdges": [
-          "Vehicle.m Vehicle::run -calls-> Bike::deriv @ Bike.m"
+          "Vehicle.m Vehicle::run -calls-> Bike::dxstate @ Bike.m"
         ]
       }
     },
@@ -38,11 +38,11 @@
       },
       "truth": {
         "edges": [
-          "Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m"
+          "Vehicle.m Vehicle::run -calls-> Vehicle::dxstate @ Vehicle.m"
         ],
         "noEdges": [
           {
-            "to": "Bike::deriv"
+            "to": "Bike::dxstate"
           }
         ]
       }

@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "lib/usep.m usep -calls-> p @ lib/private/p.m"
+      "lib/usek.m usek -calls-> p @ lib/private/p.m"
     ],
     "rows": [
       "app/other.m:2 calls:p"
@@ -12,14 +12,14 @@
     {
       "edges": [
         "app/other.m other -calls-> p @ lib/p.m",
-        "lib/usep.m usep -calls-> p @ lib/p.m"
+        "lib/usek.m usek -calls-> p @ lib/p.m"
       ],
       "rows": [],
       "dormant": []
     },
     {
       "edges": [
-        "lib/usep.m usep -calls-> p @ lib/private/p.m"
+        "lib/usek.m usek -calls-> p @ lib/private/p.m"
       ],
       "rows": [
         "app/other.m:2 calls:p"
@@ -29,7 +29,7 @@
     {
       "edges": [
         "app/other.m other -calls-> p @ app/private/p.m",
-        "lib/usep.m usep -calls-> p @ lib/private/p.m"
+        "lib/usek.m usek -calls-> p @ lib/private/p.m"
       ],
       "rows": [],
       "dormant": []

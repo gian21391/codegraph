@@ -41,6 +41,15 @@
  * while extracting a file, stored as a severity-`error` `parse_error`. That
  * is a check of its own, not part of the snapshot.
  *
+ * No two references the extraction writes share a place: the references of
+ * each state's MATLAB files, extracted alone, and the rows and edges of the
+ * first index and of each step's fresh index, by source, kind, line and
+ * column (sharedMatlabPlaces). The store keeps one edge per source, target,
+ * kind, line and column, so two references there would be one edge, which a
+ * sync turns back into one row (step 14). There is no exception: the
+ * functions one call may call (`feval(fn, …)` with `fn` one of several
+ * names) are references of their own too, each at its own place.
+ *
  * Patterns: a `noEdges` entry may be `{ "from": file, "to": name, "kind": k,
  * "at": file }` (each field optional, at least one given; `to` matches a
  * target's qualified name, its last `::` segment, or, for a file node such as
@@ -54,6 +63,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { EDGE_KINDS } from '../src/types';
+import { detectLanguage, extractFromSource } from '../src/extraction';
 import { indexThenSyncEachStep, useAllGrammars, type ProjectState, type StateFacts, type SyncedStep } from './matlab-helpers';
 
 useAllGrammars();
@@ -271,7 +281,7 @@ function vacuityProblems(c: CaseFile, files: Record<string, Buffer>, states: Pro
   // Every positive edge and row the case states, for the kind rule.
   const posEdges = all.flatMap(([t]) => t.edges ?? []);
   const posRows = all.flatMap(([t]) => [...(t.rows ?? []), ...(t.dormant ?? [])]);
-  // A name written as a word of its own; a digit may come before it, as the lexer splits `2sig1` into 2 and `sig1`.
+  // A name written as a word of its own; a digit may come before it, as the lexer splits `2qvk1` into 2 and `qvk1`.
   const written = (name: string) => {
     if (!/^[\w.]+$/.test(name)) return texts.some((t) => t.includes(name));
     const re = new RegExp(`(^|[^A-Za-z_])${name.replace(/\./g, '\\.')}($|[^\\w])`);
@@ -402,6 +412,37 @@ function editFiles(edit: Edit): Record<string, string | Buffer | null> {
   return Object.fromEntries(Object.entries(edit).map(([p, v]) => [p, v !== null && typeof v === 'object' ? Buffer.from(v.base64, 'base64') : v]));
 }
 
+/** A case's files in each of its states: the first index's, then each step's, its edit applied. */
+function fileStates(files: Record<string, Buffer>, c: CaseFile): Array<Record<string, Buffer>> {
+  const out = [files];
+  let now: Record<string, Buffer> = { ...files };
+  for (const step of Array.isArray(c.steps) ? c.steps : []) {
+    now = { ...now };
+    for (const [p, v] of Object.entries(editFiles(step.edit))) {
+      if (v === null) delete now[p];
+      else now[p] = Buffer.isBuffer(v) ? v : Buffer.from(v);
+    }
+    out.push(now);
+  }
+  return out;
+}
+
+/** The places two references of one source and kind share in a state's MATLAB files, each extracted alone as an index extracts it, as `file:line:column kind: names`. */
+function extractedSharedPlaces(state: Record<string, Buffer>): string[] {
+  const out = new Set<string>();
+  for (const [rel, bytes] of Object.entries(state)) {
+    const text = bytes.toString('utf8');
+    if (detectLanguage(rel, text) !== 'matlab') continue;
+    const at = new Map<string, string[]>();
+    for (const r of extractFromSource(rel, text, 'matlab').unresolvedReferences) {
+      const k = `${rel}:${r.line}:${r.column} ${r.referenceKind}\0${r.fromNodeId}`;
+      (at.get(k) ?? at.set(k, []).get(k)!).push(r.referenceName);
+    }
+    for (const [k, names] of at) if (names.length > 1) out.add(`${k.split('\0')[0]}: ${names.sort().join(' | ')}`);
+  }
+  return [...out].sort();
+}
+
 const ids = caseIds();
 
 describe('MATLAB edge-case catalog', () => {
@@ -447,6 +488,15 @@ describe('MATLAB edge-case catalog', () => {
           ...run.facts.steps.flatMap((s, i) => [...s.synced.exceptions.map((x) => `step ${i + 1} (synced): ${x}`), ...s.fresh.exceptions.map((x) => `step ${i + 1} (fresh): ${x}`)]),
         ];
         expect(stored, 'the product caught an exception while extracting a file and stored it: a crash it swallows').toEqual([]);
+      });
+
+      it('no two references of one source and kind share a place', () => {
+        const states = ['index', ...run.steps.map((_, i) => `step ${i + 1}`)];
+        const shared = [
+          ...fileStates(files, c).flatMap((s, i) => extractedSharedPlaces(s).map((p) => `${states[i]} (extracted): ${p}`)),
+          ...[run.facts.initial, ...run.facts.steps.map((s) => s.fresh)].flatMap((f, i) => f.sharedPlaces.map((p) => `${states[i]} (fresh index): ${p}`)),
+        ];
+        expect(shared).toEqual([]);
       });
 
       if (c.pendingBug !== undefined) {

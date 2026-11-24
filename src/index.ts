@@ -1290,6 +1290,7 @@ export class CodeGraph {
         if (result.detectedFrameworks) this.followDetectedFrameworks(result.detectedFrameworks);
 
         // Which of this sync's MATLAB failures may be deleted (see MatlabFreshReferences).
+        for (const id of result.matlabBuiltinRows ?? []) pendingMatlabRows.add(id);
         const matlabFresh: MatlabFreshReferences = { files: new Set(result.changedFilePaths ?? []), rowIds: pendingMatlabRows };
 
         // A component a tag in an unchanged file may render: `<Team />` links
@@ -1726,7 +1727,8 @@ export class CodeGraph {
             definitionDelta,
             result.changedFilePaths ?? [],
             edgesBeforeRetry,
-            result.matlabRelinked
+            result.matlabRelinked,
+            matlabInherited
           );
           // And the failed refs under those names: a call that failed only
           // because two definitions shared its name (`x.go()` with `go` in two
@@ -1737,7 +1739,7 @@ export class CodeGraph {
           // re-opens.
           const reopenedFailed = this.queries.reopenFailedReferences(
             this.queries.getRetryableFailedReferences(definitionDelta).flatMap((ref) => (ref.rowId === undefined ? [] : [ref.rowId]))
-          );
+          ) + this.resolver.reopenMatlabInheritedFailures(matlabInherited, result.changedFilePaths ?? []);
           // MATLAB: the calls of a delta name that end at no node of it (a
           // script's or a stub's file node `n.m`), and those a case variant
           // of it vetoes (see reopenMatlabNamesakes).
@@ -2776,7 +2778,7 @@ export class CodeGraph {
     return this.queries.getNodesByName(name);
   }
 
-  /** Every node whose name is `name` but for case (`FindM44` for `findm44`), in {@link getNodesByName}'s order: by file, line, id. */
+  /** Every node whose name is `name` but for case (`FindMat9` for `findmat9`), in {@link getNodesByName}'s order: by file, line, id. */
   getNodesByNameIgnoringCase(name: string): Node[] {
     return [...this.queries.getNodesByLowerName(name)].sort((a, b) =>
       a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : a.startLine - b.startLine || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

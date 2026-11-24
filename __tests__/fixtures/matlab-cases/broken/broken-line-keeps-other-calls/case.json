@@ -2,16 +2,16 @@
   "why": "A line that does not parse reads as nothing, while the calls written with arguments, the handles, the dotted calls and the commands on whole lines of the same function file stay (project rule: a real call is never hidden, a wrong one is worse than none; harvested from matlab-extraction.test.ts 'keeps the calls written with arguments, the handles and the dotted calls of a broken function file').",
   "truth": {
     "edges": [
-      "plotit.m plotit -calls-> initPanel @ initPanel.m",
-      "plotit.m plotit -calls-> applyGain @ applyGain.m",
-      "plotit.m plotit -references-> getVal @ getVal.m",
-      "plotit.m plotit -calls-> Board::refresh @ Board.m",
-      "plotit.m plotit -calls-> redrawAll @ redrawAll.m"
+      "plotview.m plotview -calls-> initPanel @ initPanel.m",
+      "plotview.m plotview -calls-> applyGain @ applyGain.m",
+      "plotview.m plotview -references-> getVal @ getVal.m",
+      "plotview.m plotview -calls-> Board::refresh @ Board.m",
+      "plotview.m plotview -calls-> redrawAll @ redrawAll.m"
     ],
     "noEdges": [
       {
-        "from": "plotit.m",
-        "to": "powerOn"
+        "from": "plotview.m",
+        "to": "spinUp"
       }
     ]
   }

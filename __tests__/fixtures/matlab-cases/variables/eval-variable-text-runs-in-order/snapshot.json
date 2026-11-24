@@ -1,0 +1,48 @@
+{
+  "index": {
+    "edges": [
+      "runner.m runner -calls-> mkvars.m @ mkvars.m",
+      "runner3.m runner3 -calls-> mkvars.m @ mkvars.m",
+      "runner4.m runner4 -calls-> mkvars.m @ mkvars.m",
+      "runner4.m runner4 -calls-> mkvars.m @ mkvars.m"
+    ],
+    "rows": [
+      "runner3.m:3 calls:XV"
+    ],
+    "dormant": [
+      "runner.m:3 calls:XV",
+      "runner4.m:3 calls:XV"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "runner.m:3 calls:XV",
+        "runner3.m:3 calls:XV",
+        "runner4.m:3 calls:XV"
+      ],
+      "dormant": [
+        "runner.m:3 calls:mkvars",
+        "runner3.m:3 calls:mkvars",
+        "runner4.m:3 calls:mkvars",
+        "runner4.m:3 calls:mkvars"
+      ]
+    },
+    {
+      "edges": [
+        "runner.m runner -calls-> mkvars.m @ mkvars.m",
+        "runner3.m runner3 -calls-> mkvars.m @ mkvars.m",
+        "runner4.m runner4 -calls-> mkvars.m @ mkvars.m",
+        "runner4.m runner4 -calls-> mkvars.m @ mkvars.m"
+      ],
+      "rows": [
+        "runner3.m:3 calls:XV"
+      ],
+      "dormant": [
+        "runner.m:3 calls:XV",
+        "runner4.m:3 calls:XV"
+      ]
+    }
+  ]
+}

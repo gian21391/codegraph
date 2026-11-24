@@ -240,15 +240,15 @@ describe('MATLAB base → override (G2)', () => {
     const root = tempDir('cg-matlab-dispatch-flow-');
     writeTree(root, {
       'ALGORITHM.m': cls('ALGORITHM', 'handle', method('Solve(obj, Problem)', '            obj.main(Problem);\n') + method('main(obj, Problem)')),
-      'NSGAII.m': cls('NSGAII', 'ALGORITHM', method('main(Algorithm, Problem)', '            disp(1);\n')),
+      'EvoA.m': cls('EvoA', 'ALGORITHM', method('main(Algorithm, Problem)', '            disp(1);\n')),
       // More overrides than a name keeps unfiltered: the one the query names is the one kept.
-      ...Object.fromEntries(['MOEAD', 'SPEA2', 'IBEA'].map((a) => [`${a}.m`, cls(a, 'ALGORITHM', method('main(Algorithm, Problem)', '            disp(2);\n'))])),
+      ...Object.fromEntries(['EvoC', 'EvoD', 'EvoB'].map((a) => [`${a}.m`, cls(a, 'ALGORITHM', method('main(Algorithm, Problem)', '            disp(2);\n'))])),
     });
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'Solve NSGAII main' })).content[0]!.text;
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'Solve EvoA main' })).content[0]!.text;
       const flow = text.slice(text.indexOf('Flow'), text.indexOf('Flow') + 600);
-      expect(flow).toMatch(/1\. Solve \(ALGORITHM\.m:3\)\n.*calls\n2\. main \(ALGORITHM\.m:6\)\n.*dynamic: base → override @NSGAII\.m:3\n3\. main \(NSGAII\.m:3\)/);
+      expect(flow).toMatch(/1\. Solve \(ALGORITHM\.m:3\)\n.*calls\n2\. main \(ALGORITHM\.m:6\)\n.*dynamic: base → override @EvoA\.m:3\n3\. main \(EvoA\.m:3\)/);
       expect(text).not.toMatch(/use Read|Read the/);
     } finally {
       cg.close();
@@ -258,37 +258,37 @@ describe('MATLAB base → override (G2)', () => {
 });
 
 describe('MATLAB self call of a method only subclasses define', () => {
-  const VEHICLE = cls('Vehicle', 'handle', method('run(veh, u)', '            [t, y] = ode45(@(t, y) veh.deriv(t, y, u), [0 1], 0);\n'));
+  const VEHICLE = cls('Vehicle', 'handle', method('run(veh, u)', '            [t, y] = ode45(@(t, y) veh.dxstate(t, y, u), [0 1], 0);\n'));
   const SUBS = {
-    'Bicycle.m': cls('Bicycle', 'Vehicle', method('d = deriv(veh, t, y, u)', '            d = 1;\n')),
-    'Unicycle.m': cls('Unicycle', 'Vehicle', method('d = deriv(veh, t, y, u)', '            d = 2;\n')),
+    'Tandem.m': cls('Tandem', 'Vehicle', method('d = dxstate(veh, t, y, u)', '            d = 1;\n')),
+    'Trike.m': cls('Trike', 'Vehicle', method('d = dxstate(veh, t, y, u)', '            d = 2;\n')),
   };
 
-  it('links the call to each subclass\'s definition, nearest down each line (RTB Vehicle::deriv)', async () => {
+  it('links the call to each subclass\'s definition, nearest down each line (Vehicle::dxstate)', async () => {
     expect(await synthesized({
       'Vehicle.m': VEHICLE,
       ...SUBS,
-      // Below Bicycle, its own override takes over.
-      'Racer.m': cls('Racer', 'Bicycle', method('d = deriv(veh, t, y, u)', '            d = 3;\n')),
+      // Below Tandem, its own override takes over.
+      'Racer.m': cls('Racer', 'Tandem', method('d = dxstate(veh, t, y, u)', '            d = 3;\n')),
     })).toEqual([
-      'Bicycle::deriv -> Racer::deriv @ Racer.m (matlab-override)',
-      'Vehicle::run -> Bicycle::deriv @ Bicycle.m (matlab-subclass-method)',
-      'Vehicle::run -> Unicycle::deriv @ Unicycle.m (matlab-subclass-method)',
+      'Tandem::dxstate -> Racer::dxstate @ Racer.m (matlab-override)',
+      'Vehicle::run -> Tandem::dxstate @ Tandem.m (matlab-subclass-method)',
+      'Vehicle::run -> Trike::dxstate @ Trike.m (matlab-subclass-method)',
     ]);
   });
 
   it('links nothing for a call on a variable of no stated class, and nothing extra when the class defines the method', async () => {
     expect(await synthesized({
-      'drive.m': 'function drive(veh)\nveh.deriv(0, 0, 0);\nend\n',
+      'drive.m': 'function drive(veh)\nveh.dxstate(0, 0, 0);\nend\n',
       'Vehicle.m': cls('Vehicle', 'handle', method('stop(veh)')),
       ...SUBS,
     })).toEqual([]);
     expect(await synthesized({
-      'Vehicle.m': cls('Vehicle', 'handle', method('run(veh, u)', '            veh.deriv(0, 0, u);\n') + method('d = deriv(veh, t, y, u)', '            d = 0;\n')),
+      'Vehicle.m': cls('Vehicle', 'handle', method('run(veh, u)', '            veh.dxstate(0, 0, u);\n') + method('d = dxstate(veh, t, y, u)', '            d = 0;\n')),
       ...SUBS,
     })).toEqual([
-      'Vehicle::deriv -> Bicycle::deriv @ Bicycle.m (matlab-override)',
-      'Vehicle::deriv -> Unicycle::deriv @ Unicycle.m (matlab-override)',
+      'Vehicle::dxstate -> Tandem::dxstate @ Tandem.m (matlab-override)',
+      'Vehicle::dxstate -> Trike::dxstate @ Trike.m (matlab-override)',
     ]);
   });
 });
@@ -311,9 +311,9 @@ describe('MATLAB member written without an argument list (G1)', () => {
 
   it('links a method on the method\'s own object, and leaves a read of its property no edge and no row', async () => {
     const { edges, unresolved } = await indexOfProject({
-      'Gen.m': cls('Gen', 'handle', method('all(CGen)', '            [t, allT] = CGen.genfkine;\n            if CGen.verbose\n            end\n            g = CGen.Gain;\n') + method('[t, a] = genfkine(CGen)', '            t = 1; a = 2;\n')).replace('    methods\n', '    properties\n        Gain\n        verbose\n    end\n    methods\n'),
+      'Gen.m': cls('Gen', 'handle', method('all(GQbld)', '            [t, allTq] = GQbld.mkpose;\n            if GQbld.verbose\n            end\n            g = GQbld.Gain;\n') + method('[t, a] = mkpose(GQbld)', '            t = 1; a = 2;\n')).replace('    methods\n', '    properties\n        Gain\n        verbose\n    end\n    methods\n'),
     });
-    expect(edges).toEqual(['Gen.m Gen::all -calls-> Gen::genfkine @ Gen.m']);
+    expect(edges).toEqual(['Gen.m Gen::all -calls-> Gen::mkpose @ Gen.m']);
     expect(unresolved).toEqual([]);
   });
 
@@ -337,21 +337,21 @@ describe('MATLAB member written without an argument list (G1)', () => {
     expect(unresolved).toEqual(['Sub.m:4 calls:Sub::Rate']);
   });
 
-  it('links nothing on a variable of no stated class, even with one method of the name: a struct read (fieldtrip data.fsample, physbase par.plot)', async () => {
+  it('links nothing on a variable of no stated class, even with one method of the name: a struct read (data.smprate, par.plot)', async () => {
     const { edges, unresolved } = await indexOfProject({
-      'meeg.m': cls('meeg', 'handle', method('f = fsample(obj)', '            f = 1;\n')),
-      'AccObj.m': cls('AccObj', 'handle', method('plot(obj)')),
-      'ft_remove.m': 'function ft_remove(data)\nfs = data.fsample;\nend\n',
+      'sigbox.m': cls('sigbox', 'handle', method('f = smprate(obj)', '            f = 1;\n')),
+      'AcmeObj.m': cls('AcmeObj', 'handle', method('plot(obj)')),
+      'tk_remove.m': 'function tk_remove(data)\nfs = data.smprate;\nend\n',
       'monitor.m': 'function monitor(par)\nif par.plot\n  disp(1);\nend\nend\n',
     });
-    expect(edges.filter((e) => /^(ft_remove|monitor)\.m /.test(e))).toEqual([]);
+    expect(edges.filter((e) => /^(tk_remove|monitor)\.m /.test(e))).toEqual([]);
     expect(unresolved).toEqual([]);
   });
 
   it('emits no reference for a command\'s argument, a deeper chain, an assignment target or an untyped local', () => {
     const code = [
       'function f(obj, p)',
-      'delete hs_err_pid30205.log',
+      'delete core_dump_77413.log',
       'm = Model();',
       'x = m.p.q;',
       'm.reset = 1;',
@@ -366,15 +366,15 @@ describe('MATLAB member written without an argument list (G1)', () => {
   });
 
   it('emits no reference in a statement the parser could not read whole (a file listing in a .m file)', () => {
-    const listing = '-rw-rw-r--   1 alsoper2 controls  110630 Aug 21 14:33 hs_err_pid30205.log\n';
+    const listing = '-rw-r--r--   1 someone staff  52817 Mar 3 09:12 core_dump_77413.log\n';
     const r = extractFromSource('notes.m', listing, 'matlab');
-    expect(r.unresolvedReferences.filter((u) => u.referenceName.includes('hs_err'))).toEqual([]);
+    expect(r.unresolvedReferences.filter((u) => u.referenceName.includes('core_dump'))).toEqual([]);
   });
 
   it('tags the reference bare, and on the own object self', () => {
-    const code = cls('Gen', 'handle', method('all(CGen)', '            CGen.genfkine;\n            m = Model();\n            x = m.compute;\n            y = Model.make;\n'));
+    const code = cls('Gen', 'handle', method('all(GQbld)', '            GQbld.mkpose;\n            m = Model();\n            x = m.compute;\n            y = Model.make;\n'));
     expect(refs('Gen.m', code).filter((r) => / calls:/.test(r))).toEqual([
-      '4 calls:Gen::genfkine [bare,self]',
+      '4 calls:Gen::mkpose [bare,self]',
       '5 calls:Model',
       '6 calls:Model::compute [bare]',
       '7 calls:Model::make [bare]',
@@ -384,16 +384,16 @@ describe('MATLAB member written without an argument list (G1)', () => {
   it('refuses a bare member on a variable of no stated class in the resolver too (a second fence)', async () => {
     const root = tempDir('cg-matlab-dispatch-fence-');
     writeTree(root, {
-      'meeg.m': cls('meeg', 'handle', method('f = fsample(obj)', '            f = 1;\n')),
-      'user.m': 'function user(data)\nfs = data.fsample(1);\nend\n',
+      'sigbox.m': cls('sigbox', 'handle', method('f = smprate(obj)', '            f = 1;\n')),
+      'user.m': 'function user(data)\nfs = data.smprate(1);\nend\n',
     });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       const context = new ReferenceResolver(root, (cg as unknown as { queries: Queries }).queries).getResolutionContext();
       const user = cg.getNodesInFile('user.m').find((n) => n.kind === 'function')!;
-      const ref = { fromNodeId: user.id, referenceName: 'data.fsample', referenceKind: 'calls' as const, line: 2, column: 5, filePath: 'user.m', language: 'matlab' as const };
+      const ref = { fromNodeId: user.id, referenceName: 'data.smprate', referenceKind: 'calls' as const, line: 2, column: 5, filePath: 'user.m', language: 'matlab' as const };
       // Written with an argument list, the one class that defines it answers (as today).
-      expect(matchMatlabReference(ref, context)?.targetNodeId).toBe(cg.getNodesInFile('meeg.m').find((n) => n.name === 'fsample')!.id);
+      expect(matchMatlabReference(ref, context)?.targetNodeId).toBe(cg.getNodesInFile('sigbox.m').find((n) => n.name === 'smprate')!.id);
       expect(matchMatlabReference({ ...ref, candidates: ['bare'] }, context)).toBeNull();
     } finally {
       cg.close();
@@ -401,32 +401,32 @@ describe('MATLAB member written without an argument list (G1)', () => {
     }
   });
 
-  it('links no member of an old-style @Cls class: its object is a struct, and `this.path` a field (fieldtrip @meeg)', async () => {
+  it('links no member of an old-style @Cls class: its object is a struct, and `this.path` a field (an old-style @sigbox)', async () => {
     const { edges, unresolved } = await indexOfProject({
-      '@meeg/meeg.m': "function D = meeg(varargin)\nD = class(struct('path', '.'), 'meeg');\nend\n",
-      '@meeg/path.m': 'function p = path(this)\np = this.path;\nend\n',
-      '@meeg/clone.m': 'function c = clone(this)\npth = this.path;\nc = pth;\nend\n',
+      '@sigbox/sigbox.m': "function D = sigbox(varargin)\nD = class(struct('path', '.'), 'sigbox');\nend\n",
+      '@sigbox/path.m': 'function p = path(this)\np = this.path;\nend\n',
+      '@sigbox/clone.m': 'function c = clone(this)\npth = this.path;\nc = pth;\nend\n',
     });
-    expect(edges.filter((e) => e.includes('meeg::path'))).toEqual([]);
+    expect(edges.filter((e) => e.includes('sigbox::path'))).toEqual([]);
     // A method carries the name: the rows stay, edgeless (a classdef rewrite would make them calls).
-    expect(unresolved).toEqual(['@meeg/clone.m:2 calls:meeg::path', '@meeg/path.m:2 calls:meeg::path']);
+    expect(unresolved).toEqual(['@sigbox/clone.m:2 calls:sigbox::path', '@sigbox/path.m:2 calls:sigbox::path']);
   });
 
-  it('links no member that is both a method and a property of the class (RTB `n`)', async () => {
+  it('links no member that is both a method and a property of the class (`n`)', async () => {
     const { edges, unresolved } = await indexOfProject({
-      'SerialLink.m': cls('SerialLink', 'handle', method('go(robot)', '            k = robot.n;\n')).replace('    methods\n', '    properties\n        n\n    end\n    methods\n'),
-      'ETS3.m': cls('ETS3', 'handle', method('k = n(obj)', '            k = 1;\n')),
+      'ChainLink.m': cls('ChainLink', 'handle', method('go(robot)', '            k = robot.n;\n')).replace('    methods\n', '    properties\n        n\n    end\n    methods\n'),
+      'Chain3.m': cls('Chain3', 'handle', method('k = n(obj)', '            k = 1;\n')),
     });
-    expect(edges.filter((e) => e.startsWith('SerialLink.m SerialLink::go'))).toEqual([]);
-    expect(unresolved).toEqual(['SerialLink.m:7 calls:SerialLink::n']);
+    expect(edges.filter((e) => e.startsWith('ChainLink.m ChainLink::go'))).toEqual([]);
+    expect(unresolved).toEqual(['ChainLink.m:7 calls:ChainLink::n']);
   });
 });
 
 describe('MATLAB method on a variable of no stated class', () => {
-  it('never takes a constructor for its method (RTB `g.Astar(…)` on a PGraph)', async () => {
+  it('never takes a constructor for its method (`g.PathA(…)` on a LinkMesh)', async () => {
     const edges = await edgesOfProject({
-      'Astar.m': cls('Astar', 'handle', method('obj = Astar(varargin)')),
-      'plan.m': 'function plan(g)\np = g.Astar(1, 2);\nend\n',
+      'PathA.m': cls('PathA', 'handle', method('obj = PathA(varargin)')),
+      'plan.m': 'function plan(g)\np = g.PathA(1, 2);\nend\n',
     });
     expect(edges.filter((e) => e.startsWith('plan.m '))).toEqual([]);
   });
@@ -434,25 +434,25 @@ describe('MATLAB method on a variable of no stated class', () => {
 
 describe('MATLAB parameter named after its class (G3)', () => {
   const PROBLEMS = {
-    'PROBLEM.m': cls('PROBLEM', 'handle', method('P = Evaluation(obj, X)', '            P = obj.CalObj(X);\n') + method('Y = CalObj(obj, X)', '            Y = X;\n')),
-    'DTLZ2.m': cls('DTLZ2', 'PROBLEM', method('Y = CalObj(obj, X)', '            Y = 2 * X;\n')),
-    'MFDE.m': cls('MFDE', 'handle', method('P = Evaluation(obj, X)', '            P = X;\n')),
+    'PROBLEM.m': cls('PROBLEM', 'handle', method('P = Evaluation(obj, X)', '            P = obj.ScoreAll(X);\n') + method('Y = ScoreAll(obj, X)', '            Y = X;\n')),
+    'PRB3.m': cls('PRB3', 'PROBLEM', method('Y = ScoreAll(obj, X)', '            Y = 2 * X;\n')),
+    'EvoE.m': cls('EvoE', 'handle', method('P = Evaluation(obj, X)', '            P = X;\n')),
   };
 
   it('takes the root class the parameter is named after, ignoring case, and the edge says so', async () => {
     const root = tempDir('cg-matlab-dispatch-g3-');
-    writeTree(root, { ...PROBLEMS, 'NSGAII.m': cls('NSGAII', 'handle', method('main(Algorithm, Problem)', '            P = Problem.Evaluation(1);\n')) });
+    writeTree(root, { ...PROBLEMS, 'EvoA.m': cls('EvoA', 'handle', method('main(Algorithm, Problem)', '            P = Problem.Evaluation(1);\n')) });
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      const main = cg.getNodesInFile('NSGAII.m').find((n) => n.name === 'main')!;
+      const main = cg.getNodesInFile('EvoA.m').find((n) => n.name === 'main')!;
       const out = cg.getOutgoingEdgesFrom([main.id]).filter((e) => e.kind === 'calls');
       expect(out.map((e) => `${cg.getNode(e.target)!.qualifiedName} ${(e.metadata as Record<string, unknown>).via}`)).toEqual(['PROBLEM::Evaluation receiver-name']);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
     }
-    // With G2: algorithm → Evaluation → the problem's CalObj.
-    expect(await synthesized({ ...PROBLEMS })).toEqual(['PROBLEM::CalObj -> DTLZ2::CalObj @ DTLZ2.m (matlab-override)']);
+    // With G2: algorithm → Evaluation → the problem's ScoreAll.
+    expect(await synthesized({ ...PROBLEMS })).toEqual(['PROBLEM::ScoreAll -> PRB3::ScoreAll @ PRB3.m (matlab-override)']);
   });
 
   it('takes no class for a local, a parameter the function fills a field of or reassigns, two matching roots or none', async () => {
@@ -485,15 +485,15 @@ describe('MATLAB parameter named after its class (G3)', () => {
 
   it('marks the edge a guess (heuristic), labelled in the Flow, and a sync rebinds it like any resolved call', async () => {
     const root = tempDir('cg-matlab-dispatch-g3-mark-');
-    writeTree(root, { ...PROBLEMS, 'NSGAII.m': cls('NSGAII', 'handle', method('main(Algorithm, Problem)', '            P = Problem.Evaluation(1);\n')) });
+    writeTree(root, { ...PROBLEMS, 'EvoA.m': cls('EvoA', 'handle', method('main(Algorithm, Problem)', '            P = Problem.Evaluation(1);\n')) });
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      const main = cg.getNodesInFile('NSGAII.m').find((n) => n.name === 'main')!;
+      const main = cg.getNodesInFile('EvoA.m').find((n) => n.name === 'main')!;
       const edge = cg.getOutgoingEdgesFrom([main.id]).find((e) => e.kind === 'calls')!;
       expect(edge.provenance).toBe('heuristic');
       expect(describeSynthesizedHop(edge)?.summary).toBe('receiver named after its class');
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'NSGAII main PROBLEM Evaluation CalObj' })).content.map((c) => (c as { text: string }).text).join('\n');
-      expect(text).toMatch(/1\. main \(NSGAII\.m:3\)\n\s*↓ dynamic: receiver named after its class\n2\. Evaluation \(PROBLEM\.m:3\)/);
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'EvoA main PROBLEM Evaluation ScoreAll' })).content.map((c) => (c as { text: string }).text).join('\n');
+      expect(text).toMatch(/1\. main \(EvoA\.m:3\)\n\s*↓ dynamic: receiver named after its class\n2\. Evaluation \(PROBLEM\.m:3\)/);
     } finally {
       cg.close();
       fs.rmSync(root, { recursive: true, force: true });
@@ -509,7 +509,7 @@ describe('MATLAB parameter named after its class (G3)', () => {
     expect(steps.map((st) => st.synced.filter((e) => e.startsWith('alg.m ')))).toEqual([
       [],
       ['alg.m alg -calls-> PROBLEM::Evaluation @ PROBLEM.m'],
-      ['alg.m alg -calls-> MFDE::Evaluation @ MFDE.m'],
+      ['alg.m alg -calls-> EvoE::Evaluation @ EvoE.m'],
       ['alg.m alg -calls-> PROBLEM::Evaluation @ PROBLEM.m'],
     ]);
     for (const st of steps) {
@@ -527,8 +527,8 @@ describe('MATLAB parameter named after its class (G3)', () => {
     writeTree(root, {
       'ALG.m': cls('ALG', 'handle', method('Solve(obj, Problem)', '            obj.main(Problem);\n') + method('main(obj, Problem)')),
       'NSG.m': alg('NSG'),
-      'MOEA.m': alg('MOEA'),
-      'SPEA.m': alg('SPEA'),
+      'EVOB.m': alg('EVOB'),
+      'EVOZ.m': alg('EVOZ'),
       'PROBLEM.m': problem('PROBLEM', 1),
       'Sampler.m': problem('Sampler', 2),
     });
@@ -577,14 +577,14 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
   });
 
   it('when the base method comes later: the self call reaches the subclasses, then the base and its override', async () => {
-    const vehicle = (extra: string): string => cls('Vehicle', 'handle', method('run(veh)', '            veh.deriv(1);\n') + extra);
+    const vehicle = (extra: string): string => cls('Vehicle', 'handle', method('run(veh)', '            veh.dxstate(1);\n') + extra);
     const r = await syncedAndFresh(
-      { 'Vehicle.m': vehicle(''), 'Bicycle.m': cls('Bicycle', 'Vehicle', method('deriv(veh, t)')) },
-      { 'Vehicle.m': vehicle(method('deriv(veh, t)')) },
+      { 'Vehicle.m': vehicle(''), 'Tandem.m': cls('Tandem', 'Vehicle', method('dxstate(veh, t)')) },
+      { 'Vehicle.m': vehicle(method('dxstate(veh, t)')) },
     );
     expect(r.steps).toEqual([
-      ['Bicycle.m Bicycle -extends-> Vehicle @ Vehicle.m', 'Vehicle.m Vehicle::run -calls-> Bicycle::deriv @ Bicycle.m'],
-      ['Bicycle.m Bicycle -extends-> Vehicle @ Vehicle.m', 'Vehicle.m Vehicle::deriv -calls-> Bicycle::deriv @ Bicycle.m', 'Vehicle.m Vehicle::run -calls-> Vehicle::deriv @ Vehicle.m'],
+      ['Tandem.m Tandem -extends-> Vehicle @ Vehicle.m', 'Vehicle.m Vehicle::run -calls-> Tandem::dxstate @ Tandem.m'],
+      ['Tandem.m Tandem -extends-> Vehicle @ Vehicle.m', 'Vehicle.m Vehicle::dxstate -calls-> Tandem::dxstate @ Tandem.m', 'Vehicle.m Vehicle::run -calls-> Vehicle::dxstate @ Vehicle.m'],
     ]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
@@ -594,14 +594,14 @@ describe('MATLAB dispatch through a sync ends where a fresh index does', () => {
   it('when the class a parameter is named after is added, or renamed', async () => {
     const problem = (name: string): string => cls(name, 'handle', method('P = Evaluation(obj, X)', '            P = X;\n'));
     const r = await syncedAndFresh(
-      { 'alg.m': 'function alg(Algorithm, Problem)\nProblem.Evaluation(1);\nend\n', 'MFDE.m': problem('MFDE') },
+      { 'alg.m': 'function alg(Algorithm, Problem)\nProblem.Evaluation(1);\nend\n', 'EvoE.m': problem('EvoE') },
       { 'PROBLEM.m': problem('PROBLEM') },
       { 'PROBLEM.m': null, 'PROB.m': problem('PROB') },
       { 'PROB.m': null, 'PROBLEM.m': problem('PROBLEM') },
     );
     expect(r.steps.map((s) => s.filter((e) => e.startsWith('alg.m ')))).toEqual([
       // One class defines it: that class's, whatever the parameter's name (as before).
-      ['alg.m alg -calls-> MFDE::Evaluation @ MFDE.m'],
+      ['alg.m alg -calls-> EvoE::Evaluation @ EvoE.m'],
       ['alg.m alg -calls-> PROBLEM::Evaluation @ PROBLEM.m'],
       [],
       ['alg.m alg -calls-> PROBLEM::Evaluation @ PROBLEM.m'],
@@ -701,10 +701,10 @@ describe('MATLAB member call rows: kept while the member has a carrier, and a sy
 
   it('relinks a self call when the first subclass defining the method is added (review case 2)', async () => {
     const steps = await syncedAndFreshEachStep(
-      { 'Vehicle.m': cls('Vehicle', 'handle', method('path(veh, t, y, u)', '            veh.deriv(t, y, u);\n')) },
-      { 'Bicycle.m': cls('Bicycle', 'Vehicle', method('d = deriv(veh, t, y, u)', '            d = 1;\n')) },
+      { 'Vehicle.m': cls('Vehicle', 'handle', method('path(veh, t, y, u)', '            veh.dxstate(t, y, u);\n')) },
+      { 'Tandem.m': cls('Tandem', 'Vehicle', method('d = dxstate(veh, t, y, u)', '            d = 1;\n')) },
     );
-    expect(steps[0]!.synced).toContain('Vehicle.m Vehicle::path -calls-> Bicycle::deriv @ Bicycle.m');
+    expect(steps[0]!.synced).toContain('Vehicle.m Vehicle::path -calls-> Tandem::dxstate @ Tandem.m');
     expectEveryStepFresh(steps);
   });
 
@@ -833,14 +833,14 @@ describe('codegraph_node on a base method with many overrides', () => {
 
 describe('MATLAB member call whose name the value interpreter built (review 2, case 1)', () => {
   const CALLER = "function caller(r)\nfeval(strcat('pkg.', 'scale'), r);\na = lower('PKG.SHIFT');\nfeval(a, r);\nend\n";
-  const CALLER2 = "function caller2(r)\neval(['x = Model.' 'make(r);']);\nh = str2func(sprintf('%s.%s', 'pkg', 'scale'));\nh(r);\nend\n";
+  const CALLERB = "function callerb(r)\neval(['x = Model.' 'make(r);']);\nh = str2func(sprintf('%s.%s', 'pkg', 'scale'));\nh(r);\nend\n";
   const MODEL = 'classdef Model\n    methods (Static)\n        function o = make(k)\n            o = k;\n        end\n    end\nend\n';
   const SCALE = 'function y = scale(x)\ny = 2*x;\nend\n';
   const SHIFT = 'function y = shift(x)\ny = x+1;\nend\n';
 
   it('tags a dotted name the interpreter built `computed`, and not one a literal at the call spells', () => {
     expect(refs('caller.m', CALLER).filter((r) => r.includes('pkg::'))).toEqual(['2 calls:pkg::scale [computed]', '4 calls:pkg::shift [computed]']);
-    expect(refs('caller2.m', CALLER2).filter((r) => /Model::|pkg::/.test(r))).toEqual([
+    expect(refs('callerb.m', CALLERB).filter((r) => /Model::|pkg::/.test(r))).toEqual([
       '2 calls:Model::make [computed]',
       '3 function_ref:pkg::scale [computed]',
       '4 calls:pkg::scale [computed]',
@@ -856,22 +856,22 @@ describe('MATLAB member call whose name the value interpreter built (review 2, c
 
   it('keeps its row while the target is gone, hidden from the lists of calls leaving the index, and relinks it when the target comes back', async () => {
     const steps = await syncedAndFreshEachStep(
-      { 'caller.m': CALLER, 'caller2.m': CALLER2, 'Model.m': MODEL, '+pkg/scale.m': SCALE, '+pkg/shift.m': SHIFT },
+      { 'caller.m': CALLER, 'callerb.m': CALLERB, 'Model.m': MODEL, '+pkg/scale.m': SCALE, '+pkg/shift.m': SHIFT },
       { '+pkg/scale.m': null, '+pkg/shift.m': null, 'Model.m': null },
       { '+pkg/scale.m': SCALE, '+pkg/shift.m': SHIFT, 'Model.m': MODEL },
     );
     expect(steps[0]!.syncedRows).toEqual([
       'caller.m:2 calls:pkg::scale',
       'caller.m:4 calls:pkg::shift',
-      'caller2.m:2 calls:Model::make',
-      'caller2.m:3 function_ref:pkg::scale',
-      'caller2.m:4 calls:pkg::scale',
+      'callerb.m:2 calls:Model::make',
+      'callerb.m:3 function_ref:pkg::scale',
+      'callerb.m:4 calls:pkg::scale',
     ]);
     expect(steps[1]!.synced.filter((e) => e.startsWith('caller') && e.includes('-calls->'))).toEqual([
       'caller.m caller -calls-> pkg::scale @ +pkg/scale.m',
       'caller.m caller -calls-> pkg::shift @ +pkg/shift.m',
-      'caller2.m caller2 -calls-> Model::make @ Model.m',
-      'caller2.m caller2 -calls-> pkg::scale @ +pkg/scale.m',
+      'callerb.m callerb -calls-> Model::make @ Model.m',
+      'callerb.m callerb -calls-> pkg::scale @ +pkg/scale.m',
     ]);
     for (const st of steps) {
       expect(st.synced).toEqual(st.fresh);
@@ -987,12 +987,12 @@ describe('MATLAB carrier step: a word scan for the built-ins, and member rows wo
   it('finds a word whole', () => {
     const hit = matlabNameScan(new Set(['beep']));
     expect(['beep;', 'x = beep', 'a.beep(2)'].filter((t) => !hit(t))).toEqual([]);
-    expect(['beeper', 'my_beep', '1beep'].filter(hit)).toEqual([]);
+    expect(['buzzer', 'my_beep', '1beep'].filter(hit)).toEqual([]);
     // Past the pattern's size, every word is looked up: the same answers.
     const many = new Set(['beep', ...Array.from({ length: 40 }, (_, i) => `zz${i}`)]);
     const wide = matlabNameScan(many);
     expect(['beep;', 'x = beep', 'zz7(1)'].filter((t) => !wide(t))).toEqual([]);
-    expect(['beeper', 'my_beep', 'zz77'].filter(wide)).toEqual([]);
+    expect(['buzzer', 'my_beep', 'zz77'].filter(wide)).toEqual([]);
   });
 
   it('wakes no member row for a JavaScript file\'s new names, and a sync still ends where a fresh index does', async () => {
@@ -1103,12 +1103,37 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
     }
   }
 
-  /** Makes the first re-extraction of the carrier step throw: a sync killed after its rows are dropped, woken or put to sleep. */
+  /**
+   * Makes the carrier step's first file throw, extracted again or its calls
+   * of a gained name written again (addMatlabBuiltinRows): a sync killed
+   * after its rows are dropped, woken or put to sleep.
+   */
   const killAtReextract = (): (() => void) => {
+    const proto = ExtractionOrchestrator.prototype as unknown as {
+      indexFile: (p: string, again?: boolean) => Promise<unknown>;
+      addMatlabBuiltinRows: (...args: unknown[]) => unknown;
+    };
+    const orig = proto.indexFile;
+    const origRows = proto.addMatlabBuiltinRows;
+    proto.indexFile = function (this: unknown, p: string, again?: boolean) {
+      if (again === true) throw new Error('simulated kill at the carrier re-extraction');
+      return orig.call(this, p, again);
+    };
+    proto.addMatlabBuiltinRows = function () {
+      throw new Error('simulated kill at the carrier re-extraction');
+    };
+    return () => {
+      proto.indexFile = orig;
+      proto.addMatlabBuiltinRows = origRows;
+    };
+  };
+
+  /** Makes the carrier step's first full re-extraction (`indexFile(…, true)`) throw, and nothing else: a sync killed there. */
+  const killAtFullReextract = (): (() => void) => {
     const proto = ExtractionOrchestrator.prototype as unknown as { indexFile: (p: string, again?: boolean) => Promise<unknown> };
     const orig = proto.indexFile;
     proto.indexFile = function (this: unknown, p: string, again?: boolean) {
-      if (again === true) throw new Error('simulated kill at the carrier re-extraction');
+      if (again === true) throw new Error('simulated kill at the carrier full re-extraction');
       return orig.call(this, p, again);
     };
     return () => {
@@ -1150,16 +1175,32 @@ describe('MATLAB carrier step killed half way: the next sync finishes it (review
   }, 120_000);
 
   it('finishes a step that wakes and re-extracts, killed between the two', async () => {
-    const BEEPER = 'function beeper()\nbeep\nend\n';
+    const BUZZER = 'function buzzer()\nbeep\nend\n';
     const r = await killedThenSynced(
-      { 'Model.m': MODEL_WITH, 'user.m': USER, 'beeper.m': BEEPER },
+      { 'Model.m': MODEL_WITH, 'user.m': USER, 'buzzer.m': BUZZER },
       [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH, 'tools/beep.m': 'function beep()\nend\n' }],
       killAtReextract,
     );
     expect(r.synced).toContain('user.m user -calls-> Model::recalib @ Model.m');
-    expect(r.synced).toContain('beeper.m beeper -calls-> beep @ tools/beep.m');
+    expect(r.synced).toContain('buzzer.m buzzer -calls-> beep @ tools/beep.m');
     expectFresh(r);
-    expect(JSON.parse(r.record!)).toMatchObject({ wake: [expect.any(Number)], files: ['beeper.m'] });
+    expect(JSON.parse(r.record!)).toMatchObject({ wake: [expect.any(Number)], files: ['buzzer.m'] });
+  }, 120_000);
+
+  it('finishes a step that wakes and extracts a file again in full, killed between the two', async () => {
+    // A file that imports a name is extracted again in full when a built-in's
+    // name it calls gains its first reach (matlabBuiltinRowsPlan): the kill
+    // fires inside that re-extraction, after the wake was recorded.
+    const BUZZER = 'function buzzer()\nimport pkg.*\nbeep\nend\n';
+    const r = await killedThenSynced(
+      { 'Model.m': MODEL_WITH, 'user.m': USER, 'buzzer.m': BUZZER },
+      [{ 'Model.m': MODEL_WITHOUT }, { 'Model.m': MODEL_WITH, 'tools/beep.m': 'function beep()\nend\n' }],
+      killAtFullReextract,
+    );
+    expect(r.synced).toContain('user.m user -calls-> Model::recalib @ Model.m');
+    expect(r.synced).toContain('buzzer.m buzzer -calls-> beep @ tools/beep.m');
+    expectFresh(r);
+    expect(JSON.parse(r.record!)).toMatchObject({ wake: [expect.any(Number)], files: ['buzzer.m'] });
   }, 120_000);
 
   it('accepts a record written before dormant rows were kept (no wake, no sleep)', async () => {
@@ -1270,7 +1311,7 @@ describe('MATLAB call in function syntax on an object the code does not type (st
     }
   }
 
-  // RTB ETS.m / ETS2.m: `e = ets(i); if isjoint(e)`, `for x = ets`, `substituteToZ(ets(k))`.
+  // `e = ets(i); if isfixed(e)`, `for x = ets`, `swapToY(ets(k))`.
   const SEG = [
     'classdef Seg < handle',
     '    methods',
@@ -1278,18 +1319,18 @@ describe('MATLAB call in function syntax on an object the code does not type (st
     '            b = false;',
     '            for i = 1:numel(ets)',
     '                e = ets(i);',
-    '                if isjoint(e), b = true; end',
+    '                if isfixed(e), b = true; end',
     '            end',
     '            for x = ets',
-    '                b = b || isjoint(x);',
+    '                b = b || isfixed(x);',
     '            end',
-    '            b = b || isjoint(ets(1)) || scaled(2, ets) > 0;',
+    '            b = b || isfixed(ets(1)) || scaled(2, ets) > 0;',
     '            n = ets(1);',
     '            n = 3;',
-    '            isjoint(n);',
+    '            isfixed(n);',
     '            numel(ets(1));',
     '        end',
-    '        function t = isjoint(e)',
+    '        function t = isfixed(e)',
     '            t = true;',
     '        end',
     '        function v = scaled(f, e)',
@@ -1301,70 +1342,70 @@ describe('MATLAB call in function syntax on an object the code does not type (st
   ].join('\n');
 
   it('dispatches on an element or a copy of the method\'s own object, and on it after a number (E1): exact edges', async () => {
-    expect(refs('Seg.m', SEG).filter((r) => /isjoint|scaled|numel/.test(r))).toEqual([
+    expect(refs('Seg.m', SEG).filter((r) => /isfixed|scaled|numel/.test(r))).toEqual([
       // On the method's own object as it is: dispatched before this step too.
       '5 calls:Seg::numel [dispatch:numel]',
-      '7 calls:Seg::isjoint [dispatch:isjoint]',
-      '10 calls:Seg::isjoint [dispatch:isjoint]',
-      '12 calls:Seg::isjoint [dispatch:isjoint]',
+      '7 calls:Seg::isfixed [dispatch:isfixed]',
+      '10 calls:Seg::isfixed [dispatch:isfixed]',
+      '12 calls:Seg::isfixed [dispatch:isfixed]',
       '12 calls:Seg::scaled [dispatch:scaled]',
       // A copy written twice, once a number: nothing said of it, and no object either.
-      '15 calls:isjoint',
+      '15 calls:isfixed',
       // A built-in's name stays the built-in's call.
       '16 calls:numel',
     ]);
     expect(await callsOut({ 'Seg.m': SEG }, 'Seg.m')).toEqual([
-      'Seg.m:10 Seg::anyJoint -> Seg::isjoint',
-      'Seg.m:12 Seg::anyJoint -> Seg::isjoint',
+      'Seg.m:10 Seg::anyJoint -> Seg::isfixed',
+      'Seg.m:12 Seg::anyJoint -> Seg::isfixed',
       'Seg.m:12 Seg::anyJoint -> Seg::scaled',
-      'Seg.m:7 Seg::anyJoint -> Seg::isjoint',
+      'Seg.m:7 Seg::anyJoint -> Seg::isfixed',
     ]);
   });
 
-  // physbase `@tps/BCH99.m`: `q` holds what a method returns, so its class is not stated.
-  const TPS_FILES = {
-    '@tps/tps.m': "function t = tps(x)\nt = class(struct('v', x), 'tps');\nend\n",
-    '@tps/TPS2VPSbyLieTransformation.m': 'function v = TPS2VPSbyLieTransformation(t)\nv = t;\nend\n',
-    '@tps/ConcatenateTPSbyVPS.m': 'function r = ConcatenateTPSbyVPS(t, v, n)\nr = t;\nend\n',
-    '@tps/BCH99.m': [
-      'function r = BCH99(x, y)',
-      'p = TPS2VPSbyLieTransformation(x);',
-      'q = TPS2VPSbyLieTransformation(y);',
+  // `@gmap/BKZ07.m`: `q` holds what a method returns, so its class is not stated.
+  const GMAP_FILES = {
+    '@gmap/gmap.m': "function t = gmap(x)\nt = class(struct('v', x), 'gmap');\nend\n",
+    '@gmap/GmapToStepByFlow.m': 'function v = GmapToStepByFlow(t)\nv = t;\nend\n',
+    '@gmap/JoinGmapByStep.m': 'function r = JoinGmapByStep(t, v, n)\nr = t;\nend\n',
+    '@gmap/BKZ07.m': [
+      'function r = BKZ07(x, y)',
+      'p = GmapToStepByFlow(x);',
+      'q = GmapToStepByFlow(y);',
       'for i = 1:length(q)',
-      '    t(i) = ConcatenateTPSbyVPS(q(i), p, 1);',
+      '    t(i) = JoinGmapByStep(q(i), p, 1);',
       'end',
       'r = t;',
       "s = 'abc';",
-      'ConcatenateTPSbyVPS(s, p, 1);',
-      'ConcatenateTPSbyVPS(x.v, p, 1);',
-      'ConcatenateTPSbyVPS(p * 2, p, 1);',
+      'JoinGmapByStep(s, p, 1);',
+      'JoinGmapByStep(x.v, p, 1);',
+      'JoinGmapByStep(p * 2, p, 1);',
       'end',
       '',
     ].join('\n'),
   };
 
   it("takes a call in an old-style class folder's code on a variable for the class's method (E2), marked a guess", async () => {
-    const facts = refs('@tps/BCH99.m', TPS_FILES['@tps/BCH99.m']).filter((r) => r.includes('ConcatenateTPSbyVPS'));
+    const facts = refs('@gmap/BKZ07.m', GMAP_FILES['@gmap/BKZ07.m']).filter((r) => r.includes('JoinGmapByStep'));
     expect(facts.map((r) => `${r.split(' ')[0]} ${r.includes('objectArg')}`)).toEqual(['5 true', '9 false', '10 false', '11 false']);
-    // On a text, a field's value or an expression: no edge. `TPS2VPSbyLieTransformation(x)` on the method's own object is exact.
-    expect(await callsOut(TPS_FILES, '@tps/BCH99.m')).toEqual([
-      '@tps/BCH99.m:2 tps::BCH99 -> tps::TPS2VPSbyLieTransformation',
-      '@tps/BCH99.m:3 tps::BCH99 -> tps::TPS2VPSbyLieTransformation [guess caller-class]',
-      '@tps/BCH99.m:5 tps::BCH99 -> tps::ConcatenateTPSbyVPS [guess caller-class]',
+    // On a text, a field's value or an expression: no edge. `GmapToStepByFlow(x)` on the method's own object is exact.
+    expect(await callsOut(GMAP_FILES, '@gmap/BKZ07.m')).toEqual([
+      '@gmap/BKZ07.m:2 gmap::BKZ07 -> gmap::GmapToStepByFlow',
+      '@gmap/BKZ07.m:3 gmap::BKZ07 -> gmap::GmapToStepByFlow [guess caller-class]',
+      '@gmap/BKZ07.m:5 gmap::BKZ07 -> gmap::JoinGmapByStep [guess caller-class]',
     ]);
   });
 
-  it("takes fieldtrip's `children(tree, uid)` in a local function of `@xmltree/editor.m` for xmltree's method", async () => {
+  it("takes `children(tree, uid)` in a local function of `@doctree/editor.m` for doctree's method", async () => {
     const files = {
-      '@xmltree/xmltree.m': "function tree = xmltree(f)\ntree = class(struct('t', f), 'xmltree');\nend\n",
-      '@xmltree/children.m': 'function c = children(tree, uid)\nc = uid;\nend\n',
-      '@xmltree/editor.m': [
+      '@doctree/doctree.m': "function tree = doctree(f)\ntree = class(struct('t', f), 'doctree');\nend\n",
+      '@doctree/children.m': 'function c = children(tree, uid)\nc = uid;\nend\n',
+      '@doctree/editor.m': [
         'function editor(tree)',
         'h = figure;',
         "setappdata(h, 'tree', tree);",
-        'doModify([], [], h);',
+        'onTweak([], [], h);',
         '',
-        'function doModify(fig, evd, h)',
+        'function onTweak(fig, evd, h)',
         "tree = getappdata(h, 'tree');",
         'uid = 1;',
         'contents = children(tree, uid);',
@@ -1373,34 +1414,34 @@ describe('MATLAB call in function syntax on an object the code does not type (st
       // Outside the class: no guess.
       'outside.m': "function outside(h)\ntree = getappdata(h, 'tree');\nchildren(tree, 1);\nend\n",
     };
-    expect((await callsOut(files, '@xmltree/editor.m')).filter((e) => e.includes('children'))).toEqual(['@xmltree/editor.m:9 doModify -> xmltree::children [guess caller-class]']);
+    expect((await callsOut(files, '@doctree/editor.m')).filter((e) => e.includes('children'))).toEqual(['@doctree/editor.m:9 onTweak -> doctree::children [guess caller-class]']);
     expect(await callsOut(files, 'outside.m')).toEqual([]);
   });
 
   it('keeps no edge for the shapes the review found wrong: a field\'s value, an expression, a name MATLAB has, a call outside the class', async () => {
     const files = {
-      // fieldtrip @jdict: `keys(obj.data)` is containers.Map's.
-      'jdict.m': cls('jdict', 'handle', method('k = keys(obj)', '            k = 1;\n') + method('v = list(obj)', '            m = obj.data;\n            v = keys(obj.data);\n            v = keys(m);\n')),
-      // RTB EKF.m: `plot_ellipse(P * …)` on a matrix.
-      'EKF.m': cls('EKF', 'handle', method('plot_ellipse(ekf, varargin)', '            h = ekf.history(1);\n            plot_ellipse(h.P * 2, 1);\n            P = h.P;\n            plot_ellipse(P * 2);\n')),
-      // PlatEMO: `forward(obj.actor_target, …)` on a dlnetwork; RTB `simplify(B^2-C^2+A^2)` on a sym.
-      'Agent.m': cls('Agent', 'handle', method('y = forward(obj, x)', '            y = x;\n') + method('y = act(obj, x)', '            y = forward(obj.actor_target, x);\n')),
-      'Expr.m': cls('Expr', 'handle', method('e = simplify(obj)', '            e = obj;\n') + method('e = solve(obj, A, B)', '            e = simplify(B^2 - A^2);\n')),
+      // @kvdict: `keys(obj.data)` is containers.Map's.
+      'kvdict.m': cls('kvdict', 'handle', method('k = keys(obj)', '            k = 1;\n') + method('v = list(obj)', '            m = obj.data;\n            v = keys(obj.data);\n            v = keys(m);\n')),
+      // `draw_oval(P * …)` on a matrix.
+      'EKF.m': cls('EKF', 'handle', method('draw_oval(ekf, varargin)', '            h = ekf.history(1);\n            draw_oval(h.P * 2, 1);\n            P = h.P;\n            draw_oval(P * 2);\n')),
+      // `forward(obj.critic_copy, …)` on a dlnetwork; `simplify(P^3 + Q)` on a sym.
+      'Agent.m': cls('Agent', 'handle', method('y = forward(obj, x)', '            y = x;\n') + method('y = act(obj, x)', '            y = forward(obj.critic_copy, x);\n')),
+      'Expr.m': cls('Expr', 'handle', method('e = simplify(obj)', '            e = obj;\n') + method('e = solve(obj, A, B)', '            e = simplify(B^3 + A);\n')),
       'useit.m': 'function useit(net, x, expr)\ny = forward(net, x);\ne = simplify(expr);\nend\n',
     };
-    for (const f of ['jdict.m', 'EKF.m', 'Agent.m', 'Expr.m', 'useit.m']) {
-      expect((await callsOut(files, f)).filter((e) => /keys|plot_ellipse|forward|simplify/.test(e.split(' -> ')[1]!))).toEqual([]);
+    for (const f of ['kvdict.m', 'EKF.m', 'Agent.m', 'Expr.m', 'useit.m']) {
+      expect((await callsOut(files, f)).filter((e) => /keys|draw_oval|forward|simplify/.test(e.split(' -> ')[1]!))).toEqual([]);
     }
     // A classdef file's code: no guess (`render(L)`, `render(src)`: an argument, an event's source), nor a callback's `cb(~, src)` in a class folder.
-    expect(await callsOut({ 'Seg.m': cls('Seg', 'handle', method('t = isjoint(e)', '            t = 1;\n') + method('b = test(obj, L)', '            b = isjoint(L);\n')) }, 'Seg.m')).toEqual([]);
+    expect(await callsOut({ 'Seg.m': cls('Seg', 'handle', method('t = isfixed(e)', '            t = 1;\n') + method('b = test(obj, L)', '            b = isfixed(L);\n')) }, 'Seg.m')).toEqual([]);
     expect(await callsOut({ '@Fold/Fold.m': "function f = Fold()\nf = class(struct(), 'Fold');\nend\n", '@Fold/render.m': 'function render(f)\nend\n', '@Fold/cb.m': 'function cb(~, src)\nrender(src);\nend\n' }, '@Fold/cb.m')).toEqual([]);
     // The positive beside them, so that the test says something on the base: `v = list(obj)` reading its own keys through a copy.
-    expect(await callsOut({ ...files, 'jdict.m': cls('jdict', 'handle', method('k = keylist(obj)', '            k = 1;\n') + method('v = list(obj)', '            o = obj;\n            v = keylist(o);\n')) }, 'jdict.m')).toEqual([
-      'jdict.m:8 jdict::list -> jdict::keylist',
+    expect(await callsOut({ ...files, 'kvdict.m': cls('kvdict', 'handle', method('k = keyroll(obj)', '            k = 1;\n') + method('v = list(obj)', '            o = obj;\n            v = keyroll(o);\n')) }, 'kvdict.m')).toEqual([
+      'kvdict.m:8 kvdict::list -> kvdict::keyroll',
     ]);
   });
 
-  // The review's fxC: RTB's `Link` and `SerialLink` both define `friction`.
+  // The review's fxC: `Link` and `ChainLink` both define `friction`.
   const ROBOT = {
     '@Robot/Robot.m': "function r = Robot()\nr = class(struct('links', {{}}), 'Robot');\nend\n",
     '@Robot/friction.m': 'function f = friction(robot, qd)\nf = 0;\nend\n',
@@ -1433,13 +1474,13 @@ describe('MATLAB call in function syntax on an object the code does not type (st
       '@Robot/total.m:10 one -> Robot::friction [guess caller-class]',
       '@Robot/total.m:7 Robot::total -> Robot::friction [guess caller-class]',
     ]);
-    // physbase: `@tps` beside a copy `@TPS` that defines the method too keeps its guess, to its own class's method.
-    const tpsCopies = {
-      ...TPS_FILES,
-      'old/@TPS/TPS.m': "function t = TPS(x)\nt = class(struct('v', x), 'TPS');\nend\n",
-      'old/@TPS/ConcatenateTPSbyVPS.m': 'function r = ConcatenateTPSbyVPS(t, v, n)\nr = t;\nend\n',
+    // `@gmap` beside a copy `@GMAP` that defines the method too keeps its guess, to its own class's method.
+    const gmapCopies = {
+      ...GMAP_FILES,
+      'old/@GMAP/GMAP.m': "function t = GMAP(x)\nt = class(struct('v', x), 'GMAP');\nend\n",
+      'old/@GMAP/JoinGmapByStep.m': 'function r = JoinGmapByStep(t, v, n)\nr = t;\nend\n',
     };
-    expect(into(await callsOut(tpsCopies, '@tps/BCH99.m'), 'ConcatenateTPSbyVPS')).toEqual(['@tps/BCH99.m:5 tps::BCH99 -> tps::ConcatenateTPSbyVPS [guess caller-class]']);
+    expect(into(await callsOut(gmapCopies, '@gmap/BKZ07.m'), 'JoinGmapByStep')).toEqual(['@gmap/BKZ07.m:5 gmap::BKZ07 -> gmap::JoinGmapByStep [guess caller-class]']);
     // A class of the hierarchy does not stop it: a subclass of the caller's class (Leaf < Node) defining it, nor its superclass (Base).
     const hierarchy = (other: string): Record<string, string> => ({
       'lib/Base.m': cls('Base', 'handle', method('c = children(obj, uid)', '            c = uid;\n')),
@@ -1544,11 +1585,11 @@ describe('MATLAB call in function syntax on an object the code does not type (st
       '    end',
       '    methods',
       '        function r = go(obj)',
-      '            r = norm2(obj(1));',
+      '            r = magsq(obj(1));',
       '            c = obj;',
-      '            r = norm2(c, 2);',
+      '            r = magsq(c, 2);',
       '        end',
-      '        function r = norm2(obj, varargin)',
+      '        function r = magsq(obj, varargin)',
       '            r = 0;',
       '        end',
       '    end',
@@ -1565,12 +1606,12 @@ describe('MATLAB call in function syntax on an object the code does not type (st
       'lib/Seg2.m': seg2,
       'lib/isj.m': 'function t = isj(x)\nt = false;\nend\n',
       'lib/Arr.m': arr,
-      'lib/norm2.m': 'function r = norm2(x, varargin)\nr = sqrt(sum(x.^2));\nend\n',
+      'lib/magsq.m': 'function r = magsq(x, varargin)\nr = sqrt(sum(x.^2));\nend\n',
     };
     // Only `control` takes `e` for a Seg2.
     expect(into(await callsOut(files, 'lib/Seg2.m'), 'isj')).toEqual(['lib/Seg2.m:27 Seg2::control -> Seg2::isj']);
     // `obj(1)` runs Arr's own parenReference; a whole copy of the object is still one.
-    expect(into(await callsOut(files, 'lib/Arr.m'), 'norm2')).toEqual(['lib/Arr.m:9 Arr::go -> Arr::norm2']);
+    expect(into(await callsOut(files, 'lib/Arr.m'), 'magsq')).toEqual(['lib/Arr.m:9 Arr::go -> Arr::magsq']);
   });
 
   it('ends a sync where a fresh index ends: a second class gains the method and loses it, a function of the name comes and goes, the class and its superclass leave the path, the superclass changes, the method goes', async () => {
@@ -1698,7 +1739,7 @@ describe('MATLAB call in function syntax on an object the code does not type (st
   });
 
   it("links a guess only to the method of the caller's own copy of the class or one it inherits, and none when its folder has a file of the name with no method", async () => {
-    // robotics: `Octave/@SerialLink/rne.m` is Octave code, `@SerialLink/rne.m` another implementation's.
+    // `Octave/@ChainLink/rne.m` is Octave code, `@ChainLink/rne.m` another implementation's.
     const robot = (dir: string, rne: string): Record<string, string> => ({
       [`${dir}/@Robot/Robot.m`]: "function r = Robot()\nr = class(struct(), 'Robot');\nend\n",
       [`${dir}/@Robot/rne.m`]: rne,
@@ -1706,12 +1747,12 @@ describe('MATLAB call in function syntax on an object the code does not type (st
     const files = {
       ...robot('Octave', 'function tau = rne(robot, q)\ntau = 0;\nendfunction\n'),
       ...robot('main', 'function tau = rne(robot, q)\ntau = 1;\nend\n'),
-      'Octave/@Robot/coriolis.m': "function c = coriolis(robot, h)\nrobot2 = getappdata(h, 'r');\nc = rne(robot2, 1);\nend\n",
+      'Octave/@Robot/crossterm.m': "function c = crossterm(robot, h)\nmech2 = getappdata(h, 'r');\nc = rne(mech2, 1);\nend\n",
     };
-    expect(into(await callsOut(files, 'Octave/@Robot/coriolis.m'), 'rne')).toEqual([]);
+    expect(into(await callsOut(files, 'Octave/@Robot/crossterm.m'), 'rne')).toEqual([]);
     // Nor to another copy's method when the caller's copy has no file of the name.
     const noFile = Object.fromEntries(Object.entries(files).filter(([f]) => f !== 'Octave/@Robot/rne.m'));
-    expect(into(await callsOut(noFile, 'Octave/@Robot/coriolis.m'), 'rne')).toEqual([]);
+    expect(into(await callsOut(noFile, 'Octave/@Robot/crossterm.m'), 'rne')).toEqual([]);
     // A classdef whose folder has an Octave `kids.m`: that runs, not Base's inherited one.
     expect(into(await callsOut({ ...KIDS, 'app/@Node/kids.m': 'function c = kids(obj, uid)\nc = 3;\nendfunction\n' }, 'app/@Node/show.m'), 'kids')).toEqual([]);
     expect(into(await callsOut(KIDS, 'app/@Node/show.m'), 'kids')).toEqual(['app/@Node/show.m:3 Node::show -> Base::kids [guess caller-class]']);
@@ -1723,15 +1764,15 @@ describe('MATLAB call in function syntax on an object the code does not type (st
   };
 
   it('dispatches on no copy that a `global` or `persistent` declaration writes', async () => {
-    // The review's fxE Seg3.m.
-    const seg3 = cls('Seg3', '', [
+    // The review's fxE Pqr5.m.
+    const pqr5 = cls('Pqr5', '', [
       method('r = viaGlobal(ets)', '            e = ets(1);\n            global e\n            r = isj(e);\n'),
       method('r = viaPersistent(ets)', '            persistent e\n            r = isj(e);\n            e = ets(1);\n'),
       method('r = viaMultiCopy(ets)', '            e = ets(1);\n            [e, n] = deal(5, 1);\n            r = isj(e);\n'),
       method('r = control(ets)', '            e = ets(1);\n            r = isj(e);\n'),
       method('t = isj(e, varargin)', '            t = true;\n'),
     ].join(''));
-    expect(into(await callsOut({ ...ISJ_PATH, 'lib/Seg3.m': seg3 }, 'lib/Seg3.m'), 'isj')).toEqual(['lib/Seg3.m:20 Seg3::control -> Seg3::isj']);
+    expect(into(await callsOut({ ...ISJ_PATH, 'lib/Pqr5.m': pqr5 }, 'lib/Pqr5.m'), 'isj')).toEqual(['lib/Pqr5.m:20 Pqr5::control -> Pqr5::isj']);
   });
 
   it("dispatches on no element or copy of an operator method's first parameter, which may be a number (`2 + c` calls `plus(2, c)`)", async () => {

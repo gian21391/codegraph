@@ -15,10 +15,10 @@
       "dormant": []
     },
     {
-      "edges": [
-        "helper.m helper.m -references-> F @ off/F.m"
+      "edges": [],
+      "rows": [
+        "helper.m:1 function_ref:F"
       ],
-      "rows": [],
       "dormant": [
         "f.m:1 calls:obj::data"
       ]

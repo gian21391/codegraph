@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "use.m use -calls-> START @ START.m"
+      "use.m use -calls-> BEGIN @ BEGIN.m"
     ],
     "rows": [],
     "dormant": []

@@ -1,0 +1,36 @@
+{
+  "index": {
+    "edges": [
+      "Gadget.m Gadget -extends-> Base @ lib/Base.m",
+      "Gadget.m Gadget -extends-> Base @ lib/Base.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "Gadget.m:1 extends:Base",
+        "Gadget.m:1 extends:Base"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "Gadget.m Gadget -extends-> Base @ lib/Base.m",
+        "Gadget.m Gadget -extends-> Base @ lib/Base.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "Gadget.m:1 extends:Base",
+        "Gadget.m:1 extends:Base"
+      ],
+      "dormant": []
+    }
+  ]
+}

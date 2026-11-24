@@ -1,0 +1,54 @@
+{
+  "why": "`feval(fn, 1)` calls the function `fn` names, either `pkg.f` or `f` (MATLAB doc 'feval'): two calls of the one site, each a reference of its own (step 14). `pkg.f` is `+pkg/f.m` while it exists and nothing once it is gone; with no package function `f`, `f` is a function on the path, here the root `f.m` once it is added (MATLAB doc 'Function Precedence Order'). Which file `f` reaches while `+pkg/f.m` exists, under `import pkg.*`, is the project's reading of the import, which the truth leaves to the sync check (the index reaches `+pkg/f.m` with both). Found by the step 14 second review: the two references shared one place, so while both reached `+pkg/f.m` they were one edge, and a sync that turned it back into one row lost the other, hiding the call of `f.m` once it was added.",
+  "truth": {
+    "edges": [
+      "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+pkg/f.m": null
+      },
+      "truth": {
+        "rows": [
+          "lib/run_it.m:4 calls:f",
+          "lib/run_it.m:4 calls:pkg::f"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": "function f(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run_it.m run_it -calls-> f @ f.m"
+        ],
+        "rows": [
+          "lib/run_it.m:4 calls:pkg::f"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "+pkg/f.m": "function f(x)\ndisp(x);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/run_it.m run_it -calls-> pkg::f @ +pkg/f.m"
+        ]
+      }
+    }
+  ]
+}

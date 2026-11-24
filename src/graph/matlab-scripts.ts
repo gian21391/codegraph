@@ -10,8 +10,8 @@
  * defines no function, method or class, with code in it — or with nothing in
  * it at all: an empty file, or one of block comments only, is a script of
  * nothing (the user's rulings, step 11). A file of `%` help-text lines only
- * is the help text of a MEX function of that name (`lcaPut.m` beside
- * `lcaPut.mexa64`), which is what MATLAB runs, and an Octave file (whose
+ * is the help text of a MEX function of that name (`chanPut.m` beside
+ * `chanPut.mexa64`), which is what MATLAB runs, and an Octave file (whose
  * functions go unread) is no script either; nor is a binary (matlabUnreadReason),
  * MATLAB Compiler's encrypted `.m` files (`V1MCC4000MEC…`) in a deployed
  * runtime tree.

@@ -22,13 +22,14 @@ import { extractFromSource } from './tree-sitter';
 import { ParseWorkerPool, parseWindowSize, resolveParsePoolSize, resolveParseTimeoutMs } from './parse-pool';
 import { StoreWriter, StoreBundle, finalizeStoreBundle } from './store-writer';
 import { materializeKernelResult } from './kernel';
-import { MatlabInsertFilter } from './languages/matlab-builtins';
+import { MatlabInsertFilter, callsByName } from './languages/matlab-builtins';
+import { isJavaImport } from './languages/matlab-java';
 import { detectGeneratedFile } from './generated-detection';
 import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages, readGrammarWasmBytes, isMpegTransportStream, hasMpegTsExtension, MPEG_TS_SNIFF_BYTES, hasGrammarLoadFailure } from './grammars';
 import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns, loadIncludePatterns, PROJECT_CONFIG_FILENAME } from '../project-config';
 import { isCodeGraphDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
-import { validatePathWithinRoot, normalizePath, isMissingPathError, escapesRoot } from '../utils';
+import { validatePathWithinRoot, normalizePath, isMissingPathError, escapesRoot, foldName, ignoresCase } from '../utils';
 import ignore, { Ignore } from 'ignore';
 import { detectFrameworks, getFrameworkResolver } from '../resolution/frameworks';
 import { declaredDependencies } from '../resolution/frameworks/package-deps';
@@ -92,6 +93,9 @@ const PARSE_TIMEOUT_MS = resolveParseTimeoutMs(process.env.CODEGRAPH_PARSE_TIMEO
  * This interval balances memory usage against the cost of reloading grammars.
  */
 const WORKER_RECYCLE_INTERVAL = 250;
+
+/** From this many files a MATLAB carrier step's files are parsed on a pool (see runMatlabCarrierStep). */
+const CARRIER_POOL_MIN_FILES = 32;
 
 /**
  * Progress callback for indexing operations
@@ -209,6 +213,13 @@ export interface SyncResult {
    */
   matlabRelinked?: string[];
   /**
+   * The rows of the calls of a built-in's name this sync gave its first
+   * carrier or reach, written again in files it did not extract (see
+   * addMatlabBuiltinRows), pending: the sync judges them as a fresh index
+   * judges its rows (see MatlabFreshReferences).
+   */
+  matlabBuiltinRows?: number[];
+  /**
    * Modified ES modules whose `export … from` statements changed: a re-export
    * that points at another module now (`export { foo } from './a'` →
    * `'./b'`), one taken away or added, or a clause that passes other names on.
@@ -228,6 +239,143 @@ export interface SyncResult {
 }
 
 
+/**
+ * A folder's entries, as the names-on-disk check reads them (see
+ * nameOnDisk): every name in one Unicode normal form (NFC: the file systems
+ * that ignore case ignore that difference too, and a name may come in either
+ * form), and, read when first asked for, each name by its case-folded form,
+ * null for a form two entries share (a folder that tells case apart).
+ */
+interface FolderEntries {
+  exact: Set<string>;
+  folded?: Map<string, string | null>;
+}
+
+/** The folders read for one pass, by absolute path; null for one that could not be read. */
+type FolderListings = Map<string, FolderEntries | null>;
+
+function folderEntries(names: readonly string[]): FolderEntries {
+  return { exact: new Set(names.map((n) => n.normalize('NFC'))) };
+}
+
+function folderListing(dir: string, listings: FolderListings): FolderEntries | null {
+  let entries = listings.get(dir);
+  if (entries === undefined) {
+    try {
+      entries = folderEntries(fs.readdirSync(dir));
+    } catch {
+      entries = null;
+    }
+    listings.set(dir, entries);
+  }
+  return entries;
+}
+
+
+/**
+ * `rel` (a path under `rootDir`, `/`-separated) spelled as the disk holds it:
+ * each part that is no entry of its folder as written, compared
+ * case-sensitively, is the one entry that differs from it only by case.
+ * `rel` itself when every part is an entry as written; null when a part is
+ * neither, as for a path that is gone. On a case-insensitive file system
+ * (macOS's APFS, Windows' NTFS) a path keeps opening under a spelling that
+ * differs only by case: after `mv lib/shift.m lib/Shift.m`, `lib/shift.m`
+ * still opens, though it is no file of the tree, and git, which ignores case
+ * there (`core.ignorecase`), still lists it. A folder that cannot be read,
+ * or that `trusted` says has not changed, takes a part as written.
+ * `listings` keeps the folders read, for one pass.
+ */
+function nameOnDisk(rootDir: string, rel: string, listings: FolderListings, trusted?: (dir: string) => boolean): string | null {
+  const parts = rel.split(/[\\/]/);
+  let dir = rootDir;
+  let changed = false;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (part === '' || part === '.') continue;
+    const entries = trusted?.(dir) ? null : folderListing(dir, listings);
+    if (entries !== null && !entries.exact.has(part.normalize('NFC'))) {
+      if (!entries.folded) {
+        entries.folded = new Map();
+        for (const name of entries.exact) {
+          const key = foldName(name);
+          entries.folded.set(key, entries.folded.has(key) ? null : name);
+        }
+      }
+      const onDisk = entries.folded.get(foldName(part));
+      if (!onDisk) return null;
+      parts[i] = onDisk;
+      changed = true;
+    }
+    dir = path.join(dir, parts[i]!);
+  }
+  return changed ? parts.join('/') : rel;
+}
+
+/**
+ * Whether `rel` names a file that is there under exactly that name (see
+ * nameOnDisk). A path that does not exist costs no folder read.
+ */
+function existsWithExactName(rootDir: string, rel: string, listings: FolderListings): boolean {
+  return fs.existsSync(path.join(rootDir, rel)) && nameOnDisk(rootDir, rel, listings) === rel;
+}
+
+/**
+ * The paths git lists (`files`), each spelled as the disk holds it (see
+ * nameOnDisk), where the file system under `rootDir` ignores case: git keeps
+ * a case-only rename's old spelling there (`core.ignorecase`), while a scoped
+ * sync, the walk of a folder git does not track and MATLAB's lookup see the
+ * name on disk, so a fresh index and every sync must take that one too. A
+ * path that is gone keeps git's spelling (the removal check decides it). In
+ * order, each once; `files` itself where case counts.
+ */
+function namesOnDiskSync(rootDir: string, files: Set<string>, listings: FolderListings = new Map()): Set<string> {
+  if (!ignoresCase(rootDir)) return files;
+  const out = new Set<string>();
+  for (const rel of files) out.add(nameOnDisk(rootDir, rel, listings) ?? rel);
+  return out;
+}
+
+/** {@link namesOnDiskSync}, the folders read in parallel first. */
+async function namesOnDisk(rootDir: string, files: Set<string>): Promise<Set<string>> {
+  if (!ignoresCase(rootDir)) return files;
+  const listings: FolderListings = new Map();
+  await prefetchFolders(rootDir, files, listings);
+  return namesOnDiskSync(rootDir, files, listings);
+}
+
+/** Reads into `listings` every folder that holds one of `files` or one of their folders. */
+
+async function prefetchFolders(rootDir: string, files: Iterable<string>, listings: FolderListings): Promise<void> {
+  const dirs = new Set<string>();
+  for (const rel of files) {
+    let at = rel.lastIndexOf('/');
+    while (true) {
+      const dir = at < 0 ? rootDir : path.join(rootDir, rel.slice(0, at));
+      if (dirs.has(dir)) break;
+      dirs.add(dir);
+      if (at < 0) break;
+      at = rel.lastIndexOf('/', at - 1);
+    }
+  }
+  await Promise.all([...dirs].map(async (dir) => {
+    try {
+      listings.set(dir, folderEntries(await fs.promises.readdir(dir)));
+    } catch {
+      listings.set(dir, null);
+    }
+  }));
+}
+
+/**
+ * `reported` (a path a watcher or a caller gave, relative to `rootDir` or
+ * absolute) as the index names a file: `/`-separated, normalized, relative to
+ * the root. Null for a path that leaves the root or names the root itself.
+ */
+function projectRelativePath(rootDir: string, reported: string): string | null {
+  const rel = path.posix.normalize(normalizePath(path.isAbsolute(reported) ? path.relative(rootDir, reported) : reported));
+  if (rel === '.' || rel === '..' || rel.startsWith('../') || path.posix.isAbsolute(rel) || path.win32.isAbsolute(rel)) return null;
+  return rel.endsWith('/') ? rel.slice(0, -1) : rel;
+}
 
 /**
  * What change detection hashes for a file: its text when it is under the size
@@ -1914,8 +2062,10 @@ export function scanDirectory(
   // Custom extension → language overrides from the project's codegraph.json.
   const overrides = loadExtensionOverrides(rootDir);
 
-  // Fast path: use git to get all visible files (respects .gitignore everywhere)
-  const gitFiles = getGitVisibleFiles(rootDir);
+  // Fast path: use git to get all visible files (respects .gitignore everywhere),
+  // each under the name the disk holds (see namesOnDiskSync).
+  const listed = getGitVisibleFiles(rootDir);
+  const gitFiles = listed && namesOnDiskSync(rootDir, listed);
   if (gitFiles) {
     const files: string[] = [];
     let count = 0;
@@ -1968,7 +2118,8 @@ export async function scanDirectoryAsync(
   // Custom extension → language overrides from the project's codegraph.json.
   const overrides = loadExtensionOverrides(rootDir);
 
-  const gitFiles = getGitVisibleFiles(rootDir, onManifestEvidence);
+  const listed = getGitVisibleFiles(rootDir, onManifestEvidence);
+  const gitFiles = listed && await namesOnDisk(rootDir, listed);
   if (gitFiles) {
     const files: string[] = [];
     let count = 0;
@@ -3786,7 +3937,8 @@ export class ExtractionOrchestrator {
     definitionDelta: string[],
     changedFilePaths: string[],
     countedUpToEdgeId?: number,
-    matlabRelinked: readonly string[] = []
+    matlabRelinked: readonly string[] = [],
+    matlabInherited: readonly string[] = []
   ): number {
     if (definitionDelta.length === 0) return 0;
     const alreadyFresh = new Set(changedFilePaths);
@@ -3796,6 +3948,17 @@ export class ExtractionOrchestrator {
     // each again, but a file's call of its own local function, which no other
     // file can move (see getMatlabRebindEdgesByTargetName).
     if (matlabRelinked.length > 0) candidates.push(...this.queries.getMatlabRebindEdgesByTargetName(matlabRelinked));
+    // A method name a changed MATLAB class hierarchy reaches (see
+    // MatlabSuperclassChange): every edge into a MATLAB node of it whose
+    // reference names its owner (`Widget::update`, `step(w)` on a `Widget`
+    // recorded so), however many: a call on an object, which the chain
+    // answers. A bare call of the name stays under the ceiling above.
+    if (matlabInherited.length > 0) {
+      for (const e of this.queries.getMatlabRebindEdgesByTargetName(matlabInherited)) {
+        const refName = e.metadata?.refName;
+        if (typeof refName === 'string' && refName.includes('::')) candidates.push(e);
+      }
+    }
 
     const edgeIds: number[] = [];
     const refs: UnresolvedReference[] = [];
@@ -3961,13 +4124,27 @@ export class ExtractionOrchestrator {
     onFileChange: ((filePath: string, content?: string) => void) | undefined,
     backpressure: (() => Promise<void> | null) | undefined,
     fromInputs = false,
-  ): Promise<{ extracted: string[]; failed: string[]; nodes: number }> {
+    gained: readonly string[] = [],
+  ): Promise<{ extracted: string[]; failed: string[]; nodes: number; rows: number[]; written: number; skipped: number }> {
     this.queries.runInTransaction(() => {
       writeMatlabCarrierStep(this.queries, step);
       if (fromInputs) writeMatlabCarrierInputs(this.queries, null);
     });
     applyMatlabCarrierRows(this.queries, step);
-    const out = { extracted: [] as string[], failed: [] as string[], nodes: 0 };
+    // `written`: the files whose calls of a gained name were parsed and written again; `skipped`: the files read
+    // and hashed, then neither parsed nor written, as no `.m` file reaches the name (see matlabBuiltinRowsPlan).
+    const out = { extracted: [] as string[], failed: [] as string[], nodes: 0, rows: [] as number[], written: 0, skipped: 0 };
+    // The rows of the gained names each file holds now, by file: the ones a
+    // file's calls of them are written again over (see addMatlabBuiltinRows).
+    const names = new Set(gained);
+    const held = new Map<string, number[]>();
+    if (names.size > 0) {
+      for (const row of this.queries.getMatlabCallRowsNamed(names)) {
+        const ids = held.get(row.filePath);
+        if (ids) ids.push(row.id);
+        else held.set(row.filePath, [row.id]);
+      }
+    }
     if (step.files.length > 0) {
       // The names `.m` files reach are read again, from the files as the
       // index holds them now: a long-lived process remembers one an earlier
@@ -3976,23 +4153,124 @@ export class ExtractionOrchestrator {
       this.matlabFilter.forget();
       await loadGrammarsForLanguages(['matlab']);
     }
-    for (const filePath of step.files) {
-      let content: string | undefined;
-      try {
-        content = fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8');
-      } catch {
-        content = undefined;
+    // A file whose calls of a gained name are written again is parsed in
+    // memory, on a parse pool when there are many (as an index parses them),
+    // a window of files at a time; every write is in the files' order.
+    let pool: ParseWorkerPool | null = null;
+    try {
+      if (names.size > 0 && step.files.length >= CARRIER_POOL_MIN_FILES && fs.existsSync(path.join(__dirname, 'parse-worker.js'))) {
+        const size = resolveParsePoolSize(process.env.CODEGRAPH_PARSE_WORKERS, Math.max(3, os.availableParallelism()));
+        pool = new ParseWorkerPool({
+          languages: ['matlab'],
+          size,
+          expectedParses: step.files.length,
+          workerScriptPath: path.join(__dirname, 'parse-worker.js'),
+          recycleInterval: WORKER_RECYCLE_INTERVAL,
+          parseTimeoutMs: PARSE_TIMEOUT_MS,
+          grammarBuffers: await readGrammarWasmBytes(['matlab']),
+        });
       }
-      onFileChange?.(filePath, content);
-      const result = await this.indexFile(filePath, true);
-      if (result.errors.some(e => e.severity === 'error')) out.failed.push(filePath);
-      if (!hasGrammarLoadFailure(result.errors)) out.nodes += result.nodes.length;
-      out.extracted.push(filePath);
-      const pause = backpressure?.();
-      if (pause) await pause;
+      const window = pool ? parseWindowSize(resolveParsePoolSize(process.env.CODEGRAPH_PARSE_WORKERS, Math.max(3, os.availableParallelism()))) : 1;
+      for (let i = 0; i < step.files.length; i += window) {
+        const files = step.files.slice(i, i + window).map((filePath) => {
+          let content: string | undefined;
+          try {
+            content = fs.readFileSync(path.join(this.rootDir, filePath), 'utf-8');
+          } catch {
+            content = undefined;
+          }
+          onFileChange?.(filePath, content);
+          const plan = names.size > 0 && content !== undefined ? this.matlabBuiltinRowsPlan(filePath, content, names) : null;
+          const frameworks = this.frameworksForFile(filePath, this.ensureDetectedFrameworks());
+          const parsed: Promise<ExtractionResult | null> | null = plan?.kind !== 'parse' || content === undefined ? null
+            : pool ? pool.requestParse({ filePath, content, language: 'matlab', frameworkNames: frameworks }).catch(() => null)
+            : Promise.resolve(extractFromSource(filePath, content, 'matlab', frameworks));
+          return { filePath, plan, parsed };
+        });
+        for (const { filePath, plan, parsed } of files) {
+          const extracted = parsed ? await parsed : null;
+          const rows = plan === null || (plan.kind === 'parse' && extracted === null) ? null
+            : this.addMatlabBuiltinRows(filePath, names, plan, extracted, held.get(filePath) ?? []);
+          if (rows) {
+            out.rows.push(...rows);
+            if (plan?.kind === 'skip') out.skipped++;
+            else out.written++;
+          } else {
+            const result = await this.indexFile(filePath, true);
+            if (result.errors.some(e => e.severity === 'error')) out.failed.push(filePath);
+            if (!hasGrammarLoadFailure(result.errors)) out.nodes += result.nodes.length;
+            out.extracted.push(filePath);
+          }
+          const pause = backpressure?.();
+          if (pause) await pause;
+        }
+      }
+    } finally {
+      if (pool) await pool.destroy();
     }
     writeMatlabCarrierStep(this.queries, null);
     return out;
+  }
+
+  /**
+   * Whether `filePath`'s calls of `names`, built-ins' names the sync gave a
+   * first carrier or reach (MatlabCarrierChange.gained), can be written again
+   * on their own (see addMatlabBuiltinRows), and how: `skip` when no `.m`
+   * file reaches any of them (the extraction's discard drops every call of
+   * them: `plot` carried by a method of a class alone), so the file, read and
+   * hashed to get here, is not parsed; `parse` when its extraction is to be
+   * read. Null when the file has to
+   * be extracted again in full: its text is not the stored one, it imports a
+   * name or defines one of `names` (its calls of them were never dropped), or
+   * one of its edges was resolved from a call of them.
+   */
+  private matlabBuiltinRowsPlan(filePath: string, content: string, names: ReadonlySet<string>): { kind: 'skip' | 'parse'; nodeIds: Set<string> } | null {
+    const file = this.queries.getFileByPath(filePath);
+    if (!file || file.language !== 'matlab' || file.contentHash !== hashContent(content)) return null;
+    const nodes = this.queries.getNodesByFiles([filePath]);
+    if (nodes.some((n) => (n.kind === 'import' && !isJavaImport(n.name)) || names.has(n.name))) return null;
+    for (const e of this.queries.getResolutionEdgesFromFiles('matlab', [filePath])) {
+      const refName = e.metadata?.refName;
+      if (typeof refName === 'string' && names.has(refName)) return null;
+    }
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    return { kind: [...names].some((name) => this.matlabFilter.reaches(name)) ? 'parse' : 'skip', nodeIds };
+  }
+
+  /**
+   * The calls of `names` (see matlabBuiltinRowsPlan) that `filePath`'s
+   * extraction dropped while nothing in the project could answer them (see
+   * MatlabInsertFilter), written as rows now, pending, as a fresh index of the
+   * file writes them: of `extracted`, the file's extraction in memory, run
+   * through the same discard, only those calls are stored, over the rows of
+   * the names it held (`held`: a call the project reached but nothing carried
+   * was written and kept failed). The file's nodes, edges and other rows are
+   * as a fresh index has them already: its text is the stored one, and the
+   * discard keeps or drops no call of another name for this change. A
+   * `skip` plan writes none and drops what it held. Returns the new rows'
+   * ids, or null when the file has to be extracted again in full: its
+   * extraction's nodes are not the stored ones.
+   */
+  private addMatlabBuiltinRows(
+    filePath: string,
+    names: ReadonlySet<string>,
+    plan: { kind: 'skip' | 'parse'; nodeIds: Set<string> },
+    extracted: ExtractionResult | null,
+    held: readonly number[],
+  ): number[] | null {
+    if (plan.kind === 'skip' || !extracted) {
+      if (held.length > 0) this.queries.deleteReferencesByRowIds([...held]);
+      return [];
+    }
+    if (hasGrammarLoadFailure(extracted.errors)) return null;
+    const result = this.matlabFilter.filter(materializeKernelResult(extracted, filePath, 'matlab'), filePath, 'matlab');
+    const stored = plan.nodeIds;
+    if (result.nodes.length !== stored.size || result.nodes.some((n) => !stored.has(n.id))) return null;
+    const refs = result.unresolvedReferences
+      .filter((ref) => callsByName(ref.referenceKind) && names.has(ref.referenceName) && stored.has(ref.fromNodeId))
+      .map((ref) => ({ ...ref, filePath: ref.filePath ?? filePath, language: ref.language ?? ('matlab' as const) }));
+    if (held.length > 0) this.queries.deleteReferencesByRowIds([...held]);
+    return refs.length > 0 ? this.queries.replaceResolutionEdgesWithUnresolvedRefIds([], refs) : [];
   }
 
   /**
@@ -4228,7 +4506,11 @@ export class ExtractionOrchestrator {
       // when every scoped path was a deletion, because CodeGraph.watch()
       // reads `filesChecked === 0 && durationMs === 0` as the
       // lock-unavailable signature (#449).
-      const unique = [...new Set(scopedPaths)];
+      // Each path as the index names files (`lib/k.m`), however it was
+      // reported (`./lib/k.m`, `lib/../lib/k.m`, a backslash separator, absolute
+      // under the root); one outside the root names no file of the project.
+      const reported = new Set(scopedPaths);
+      const unique = [...new Set([...reported].map((p) => projectRelativePath(this.rootDir, p)).filter((p): p is string => p !== null))];
       // A scoped path is "present" only if it exists AND is in scope — the
       // same two gates the full walk applies (source extension, scope
       // matcher). Without the scope gate a caller's stale view of scope
@@ -4238,20 +4520,25 @@ export class ExtractionOrchestrator {
       // so a tracked one takes the removal branch below, exactly as a full
       // sync would treat it. (`include`-forced paths pass: ScopeIgnore
       // applies the include precedence itself.)
+      // And "exists" means under that very name (see existsWithExactName): a
+      // watcher reports both spellings of a case-only rename, and on a
+      // case-insensitive file system the old one would otherwise stay, with
+      // the edges into it, beside the new one.
       const scope = this.scopedSyncMatcher();
       const overrides = loadExtensionOverrides(this.rootDir);
+      const listings: FolderListings = new Map();
       currentFiles = unique.filter(
         (p) =>
           isSourceFile(p, overrides, this.rootDir) &&
           !scope.ignores(p) &&
-          fs.existsSync(path.join(this.rootDir, p))
+          existsWithExactName(this.rootDir, p, listings)
       );
       trackedFiles = [];
       for (const p of unique) {
         const rec = this.queries.getFileByPath(p);
         if (rec) trackedFiles.push(rec);
       }
-      filesChecked = unique.length;
+      filesChecked = reported.size;
       if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-scoped: ${Date.now() - tSyncScan}ms (${unique.length} paths, ${trackedFiles.length} tracked)`);
     } else {
       // Full reconcile: drop the memoized scope matcher so a nested
@@ -4550,18 +4837,26 @@ export class ExtractionOrchestrator {
     // The delta's names among them, whose edges the rebind takes past its ceiling (SyncResult.matlabRelinked).
     const matlabRelinked = carriers.relinked.filter((name) => deltaNames.has(name));
     const tCarriers = Date.now();
+    const matlabBuiltinRows: number[] = [];
+    let extractedAgain = 0;
+    let writtenAgain = 0;
+    let readOnly = 0;
     const { step: carrierStep, flipMs, scanMs } = this.matlabCarrierStepOf(carriers, new Set(filesToIndex));
     if (ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep)) {
-      const done = await this.runMatlabCarrierStep(carrierStep, onFileChange, backpressure, carrierInputsRecorded);
+      const done = await this.runMatlabCarrierStep(carrierStep, onFileChange, backpressure, carrierInputsRecorded, carriers.gained);
       changedFilePaths.push(...done.extracted);
+      matlabBuiltinRows.push(...done.rows);
+      extractedAgain = done.extracted.length;
+      writtenAgain = done.written;
+      readOnly = done.skipped;
       failedFilePaths.push(...done.failed);
       nodesUpdated += done.nodes;
     } else if (carrierInputsRecorded) {
       writeMatlabCarrierInputs(this.queries, null);
     }
     if (process.env.CODEGRAPH_SYNTH_TIMINGS && (carriers.gained.length > 0 || carriers.judged.length > 0 || ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep))) {
-      const { drop, reopen, wake, sleep, files } = carrierStep;
-      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; ${carriers.judged.length} names judged in ${flipMs}ms: ${wake.length} rows woken, ${sleep.length} put to sleep, ${reopen.length} resolved again; word scan ${scanMs}ms; ${files.length} files extracted again; ${drop.length} rows dropped)`);
+      const { drop, reopen, wake, sleep } = carrierStep;
+      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; ${carriers.judged.length} names judged in ${flipMs}ms: ${wake.length} rows woken, ${sleep.length} put to sleep, ${reopen.length} resolved again; word scan ${scanMs}ms; ${extractedAgain} files extracted again; ${writtenAgain} files' calls of them parsed and written again, ${matlabBuiltinRows.length} rows; ${readOnly} files read and hashed, not parsed (no .m file reaches the names); ${drop.length} rows dropped)`);
     }
 
     // Modified ES modules whose `export … from` statements changed (#2978): a
@@ -4596,6 +4891,7 @@ export class ExtractionOrchestrator {
       ...(failedFilePaths.length > 0 ? { failedFilePaths } : {}),
       definitionDelta: definitionDelta.length > 0 ? definitionDelta : undefined,
       ...(matlabRelinked.length > 0 ? { matlabRelinked } : {}),
+      ...(matlabBuiltinRows.length > 0 ? { matlabBuiltinRows } : {}),
       ...(reExportsChanged.length > 0 ? { reExportsChangedFilePaths: reExportsChanged } : {}),
       ...(removedFilePaths.length > 0 ? { removedFilePaths } : {}),
       ...(detectedFrameworks ? { detectedFrameworks } : {}),
@@ -4669,6 +4965,64 @@ export class ExtractionOrchestrator {
   }
 
   /**
+   * The tracked files whose names the disk now spells otherwise by case alone,
+   * each with its name on disk (see nameOnDisk), for the change detection git's
+   * report drives: git ignores case where the file system does, so a plain
+   * `mv lib/shift.m lib/Shift.m`, or `mv lib Lib`, leaves `git status` clean.
+   * Only a folder whose entries changed since the files under it were indexed
+   * is read: renaming an entry sets its folder's modification time, so a
+   * folder last modified before the oldest index of the tracked files under it
+   * still holds the names they were indexed under. (A file system that keeps a
+   * folder's time when its entries change, as FAT does, shows such a rename to
+   * the next full sync, which reads every folder, and not here; and so does a
+   * rename made while a fresh index ran, between its scan and the store of
+   * every file below the folder.)
+   *
+   * Accepted limits, of the status alone (step 14's third review, R5): a tool
+   * that restores folder times (`rsync -a`, `tar x`, `cp -p`, `touch -t`)
+   * hides a case-only rename from this test, and so does a file system that
+   * keeps folder times to the second (HFS+) when the rename falls in the
+   * second of the index. Every sync, full or scoped, reads every folder and
+   * still ends where a fresh index does; before this test the status never saw
+   * a case-only rename in a git repository at all. Its cost (R6): a read of
+   * every file row and a stat of every folder on each call, about 0.14–0.18 s
+   * more per `codegraph status` on a 17,000-file git repository.
+   */
+  private caseRenamedTrackedFiles(listings: FolderListings): Array<[string, string]> {
+    const files = this.queries.getAllFiles();
+    // Each folder (case-folded, as the file system names it) and the oldest index of a tracked file under it.
+    const oldest = new Map<string, { dir: string; indexedAt: number }>();
+    for (const f of files) {
+      let at = f.path.lastIndexOf('/');
+      while (true) {
+        const dir = at < 0 ? this.rootDir : path.join(this.rootDir, f.path.slice(0, at));
+        const key = foldName(dir);
+        const held = oldest.get(key);
+        if (!held) oldest.set(key, { dir, indexedAt: f.indexedAt });
+        else if (f.indexedAt < held.indexedAt) held.indexedAt = f.indexedAt;
+        if (at < 0) break;
+        at = f.path.lastIndexOf('/', at - 1);
+      }
+    }
+    const changed = new Set<string>();
+    for (const [key, { dir, indexedAt }] of oldest) {
+      try {
+        if (fs.statSync(dir).mtimeMs >= indexedAt) changed.add(key);
+      } catch {
+        // Gone: its files are gone under every spelling, which git reports.
+      }
+    }
+    if (changed.size === 0) return [];
+    const trusted = (dir: string): boolean => !changed.has(foldName(dir));
+    const out: Array<[string, string]> = [];
+    for (const f of files) {
+      const onDisk = nameOnDisk(this.rootDir, f.path, listings, trusted);
+      if (onDisk !== null && onDisk !== f.path) out.push([f.path, onDisk]);
+    }
+    return out;
+  }
+
+  /**
    * Get files that have changed since last index.
    * Uses git status as a fast path when available, falling back to full scan.
    */
@@ -4694,12 +5048,29 @@ export class ExtractionOrchestrator {
       // have been recreated locally; a previously indexed dirty path may have
       // vanished from git status after restore. Classify current disk vs DB once.
       const candidates = new Set([...gitChanges.deleted, ...gitChanges.modified, ...gitChanges.added, ...dirtyPaths!, ...this.sparseCheckoutChanges()]);
+      // Where the file system ignores case, so does git: a path is there only
+      // under the name the disk holds (see nameOnDisk), which a scan takes, and
+      // a case-only rename leaves `git status` clean, so the tracked files whose
+      // names changed so are candidates too, under both names.
+      const caseless = ignoresCase(this.rootDir);
+      const listings: FolderListings = new Map();
+      if (caseless) {
+        for (const filePath of [...candidates]) {
+          const onDisk = nameOnDisk(this.rootDir, filePath, listings);
+          if (onDisk !== null) candidates.add(onDisk);
+        }
+        for (const [tracked, onDisk] of this.caseRenamedTrackedFiles(listings)) {
+          candidates.add(tracked);
+          candidates.add(onDisk);
+        }
+      }
       const scope = this.scopedSyncMatcher();
       const overrides = loadExtensionOverrides(this.rootDir);
       for (const filePath of candidates) {
         const tracked = this.queries.getFileByPath(filePath);
         const fullPath = path.join(this.rootDir, filePath);
-        if (!isSourceFile(filePath, overrides, this.rootDir) || scope.ignores(filePath) || !fs.existsSync(fullPath)) {
+        const present = caseless ? existsWithExactName(this.rootDir, filePath, listings) : fs.existsSync(fullPath);
+        if (!isSourceFile(filePath, overrides, this.rootDir) || scope.ignores(filePath) || !present) {
           if (tracked) removed.push(filePath);
           continue;
         }

@@ -1,7 +1,7 @@
 function user(p)
 q = geo.Pt(1);
-q.norm2();
+q.magsq();
 geo.Pt.origin();
-p.norm2();
+p.magsq();
 p.origin();
 end

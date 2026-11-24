@@ -7,7 +7,7 @@
       "gui.m gui -references-> onkey @ onkey.m",
       "gui.m gui -references-> panel @ panel.m",
       "gui.m gui -references-> refresh_plots.m @ refresh_plots.m",
-      "gui.m gui -references-> setv @ setv.m",
+      "gui.m gui -references-> storev @ storev.m",
       "gui.m gui -references-> show @ show.m"
     ],
     "noEdges": [

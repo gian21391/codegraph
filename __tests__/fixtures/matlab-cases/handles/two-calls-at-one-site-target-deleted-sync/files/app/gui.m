@@ -1,3 +1,3 @@
 function gui()
-uicontrol('Callback', 'set_mode(''a'',''x''); set_mode(''b'',''y''); close(gcbf);');
+uicontrol('Callback', 'arm_state(''a'',''x''); arm_state(''b'',''y''); close(gcbf);');
 end

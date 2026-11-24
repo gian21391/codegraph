@@ -6,6 +6,7 @@
 
 import { Node, Edge, TaskContext, Subgraph } from '../types';
 import { isGeneratedFile } from '../extraction/generated-detection';
+import { matlabShownColumn } from '../extraction/languages/matlab-places';
 
 /**
  * Format context as markdown
@@ -270,7 +271,7 @@ function serializeEdge(edge: Edge): Record<string, unknown> {
     target: edge.target,
     kind: edge.kind,
     line: edge.line,
-    column: edge.column,
+    column: matlabShownColumn(edge.column),
   };
 }
 

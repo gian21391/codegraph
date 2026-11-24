@@ -7,8 +7,8 @@
  * never here; __tests__/matlab-path.test.ts checks this file's imports.
  *
  * The MATLAB search path a project's startup code sets, found by running that
- * code concretely: `setpathals('StorageRing')` into `setpathmml`, `getmmlroot`,
- * `setpathat`, `atpath`, each `addpath(fullfile(MMLROOT, …), '-begin')` as it
+ * code concretely: `setpathx('MainRing')` into `setpathmid`, `getmidroot`,
+ * `setpathtk`, `toolpath`, each `addpath(fullfile(MIDROOT, …), '-begin')` as it
  * comes, under the `switch` / `if` the pinned settings decide (the computer,
  * the release, the environment variables).
  *
@@ -20,7 +20,7 @@
  * helpers that read it (matlab-values.ts), are shared.
  *
  * Paths are MATLAB's own: absolute, under the project's root, so code that
- * counts separators from the start (`MMLROOT(1:i(end-1))`, `MMLROOT(1:end-6)`)
+ * counts separators from the start (`MIDROOT(1:i(end-1))`, `MIDROOT(1:end-6)`)
  * reads what it reads in MATLAB. What it reports is project-relative. A folder
  * is one the index knows: one holding an indexed file, or an ancestor of one.
  *
@@ -28,8 +28,8 @@
  * path-affecting (its file's text, or a function it calls by name, edits the
  * path or the current folder: `addpath`, `rmpath`, `path(`, `cd`, `userpath`,
  * `genpath`, `run(`, `eval`), and runs any other only for the value the caller
- * uses (`MMLROOT = getmmlroot(…)`), on a budget of its own; a call whose value
- * is dropped (`aoinit(…)` were it not path-affecting, `setad(AD)`) is passed
+ * uses (`MIDROOT = getmidroot(…)`), on a budget of its own; a call whose value
+ * is dropped (`cfginit(…)` were it not path-affecting, `setlog(LOG)`) is passed
  * over. Calls are looked up as MATLAB looks them up at that moment: the
  * caller's local functions, its `private/` folder, the current folder, the
  * path built so far, then the folder the startup code started in.
@@ -322,7 +322,7 @@ function firstErrorRow(node: SyntaxNode): number | null {
 
 /**
  * Whether a file's only path words are `cd`s back to a folder it saved from
- * `pwd` first (`DirStart = pwd; … cd(DirStart)`): its own words leave the
+ * `pwd` first (`HomeAt = pwd; … cd(HomeAt)`): its own words leave the
  * current folder as they found it, so they do not make it path-affecting.
  * MATLAB code does this around every file it saves. What it calls on the way
  * is still looked at like any other file's calls (see isPathAffecting).
@@ -2166,7 +2166,7 @@ class PathEvaluation {
       }
       case 'datenum': return [this.datenum(args)];
       // ---- output and things passed over
-      case 'fprintf': case 'disp': case 'display': case 'warning': case 'drawnow': case 'setad': case 'clc':
+      case 'fprintf': case 'disp': case 'display': case 'warning': case 'drawnow': case 'clc':
       case 'close': case 'format': case 'more': case 'beep': case 'pause': case 'hold': case 'figure': case 'diary':
       case 'narginchk': case 'nargoutchk': case 'nargchk': case 'dbstop': case 'keyboard':
         return [];
@@ -2743,7 +2743,7 @@ function sprintf(rawFmt: string, args: Val[]): string | undefined {
 
 /**
  * The function the startup code calls first, when it names one of the
- * project's (`setpathals` in `setpathals('StorageRing')`): the default
+ * project's (`setpathx` in `setpathx('MainRing')`): the default
  * current folder is that function's file's, when one file alone defines it.
  */
 export function firstCalledName(root: SyntaxNode, source: string, isProjectName: (name: string) => boolean): string | null {

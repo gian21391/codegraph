@@ -1,0 +1,108 @@
+{
+  "index": {
+    "edges": [
+      "r1.m r1 -calls-> mkvars.m @ mkvars.m",
+      "r10.m r10 -calls-> mkvars.m @ mkvars.m",
+      "r11.m r11 -calls-> mkvars.m @ mkvars.m",
+      "r12.m r12 -calls-> mkvars.m @ mkvars.m",
+      "r13.m r13 -calls-> mkvars.m @ mkvars.m",
+      "r2.m r2 -calls-> mkvars.m @ mkvars.m",
+      "r3.m r3 -calls-> mkvars.m @ mkvars.m",
+      "r4.m r4 -calls-> mkvars.m @ mkvars.m",
+      "r5.m r5 -calls-> mkvars.m @ mkvars.m",
+      "r6.m r6 -calls-> mkvars.m @ mkvars.m",
+      "r7.m r7 -calls-> mkvars.m @ mkvars.m",
+      "r8.m r8 -calls-> mkvars.m @ mkvars.m",
+      "r9.m r9 -calls-> mkvars.m @ mkvars.m"
+    ],
+    "rows": [
+      "r13.m:3 calls:XV",
+      "r2.m:3 calls:XV",
+      "r4.m:2 calls:XV",
+      "r6.m:3 calls:XV"
+    ],
+    "dormant": [
+      "r1.m:3 calls:XV",
+      "r10.m:3 calls:XV",
+      "r11.m:3 calls:XV",
+      "r12.m:3 calls:XV",
+      "r3.m:2 calls:XV",
+      "r5.m:4 calls:XV",
+      "r6.m:4 calls:XV",
+      "r7.m:3 calls:XV",
+      "r8.m:3 calls:XV",
+      "r9.m:3 calls:XV"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "r1.m:3 calls:XV",
+        "r10.m:3 calls:XV",
+        "r11.m:3 calls:XV",
+        "r12.m:3 calls:XV",
+        "r13.m:3 calls:XV",
+        "r2.m:3 calls:XV",
+        "r3.m:2 calls:XV",
+        "r4.m:2 calls:XV",
+        "r5.m:4 calls:XV",
+        "r6.m:3 calls:XV",
+        "r6.m:4 calls:XV",
+        "r7.m:3 calls:XV",
+        "r8.m:3 calls:XV",
+        "r9.m:3 calls:XV"
+      ],
+      "dormant": [
+        "r1.m:3 calls:mkvars",
+        "r10.m:3 calls:mkvars",
+        "r11.m:3 calls:mkvars",
+        "r12.m:3 calls:mkvars",
+        "r13.m:3 calls:mkvars",
+        "r2.m:3 calls:mkvars",
+        "r3.m:2 calls:mkvars",
+        "r4.m:2 calls:mkvars",
+        "r5.m:4 calls:mkvars",
+        "r6.m:4 calls:mkvars",
+        "r7.m:3 calls:mkvars",
+        "r8.m:3 calls:mkvars",
+        "r9.m:3 calls:mkvars"
+      ]
+    },
+    {
+      "edges": [
+        "r1.m r1 -calls-> mkvars.m @ mkvars.m",
+        "r10.m r10 -calls-> mkvars.m @ mkvars.m",
+        "r11.m r11 -calls-> mkvars.m @ mkvars.m",
+        "r12.m r12 -calls-> mkvars.m @ mkvars.m",
+        "r13.m r13 -calls-> mkvars.m @ mkvars.m",
+        "r2.m r2 -calls-> mkvars.m @ mkvars.m",
+        "r3.m r3 -calls-> mkvars.m @ mkvars.m",
+        "r4.m r4 -calls-> mkvars.m @ mkvars.m",
+        "r5.m r5 -calls-> mkvars.m @ mkvars.m",
+        "r6.m r6 -calls-> mkvars.m @ mkvars.m",
+        "r7.m r7 -calls-> mkvars.m @ mkvars.m",
+        "r8.m r8 -calls-> mkvars.m @ mkvars.m",
+        "r9.m r9 -calls-> mkvars.m @ mkvars.m"
+      ],
+      "rows": [
+        "r13.m:3 calls:XV",
+        "r2.m:3 calls:XV",
+        "r4.m:2 calls:XV",
+        "r6.m:3 calls:XV"
+      ],
+      "dormant": [
+        "r1.m:3 calls:XV",
+        "r10.m:3 calls:XV",
+        "r11.m:3 calls:XV",
+        "r12.m:3 calls:XV",
+        "r3.m:2 calls:XV",
+        "r5.m:4 calls:XV",
+        "r6.m:4 calls:XV",
+        "r7.m:3 calls:XV",
+        "r8.m:3 calls:XV",
+        "r9.m:3 calls:XV"
+      ]
+    }
+  ]
+}

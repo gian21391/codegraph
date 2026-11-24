@@ -913,3 +913,51 @@ export class MemoryMonitor {
     return process.memoryUsage().heapUsed;
   }
 }
+
+/** A name as a file system that ignores case compares it: one Unicode normal form (NFC), lower case. */
+export function foldName(name: string): string {
+  return name.normalize('NFC').toLowerCase();
+}
+
+/** {@link ignoresCase} answers, by project root. */
+const caseInsensitiveRoots = new Map<string, boolean>();
+
+/**
+ * Whether the file system under `rootDir` ignores case in names, probed once
+ * per process and root: an entry of the root (or the root itself) whose name
+ * has a letter opens under its other case as the same file. False when
+ * nothing there has a letter to try.
+ */
+export function ignoresCase(rootDir: string): boolean {
+  const key = path.resolve(rootDir);
+  let answer = caseInsensitiveRoots.get(key);
+  if (answer === undefined) {
+    answer = false;
+    const swap = (name: string): string => [...name].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+    const sameFile = (a: string, b: string): boolean => {
+      try {
+        const sa = fs.lstatSync(a);
+        const sb = fs.lstatSync(b);
+        return sa.ino === sb.ino && sa.dev === sb.dev;
+      } catch {
+        return false;
+      }
+    };
+    let probed = false;
+    try {
+      for (const name of fs.readdirSync(key)) {
+        if (swap(name) === name) continue;
+        answer = sameFile(path.join(key, name), path.join(key, swap(name)));
+        probed = true;
+        break;
+      }
+    } catch {
+      // An unreadable root: its own name below.
+    }
+    if (!probed && swap(path.basename(key)) !== path.basename(key)) {
+      answer = sameFile(key, path.join(path.dirname(key), swap(path.basename(key))));
+    }
+    caseInsensitiveRoots.set(key, answer);
+  }
+  return answer;
+}

@@ -1,10 +1,10 @@
 {
-  "why": "`classdef Mid < Base & Base` writes two superclass refs on one line (at columns 13 and 20); when the class folder `@Base` turns binary a fresh index keeps two failed `extends:Base` rows and a sync keeps one (project rule: a sync ends where a fresh index ends, counts included; found by the step 11 fuzzer). MATLAB rejects a class listed twice among the superclasses, so nothing else is stated.",
+  "why": "`classdef Mid < Base & Base` lists `Base` twice. MATLAB rejects a class listed twice among its superclasses, so MATLAB states nothing here, and the truth holds only what project rules say: each written superclass reference is kept at its own place (its name's column, step 14); a reference no resolution pass answers is kept as a failed row, which a later sync retries (#1240; the row lifecycle in src/db/schema.sql); and a sync ends where a fresh index ends, counts included. When the class folder `@Base` turns binary, `Base` is no class, and a fresh index keeps a failed `extends:Base` row for each reference: so must a sync (found by the step 11 fuzzer).",
   "truth": {},
   "known": [
     {
-      "what": "A sync keeps one of two refs that share a line, where a fresh index keeps both.",
-      "why": "Accepted in step 4 (MATLAB dormant rows): refs sharing a line merge in a sync. The merge goes by the line alone: these two refs differ in column (13 and 20)."
+      "what": "Until step 14 a sync kept one failed row where a fresh index kept two.",
+      "why": "Both references were written at the start of the superclass list (column 13, not at their names), so while `Base` resolved they made one edge (the store keeps one edge per source, target, kind, line and column), which a sync turned back into one row. Step 4 had accepted this as two references on one line merging; the cause was the shared place, and each reference now has its own."
     }
   ],
   "steps": [
@@ -20,11 +20,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-accepted-step4-H",
-    "fails": [
-      "step 1 (@Base/Base.m): rows differ; only synced: []; only fresh: [\"+pkg/Mid.m:1 extends:Base\"]"
-    ]
-  }
+  ]
 }

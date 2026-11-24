@@ -4,12 +4,12 @@
  * A call on a method's own object (`obj.main(obj.pro)` in `ALGORITHM::Solve`)
  * resolves to the first definition up the class's hierarchy — the base's,
  * often an empty hook or an `Abstract` declaration. At runtime the object is
- * a subclass's, and its override runs: `NSGAII::main`. Static resolution
+ * a subclass's, and its override runs: `EvoA::main`. Static resolution
  * cannot follow that, so a flow through a template method stopped at the
  * base. Two kinds of edge bridge it, `provenance: 'heuristic'`:
  *
  *   - `matlab-override`: each method of a class → the same-named method of
- *     each class that inherits it (`ALGORITHM::main → NSGAII::main`), from
+ *     each class that inherits it (`ALGORITHM::main → EvoA::main`), from
  *     the nearest class up each line of superclasses that defines it (`A <
  *     handle` declares `step`, `B < A` does not, `C < B` does: `A::step →
  *     C::step`). A chain composes: `A::m → B::m → C::m`. MATLAB has no
@@ -19,15 +19,15 @@
  *     a private one (never inherited). `Hidden` methods are linked like any
  *     other: the attribute is not kept on the node.
  *   - `matlab-subclass-method`: a call on a method's own object of a method
- *     its class neither defines nor inherits (`veh.deriv(t, y, u)` in
- *     `Vehicle`, which leaves `deriv` to its subclasses), a failed reference
+ *     its class neither defines nor inherits (`veh.dxstate(t, y, u)` in
+ *     `Vehicle`, which leaves `dxstate` to its subclasses), a failed reference
  *     with the `self` fact → the nearest definition down each line of
- *     subclasses (`Bicycle::deriv`, `Unicycle::deriv`). Only a call on the
+ *     subclasses (`Tandem::dxstate`, `Trike::dxstate`). Only a call on the
  *     method's own object: one on a variable of no stated class says nothing
  *     of its class.
  *
  * No cap: a base method has as many edges out as there are overrides
- * (`ALGORITHM::main` in PlatEMO has hundreds), and a capped list would be a
+ * (a framework's `ALGORITHM::main` may have hundreds), and a capped list would be a
  * partial one.
  *
  * Methods are read by qualified name (`Cls::m`), not through `contains`: a
@@ -43,7 +43,7 @@
  * sync, so a sync ends with the edges a fresh index of the same files has —
  * given the failed self-call rows a fresh index has, which the rule of
  * ./matlab-failures keeps the same in a sync as in a fresh index (the row of
- * `veh.deriv(t, y, u)` stays while any symbol is named `deriv`, and a sync
+ * `veh.dxstate(t, y, u)` stays while any symbol is named `dxstate`, and a sync
  * that adds the first one extracts `Vehicle`'s file again: see
  * ./matlab-builtin-carriers).
  */

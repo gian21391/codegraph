@@ -1,3 +1,3 @@
 function main()
-setMode fast quiet
+pickMode fast quiet
 end

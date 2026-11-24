@@ -69,8 +69,8 @@ describe('MATLAB .m detection', () => {
     expect(detectLanguage('setup.m', 'clc; clear all; close all\nx = 1;\n')).toBe('matlab');
     expect(detectLanguage('bom.m', '\uFEFFfunction f()\r\nend\r\n')).toBe('matlab');
     // A script of bare statements, its comments only trailing.
-    expect(detectLanguage('world3d.m', 'c_obs = zeros(100, 100, 100);\nc_obs(:,:,75:80) = 1;   % top floor\n')).toBe('matlab');
-    expect(detectLanguage('make.m', "fprintf('** building\\n');\nmex frne.c ne.c vmath.c\n")).toBe('matlab');
+    expect(detectLanguage('cube7.m', 'cellsq = ones(40, 40, 40);\ncellsq(:,:,12:15) = 0;   % hollow layer\n')).toBe('matlab');
+    expect(detectLanguage('make.m', "fprintf('-- compiling\\n');\nmex qsolve.c qlutx.c\n")).toBe('matlab');
     expect(isLanguageSupported('matlab')).toBe(true);
   });
 
@@ -209,18 +209,15 @@ describe('Octave files (unsupported)', () => {
   });
 
   it('give their file node only when the parse fails at the root', () => {
-    // The usual GPL header: `if not, write to …` reads as an unclosed `if`.
+    // A licence header like the usual GPL one: `if not, write to …` reads as an unclosed `if`.
     const code = [
-      '## Copyright (C) 2000 A. Author',
+      '## Copyright (C) 2031 A. Author',
       '##',
-      '## This program is free software; you can redistribute it and/or modify',
-      '## it under the terms of the GNU General Public License as published by',
-      '## the Free Software Foundation; either version 2 of the License, or',
-      '## (at your option) any later version.',
+      '## Share and change this file freely; keep this notice with',
+      '## any copy you hand on.',
       '##',
-      '## You should have received a copy of the GNU General Public License',
-      '## along with this program; if not, write to the Free Software',
-      '## Foundation, Inc.',
+      '## It comes with no promise of any kind; if not, write to the author',
+      '## for a copy of these terms.',
       '',
       '## -*- texinfo -*-',
       '## @deftypefn {Function File} {} stamp',
@@ -228,8 +225,8 @@ describe('Octave files (unsupported)', () => {
       '## @end deftypefn',
       '',
       'function t = stamp',
-      '  ## seconds since the epoch',
-      '  t = (time - mktime(gmtime(0)))/86400;',
+      '  ## days since the start',
+      '  t = floor(time / 86400);',
       'endfunction',
       '',
     ].join('\n');
@@ -242,9 +239,9 @@ describe('Octave files (unsupported)', () => {
 
   it('leave a MATLAB file whose parse fails at the root to its frames', () => {
     // An unclosed `while`: the root is ERROR, but the file's variables still hold.
-    const code = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  while getpv(k)<0.1\n';
+    const code = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  while readsig(k)<0.1\n';
     expect(getParser('matlab')!.parse(code)!.rootNode.type).toBe('ERROR');
-    expect(refs('f.m', code)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:getpv <- f.m']);
+    expect(refs('f.m', code)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:readsig <- f.m']);
   });
 
   it('are known by every Octave block keyword, classdef ones included — never by a MATLAB classdef', () => {
@@ -287,53 +284,53 @@ describe('MATLAB text as the grammar is given it', () => {
 });
 
 describe('MATLAB text the parser cannot read', () => {
-  // physbase's shapes: an optics table (`2660 W20  81.15 …` reads as the
-  // number 2660, a comma the parser put in, and the command `W20`), a
-  // readme, and a logbook line (`5) @4:48, kicker off`).
-  const TABLE = '     1 START         0.00     0.00    11.19\n  2660 W20          81.15     0.02    11.22\n  2661 W20          81.17     0.02    11.22\n  2662 U5           81.19     0.01    11.22\n';
-  const README = 'FMINUIT  -  A binding to MINUIT for Matlab & Scilab.\n=======\n\nIt minimizes any function, either implemented as a .m(.sci) script file or as\na compiled dll, provided that it returns a real scalar and it depends on one\nparameters only (see the examples).\n';
-  const LOGBOOK = "kick1000-5mA-00.jpeg, kick1000-5mA-a-00.jpeg\n5) @4:48, kicker off\nsetpv('HCM', 1);\ndrawnow\n";
+  // Shapes of text saved as `.m`: a data table (`3170 Q7X  64.25 …` reads as the
+  // number 3170, a comma the parser put in, and the command `Q7X`), a
+  // readme, and a logbook line (`7) @9:15, pump off`).
+  const TABLE = '     1 BEGIN         0.00     0.00    12.40\n  3170 Q7X          64.25     0.03    12.43\n  3171 Q7X          64.27     0.03    12.43\n  3172 K9           64.29     0.02    12.43\n';
+  const README = 'QSOLVE  -  A front end to KNFIT for Matlab users.\n=======\n\nIt fits any model, either written as a .m(.sce) script file or as\na shared library, assuming that it yields a real vector and it needs only\ninputs as listed (see the demos).\n';
+  const LOGBOOK = "pulse07-3mV-00.png, pulse07-3mV-b-00.png\n7) @9:15, pump off\nwritesig('VCX', 1);\ndrawnow\n";
 
   it('reads no command or bare name from a line that does not parse: a data table\'s, a readme\'s, a logbook\'s', () => {
-    expect(allRefs('Optics.m', TABLE)).toEqual([]);
+    expect(allRefs('datatab.m', TABLE)).toEqual([]);
     // The readme's first lines hold the error (`It` breaks the parse); the
-    // ones after it parse whole, as commands (`a compiled dll, provided
+    // ones after it parse whole, as commands (`a shared library, assuming
     // that …`), and read as any command does.
-    expect(allRefs('readme.m', README)).toEqual(['calls:a <- readme.m', 'calls:provided <- readme.m', 'calls:parameters <- readme.m']);
+    expect(allRefs('readme.m', README)).toEqual(['calls:a <- readme.m', 'calls:assuming <- readme.m', 'calls:inputs <- readme.m']);
     // The lines that parse whole keep their calls.
-    expect(allRefs('logbook.m', LOGBOOK)).toEqual(['calls:setpv <- logbook.m', 'calls:drawnow <- logbook.m']);
+    expect(allRefs('logbook.m', LOGBOOK)).toEqual(['calls:writesig <- logbook.m', 'calls:drawnow <- logbook.m']);
   });
 
   it('keeps the calls written with arguments, the handles and the dotted calls of a broken function file', () => {
-    const code = "function plotit(x)\n  figure(1);\n  5) @4:48, kicker off\n  setpv('HCM', x);\n  h = @getpv;\n  Lattice.refresh(2);\n  drawnow\n  y = [1 2 3\nend\n";
-    expect(allRefs('plotit.m', code)).toEqual([
-      'calls:figure <- plotit',
-      'calls:setpv <- plotit',
-      'function_ref:getpv <- plotit',
-      'calls:Lattice::refresh <- plotit',
-      'calls:drawnow <- plotit',
+    const code = "function plotview(x)\n  figure(1);\n  7) @9:15, pump off\n  writesig('VCX', x);\n  h = @readsig;\n  Lattice.refresh(2);\n  drawnow\n  y = [1 2 3\nend\n";
+    expect(allRefs('plotview.m', code)).toEqual([
+      'calls:figure <- plotview',
+      'calls:writesig <- plotview',
+      'function_ref:readsig <- plotview',
+      'calls:Lattice::refresh <- plotview',
+      'calls:drawnow <- plotview',
     ]);
     // In an ERROR node (an unclosed `while` makes the root one), a call
     // written with its arguments stays, a dotted call too, and so does a
     // command on a line that parses whole.
-    const swallowed = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  cleanupAll\n  while getpv(k)<0.1\n';
+    const swallowed = 'for k = 1:3;\n  q = Quaternion(k);\n  q.inv();\n  cleanupAll\n  while readsig(k)<0.1\n';
     expect(getParser('matlab')!.parse(swallowed)!.rootNode.type).toBe('ERROR');
-    expect(allRefs('f.m', swallowed)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:cleanupAll <- f.m', 'calls:getpv <- f.m']);
+    expect(allRefs('f.m', swallowed)).toEqual(['calls:Quaternion <- f.m', 'calls:Quaternion::inv <- f.m', 'calls:cleanupAll <- f.m', 'calls:readsig <- f.m']);
     // A bare name read in a condition the parser could not close goes: the
     // `if` its line starts with is a token of the error's own.
-    expect(allRefs('g.m', 'function r = g(x)\n  y = (x +;\n  if isReady && getpv(x) > 1\n    q = [1 2\n  end\nend\n')).toEqual(['calls:getpv <- g.m']);
+    expect(allRefs('g.m', 'function r = g(x)\n  y = (x +;\n  if isReady && readsig(x) > 1\n    q = [1 2\n  end\nend\n')).toEqual(['calls:readsig <- g.m']);
   });
 
   it('keeps a command or a bare read on a line that parses whole, under an error an unclosed bracket runs to the end of the file', () => {
     // `x = [1 2` never closes: the parser reads the rest of the file, the
     // next function too, as rows of that matrix inside one `ERROR`. A line
-    // that parses whole in it is code (`soundtada;`); one with a token of the
-    // error's own is not (`t1 = gettime;`, its `=` an error of the matrix's;
-    // `soundtada;` after `end`, split into `s` and `oundtada`). The `end` the
+    // that parses whole in it is code (`soundchime;`); one with a token of the
+    // error's own is not (`t1 = getclock;`, its `=` an error of the matrix's;
+    // `soundchime;` after `end`, split into `s` and `oundchime`). The `end` the
     // error reads as a call on line 8 is a keyword, never a name (step 12).
-    const code = 'function plotit(v)\ncheckforao;\nt0 = gettime;\nif v\n  x = [1 2\nend\nsoundtada;\nend\nfunction other()\nsoundtada;\nt1 = gettime;\nend\n';
-    const refs = extractFromSource('plotit.m', code, 'matlab').unresolvedReferences.map((u) => `${u.line} ${u.referenceName}`);
-    expect(refs).toEqual(['2 checkforao', '3 gettime', '10 soundtada']);
+    const code = 'function plotview(v)\ncheckforcfg;\nt0 = getclock;\nif v\n  x = [1 2\nend\nsoundchime;\nend\nfunction other()\nsoundchime;\nt1 = getclock;\nend\n';
+    const refs = extractFromSource('plotview.m', code, 'matlab').unresolvedReferences.map((u) => `${u.line} ${u.referenceName}`);
+    expect(refs).toEqual(['2 checkforcfg', '3 getclock', '10 soundchime']);
   });
 
   it('warns in terms that are true for MATLAB, and as before for other languages', () => {
@@ -348,7 +345,7 @@ describe('MATLAB text the parser cannot read', () => {
     expect(warnings('stamp.m', '## Copyright (C) 2000 A. Author\nfunction t = stamp\n  t = 1;\nendfunction\n')).toEqual([
       'source_not_read stamp.m: Octave source, which is not read as MATLAB — the file is indexed, but none of its code is in the graph',
     ]);
-    expect(warnings('pause.m', 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1)\n')).toEqual([
+    expect(warnings('pause.m', 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000\u0087 pause(1)\n')).toEqual([
       'source_not_read pause.m: not MATLAB text (a binary or encrypted file) — the file is indexed, but none of its code is in the graph',
     ]);
     expect(warnings('broken.py', 'def (:\n', 'python')[0]).toContain('parse produced no symbols (tree has errors)');
@@ -372,39 +369,39 @@ describe('MATLAB names the parser cut out of a word', () => {
   const names = (rows: string[]): string[] => rows.map((r) => r.slice(r.lastIndexOf(':') + 1));
   const fn = (name: string): string => `function y = ${name}(x)\ny = x;\nend\n`;
 
-  // physbase's arplot_leda.m: after bare PV names on lines of their own the
+  // After bare channel names on lines of their own the
   // rest of the file is one `ERROR`, whose recovery skips a character or two
   // of each word and reads the rest as a name.
-  const PVS = ['SR02S:ID1:TAPER_CALC:RBV', 'SR02S:ID1:TAPER_LIMIT:RBV', 'SR02S:ID1:TAPER_MAX:RBV', 'SR02S:ID1:TAPER_MIN:RBV'];
-  const CALLS = ["arplot('SR02S:ID1:TAPER_CALC:RBV');", "arplot('SR02S:ID1:TAPER_MAX:RBV');  % Constant", 'figure(1);', 'clf reset', "arread('x');", "arplot('y');", 'subplot(2,1,1);'];
+  const PVS = ['LN07Q:IX3:GAP_SET:RBV', 'LN07Q:IX3:GAP_LOW:RBV', 'LN07Q:IX3:GAP_TOP:RBV', 'LN07Q:IX3:GAP_DIP:RBV'];
+  const CALLS = ["logview('LN07Q:IX3:GAP_SET:RBV');", "logview('LN07Q:IX3:GAP_TOP:RBV');  % Constant", 'figure(1);', 'clf reset', "logread('x');", "logview('y');", 'subplot(2,1,1);'];
   const BROKEN = [...PVS, ...CALLS, ''].join('\n');
   const FIXED = [...PVS.map((l) => `% ${l}`), ...CALLS, ''].join('\n');
 
   it('links nothing to a piece of a word and leaves no row of one, and keeps every call of the same code where it parses', async () => {
     // The shape is what the grammar makes of it: `figure` is `f` and a call of `igure`, `clf` is `cl` and `f`.
-    expect(pieces(BROKEN)).toEqual(['function_call:plot', 'function_call:igure', 'ERROR:f', 'function_call:read', 'function_call:plot', 'function_call:ubplot']);
+    expect(pieces(BROKEN)).toEqual(['function_call:ogview', 'function_call:igure', 'ERROR:f', 'function_call:ogread', 'function_call:ogview', 'function_call:ubplot']);
     expect(pieces(FIXED)).toEqual([]);
     const r = await indexOfProject({
-      'arplot_leda.m': BROKEN,
-      'arplot_ok.m': FIXED,
-      ...Object.fromEntries(['read', 'plot', 'igure', 'f', 'ubplot', 'arread', 'arplot'].map((n) => [`${n}.m`, fn(n)])),
+      'logview_x.m': BROKEN,
+      'logview_ok.m': FIXED,
+      ...Object.fromEntries(['ogread', 'ogview', 'igure', 'f', 'ubplot', 'logread', 'logview'].map((n) => [`${n}.m`, fn(n)])),
     });
     // The broken file's calls of the project's functions are its own pieces: none links. The same calls that parse do.
-    expect(r.edges.filter((e) => e.startsWith('arplot_'))).toEqual([
-      ...Array<string>(3).fill('arplot_ok.m arplot_ok.m -calls-> arplot @ arplot.m'),
-      'arplot_ok.m arplot_ok.m -calls-> arread @ arread.m',
+    expect(r.edges.filter((e) => e.startsWith('logview_'))).toEqual([
+      'logview_ok.m logview_ok.m -calls-> logread @ logread.m',
+      ...Array<string>(3).fill('logview_ok.m logview_ok.m -calls-> logview @ logview.m'),
     ]);
-    const cut = new Set(['igure', 'read', 'plot', 'f', 'ubplot']);
+    const cut = new Set(['igure', 'ogread', 'ogview', 'f', 'ubplot']);
     expect(names([...r.unresolved, ...r.dormant]).filter((n) => cut.has(n))).toEqual([]);
   });
 
   it('links nothing to a piece of a word in prose saved as `.m`', async () => {
-    // `2mon1` lexes as the number 2 and the name `mon1`, `1_5prod` as 1 and `_5prod`, outside any `ERROR` of their own.
-    const README = 'see 2mon1 and 1.5prod\nmonbpm(Sun) -> 2mon1    (errors were small)\norb3.mat  -> 1_5prod.str\n';
-    expect(pieces(README)).toEqual(['function_call:mon1', 'field_expression:_5prod']);
-    const r = await indexOfProject({ 'readme.m': README, 'mon1.m': fn('mon1'), '_5prod.m': fn('x5prod') });
+    // `3kex4` lexes as the number 3 and the name `kex4`, `2_5mix` as 2 and `_5mix`, outside any `ERROR` of their own.
+    const README = 'notes on 3kex4 and 2.5mix\nkexdata(Moon) => 3kex4   (drift was low)\nlog8.mat  => 2_5mix.str\n';
+    expect(pieces(README)).toEqual(['function_call:kex4', 'field_expression:_5mix']);
+    const r = await indexOfProject({ 'readme.m': README, 'kex4.m': fn('kex4'), '_5mix.m': fn('x5mix') });
     expect(r.edges.filter((e) => e.startsWith('readme.m'))).toEqual([]);
-    expect(names([...r.unresolved, ...r.dormant]).filter((n) => n === 'mon1' || n === '_5prod')).toEqual([]);
+    expect(names([...r.unresolved, ...r.dormant]).filter((n) => n === 'kex4' || n === '_5mix')).toEqual([]);
   });
 
   it('takes no assignment from a piece of a word: the name it would write is still called, before it and after it', async () => {
@@ -418,9 +415,9 @@ describe('MATLAB names the parser cut out of a word', () => {
     expect(r.edges.filter((e) => e.startsWith('notes'))).toEqual(['notes.m notes.m -calls-> x @ x.m', 'notes2.m notes2 -calls-> x @ x.m']);
   });
 
-  it('takes no command from a piece of a word: a `load` cut out of `aload` makes no variable of the name it lists', async () => {
-    // `aload data.mat x` after a run of `*` lines: an `ERROR` holding `a`, then a command `load data.mat x`.
-    const r = await indexOfProject({ 'notes3.m': '*****\n*****\naload data.mat x\nx(1)\n', 'x.m': fn('x') });
+  it('takes no command from a piece of a word: a `load` cut out of `qload` makes no variable of the name it lists', async () => {
+    // `qload data.mat x` after a run of `*` lines: an `ERROR` holding `a`, then a command `load data.mat x`.
+    const r = await indexOfProject({ 'notes3.m': '*****\n*****\nqload data.mat x\nx(1)\n', 'x.m': fn('x') });
     expect(r.edges.filter((e) => e.startsWith('notes3'))).toEqual(['notes3.m notes3.m -calls-> x @ x.m']);
   });
 });
@@ -959,13 +956,13 @@ end
   it('leaves unwritten only the built-in calls no project file or function of the file could answer', () => {
     const reachable = new Set<string>();
     // A path function, a private one, a class folder's class and method file, a package member.
-    addMatlabReachableNames(['stats/normpdf.m', 'lib/private/strsplit.m', '@AccObj/plot.m', '@AccObj/AccObj.m', '+uix/set.m', 'notes.txt'], reachable);
-    expect([...reachable].sort()).toEqual(['AccObj', 'normpdf', 'strsplit']);
+    addMatlabReachableNames(['stats/normpdf.m', 'lib/private/strsplit.m', '@AcmeObj/plot.m', '@AcmeObj/AcmeObj.m', '+uix/set.m', 'notes.txt'], reachable);
+    expect([...reachable].sort()).toEqual(['AcmeObj', 'normpdf', 'strsplit']);
     const kept = (file: string, code: string): string[] => {
       const r = extractFromSource(file, code, 'matlab');
       return withoutUnanswerableMatlabBuiltins(r.unresolvedReferences, r.nodes, reachable).map((u) => `${u.referenceKind}:${u.referenceName}`);
     };
-    // plot is a method of AccObj only, set a package's: no bare call reaches either; grid is the file's own.
+    // plot is a method of AcmeObj only, set a package's: no bare call reaches either; grid is the file's own.
     // A handle to a built-in goes the way its call does.
     expect(kept('a.m', 'function a(x)\nnormpdf(x); strsplit(x); plot(x); set(x); grid(x); mine(x); h = @plot;\ng = @grid; k = @normpdf; m = @isempty; o = @mine;\nend\nfunction grid(x)\nend\n')).toEqual([
       'calls:normpdf', 'calls:strsplit', 'calls:grid', 'calls:mine', 'function_ref:grid', 'function_ref:normpdf', 'function_ref:mine',
@@ -996,7 +993,7 @@ end
       '18 Archive ["bare"]', '18 Archive::getData ["variable:w.getData"]', '19 init_e ["statement"]',
     ]);
     // A notes file read as MATLAB: the parse recovers with something between the name and the list.
-    const notes = extractFromSource('readme.m', 'b. test bpms/correctors data rates (monrates);\n', 'matlab');
+    const notes = extractFromSource('readme.m', 'b. test probes/correctors data rates (pollrates);\n', 'matlab');
     expect(notes.unresolvedReferences.filter((u) => u.referenceName === 'correctors').map((u) => JSON.stringify(u.candidates ?? null))).toEqual(['["bare"]']);
   });
 });
@@ -1123,14 +1120,14 @@ end
 
 describe('MATLAB assignment targets', () => {
   it('emits nothing for the chain an assignment writes, dynamic fields and multiple outputs included, and keeps its index reads', () => {
-    const code = `function f(AO, iFam, ii, c, y)
-    AO.(iFam).Monitor.HW2PhysicsParams{1}(ii, :) = c;
-    AO.Q2.Setpoint.Physics2HWParams{1}(6, :) = c;
-    AO{ii}.Setpoint.HW2PhysicsParams{2}(ii, :) = c;
+    const code = `function f(CF, iTeam, ii, c, y)
+    CF.(iTeam).Monitor.RawToUnitParams{1}(ii, :) = c;
+    CF.Q2.Level.UnitToRawParams{1}(6, :) = c;
+    CF{ii}.Level.RawToUnitParams{2}(ii, :) = c;
     [st.a.b(1), m(2), q.r{3}] = deal(c);
     x(pick(y)) = 1;
-    AO.(name(y)).Monitor = c;
-    t = Root.Q2.Setpoint.Params{1}(6, ii);
+    CF.(name(y)).Monitor = c;
+    t = Root.Q2.Level.Params{1}(6, ii);
 end
 `;
     expect(refs('f.m', code)).toEqual([
@@ -1223,7 +1220,7 @@ describe('MATLAB classdef', () => {
   it('marks a method abstract only in a `methods (Abstract)` block', () => {
     const code = `classdef Pt
     methods
-        d = norm2(obj)
+        d = magsq(obj)
     end
     methods (Static)
         p = origin()
@@ -1238,7 +1235,7 @@ end
       const n = nodes.find((x) => x.name === name)!;
       return { abstract: n.isAbstract === true, static: n.isStatic === true };
     };
-    expect(flags('norm2')).toEqual({ abstract: false, static: false });
+    expect(flags('magsq')).toEqual({ abstract: false, static: false });
     expect(flags('origin')).toEqual({ abstract: false, static: true });
     expect(flags('area')).toEqual({ abstract: true, static: false });
   });

@@ -87,7 +87,7 @@ describe('MATLAB scripts in codegraph_explore', () => {
       'helper_fn.m': 'function helper_fn(x)\ndisp(x);\nend\n',
       'run_analysis.m': 'function run_analysis(n)\ndisp(n);\nend\n',
       // A plain word for a name, which only the function running it corroborates.
-      'BeamLine.m': 'function BL = BeamLine(c)\nglobals\nBL = c;\nend\n',
+      'TrackSeg.m': 'function BL = TrackSeg(c)\nglobals\nBL = c;\nend\n',
       'globals.m': 'global ELEM\nELEM = {};\n',
     });
     const cg = await CodeGraph.init(root, { index: true });
@@ -102,7 +102,7 @@ describe('MATLAB scripts in codegraph_explore', () => {
       // A script only passed through is rendered, but after the files the query names.
       const passing = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'main helper_fn' })).content[0]!.text;
       expect([...passing.matchAll(/^\*\*`([^`]+)`\*\*/gm)].map((m) => m[1])).toEqual(['helper_fn.m', 'main.m', 'setup_paths.m']);
-      const res = await new ToolHandler(cg).execute('codegraph_explore', { query: 'BeamLine globals' });
+      const res = await new ToolHandler(cg).execute('codegraph_explore', { query: 'TrackSeg globals' });
       expect(res.content[0]!.text).toContain('**`globals.m`**');
       expect(res.content[0]!.text).toContain('2\tELEM = {};');
     } finally {

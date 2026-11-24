@@ -221,7 +221,7 @@ export interface MatlabCopies<T> {
   onPath: T[];
   /** The ones named exactly so that MATLAB cannot see, in the order given. */
   offPath: T[];
-  /** The ones whose name differs only in case (`FindM44` for `findm44`): another function to MATLAB, so counted, never shown in the name's place. */
+  /** The ones whose name differs only in case (`FindMat9` for `findmat9`): another function to MATLAB, so counted, never shown in the name's place. */
   otherCase: T[];
 }
 
@@ -264,7 +264,7 @@ export function keepMatlabCopies<T extends { id: string }>(nodes: readonly T[], 
 
 /**
  * The line that stands for the copies of a name a surface does not show:
- * `+10 more definitions of findm44 off the MATLAB path, 1 more spelled
+ * `+10 more definitions of findmat9 off the MATLAB path, 1 more spelled
  * differently`. `offPathShown` copies off the path were shown (none when one
  * on it is). Null when every copy is shown.
  */

@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "lib/usep.m usep -calls-> p @ lib/private/p.m"
+      "lib/usek.m usek -calls-> p @ lib/private/p.m"
     ],
     "rows": [],
     "dormant": []

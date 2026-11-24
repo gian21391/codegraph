@@ -1,47 +1,40 @@
 {
-  "why": "A callback given as text references what the text calls, and eval runs its text now (MATLAB doc 'Create Callbacks for Graphics Objects', 'eval'; the case handles/callback-text): two calls of one name in one text are two calls, with their own arguments, written at the one place the text starts. With `lib/set_mode.m` deleted they answer nowhere, and a fresh index keeps a row for each; each step must end where a fresh index ends (project rule).",
+  "why": "A callback given as text references what the text calls, and eval runs its text now (MATLAB doc 'Create Callbacks for Graphics Objects', 'eval'; the case handles/callback-text): two calls of one name in one text are two calls, with their own arguments. With `lib/arm_state.m` deleted they answer nowhere, and a fresh index keeps a row for each; each step must end where a fresh index ends, counts included (project rule). Each reference of code given as one literal is placed where its name is written in the literal (project rule, step 14), so the two calls are two edges while `arm_state` exists, and two rows when it goes.",
   "truth": {
     "edges": [
-      "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
-      "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+      "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+      "app/gui.m gui -references-> arm_state @ lib/arm_state.m"
     ]
   },
   "known": [
     {
-      "what": "While `lib/set_mode.m` is gone, a sync keeps one row for the two calls of each text where a fresh index keeps two.",
-      "why": "The two calls of one text are written at one site and make one edge into `set_mode`. When the target goes, the sync puts the calls back from that edge, one row per edge, while a fresh index makes a row per call (the reading of the step 13 review, which found it on a real project with a folder deleted and restored). The row put back also lists its facts in another order than a fresh index's, which this runner does not show. A sync problem for step 14."
+      "what": "Until step 14 a sync kept one row for the two calls of each text where a fresh index kept two.",
+      "why": "Every reference of a text was written at the place the text starts, so the two calls made one edge into `arm_state` (the store keeps one edge per source, target, kind, line and column), and a sync, which turns an edge back into one row when its target goes, could not tell that it stood for two (found by the step 13 review on a real project, a folder deleted and restored). Each now has the place of its own name."
     }
   ],
   "steps": [
     {
       "edit": {
-        "lib/set_mode.m": null
+        "lib/arm_state.m": null
       },
       "truth": {
         "noEdges": [
           {
-            "to": "set_mode"
+            "to": "arm_state"
           }
         ]
       }
     },
     {
       "edit": {
-        "lib/set_mode.m": "function set_mode(varargin)\nend\n"
+        "lib/arm_state.m": "function arm_state(varargin)\nend\n"
       },
       "truth": {
         "edges": [
-          "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
-          "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+          "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+          "app/gui.m gui -references-> arm_state @ lib/arm_state.m"
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S14-shared-site-dormant-rows",
-    "fails": [
-      "step 1 (lib/set_mode.m): rows differ; only synced: []; only fresh: [\"app/apply_all.m:2 calls:set_mode\"]",
-      "step 1 (lib/set_mode.m): dormant rows differ; only synced: []; only fresh: [\"app/gui.m:2 function_ref:set_mode\"]"
-    ]
-  }
+  ]
 }

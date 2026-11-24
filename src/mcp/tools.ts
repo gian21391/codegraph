@@ -4982,7 +4982,7 @@ export class ToolHandler {
         }
         // A MATLAB script has no symbol but its file (`setup_paths.m`): the
         // file is what a name of one asks for, and its code is the body. So
-        // has a stub, the help text of a MEX function (`lcaGet.m`).
+        // has a stub, the help text of a MEX function (`chanGet.m`).
         if (cands.length === 0 && !isQual && matlab) cands = matlab.scriptsNamed(t).filter((n) => !isTestPath(n.filePath));
         if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
@@ -4991,7 +4991,7 @@ export class ToolHandler {
         // single-pick fallback — an uncorroborated bare `run` must not tier its
         // most-substantive namesake any more than a 1-def `check` may.
         // A MATLAB class-folder method of a class the query also names
-        // corroborates too, read from the graph ("SerialLink fdyn accel rne"):
+        // corroborates too, read from the graph ("ChainLink fsim accel rne"):
         // the folder keeps each method in a file of its own, where no other
         // query token is named beside it. Only that edge — a capitalised first
         // word ("Trace how …") must not corroborate a Go method another file

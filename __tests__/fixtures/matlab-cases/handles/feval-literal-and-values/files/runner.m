@@ -7,7 +7,7 @@ end
 r = feval(m, el, r);
 m = 'LaterStep';
 feval(p, r);
-E.StepFcn = 'EStep';
+E.StepFcn = 'StageX';
 feval(E.StepFcn, E, r);
 for c = {'CellA', 'CellB'}
     feval(c{1}, r);

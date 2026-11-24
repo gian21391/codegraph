@@ -740,9 +740,9 @@ and then links each call to the copy MATLAB would run. Give the code under
 ```json
 {
   "matlab": {
-    "startup": "setpathals('StorageRing')",
-    "cwd": "mmlt/mml",
-    "env": { "EPICS_HOST_ARCH": "" },
+    "startup": "setpathx('MainRing')",
+    "cwd": "midt/mid",
+    "env": { "LAB_SITE": "" },
     "computer": "GLNXA64",
     "release": "R2024b"
   }

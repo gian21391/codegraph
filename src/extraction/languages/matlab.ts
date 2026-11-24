@@ -9,6 +9,7 @@ import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
 import { COMPUTED_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
 import { GuardScope, type MatlabGuard } from './matlab-guards';
+import { MATLAB_ANCHORED_BASE, MATLAB_ANCHORED_STRIDE } from './matlab-places';
 import {
   HOLE,
   MAX_TEXT,
@@ -112,7 +113,7 @@ import {
  *                 given as text is read as code: what `eval` / `evalc` run
  *                 (where they are), what `evalin` runs, and a GUI callback
  *                 written as text to one of MATLAB's GUI functions
- *                 (`uicontrol('Callback', 'corgui(''ShowResp'')')`,
+ *                 (`uicontrol('Callback', 'dialpane(''ViewGain'')')`,
  *                 `h.Callback = 'go'`), which, run later on an event,
  *                 references what it calls. A name with a part nothing here
  *                 knows (`eval([op '(''x'')'])`) is no reference. A name
@@ -127,7 +128,7 @@ import {
  *                 what each argument holds where the code says (the
  *                 `args` fact, see matlab-ref-facts.ts), and
  *                 matlabParamSinks finds where a function calls what its
- *                 caller passes (`feval(regr, S)`), and under which tests
+ *                 caller passes (`feval(basisf, S)`), and under which tests
  *                 of what the caller passed (matlab-guards.ts): the two
  *                 halves ../../resolution/matlab-argument-synthesizer.ts
  *                 joins. A parameter passed on under such a test is not
@@ -284,7 +285,7 @@ function isStatement(node: SyntaxNode): boolean {
 
 /**
  * Whether `node` is part of what an assignment writes to — `x(k) = …`,
- * `s.f{1}(k, :) = …`, `AO.(name).Monitor.Params{1} = …`, `[a.b, c(2)] = …` —
+ * `s.f{1}(k, :) = …`, `CF.(name).Monitor.Params{1} = …`, `[a.b, c(2)] = …` —
  * reached up the chain (a call's callee, a field chain's parts, the outputs'
  * list), never through an index's arguments, which are read.
  */
@@ -301,8 +302,8 @@ function isAssignmentTarget(node: SyntaxNode): boolean {
 
 /**
  * Whether a field chain is the middle of a longer one: the grammar reads
- * `AO.Q2.Setpoint.P{1}(6, :)` as `AO.(Q2.Setpoint.P{1})(6, :)`, so the inner
- * chain's head `Q2` is a field of `AO`, not a variable, a package or a class.
+ * `CF.Q2.Level.P{1}(6, :)` as `CF.(Q2.Level.P{1})(6, :)`, so the inner
+ * chain's head `Q2` is a field of `CF`, not a variable, a package or a class.
  */
 function isInnerChain(node: SyntaxNode): boolean {
   const call = node.parent;
@@ -718,13 +719,13 @@ const NO_INDEX_ARGS: ReadonlySet<string> = new Set(['string', 'handle_operator',
 /**
  * Whether `f(…)` reads as no index of an array, whatever a `load` made: a
  * statement of its own that passes arguments, or whose display a `;` turns
- * off (`hor_line(x, y)`, `floor92(50, 1);`: an index there would do nothing
+ * off (`hz_mark(x, y)`, `slab37(50, 1);`: an index there would do nothing
  * but show the value, which code leaves to a debugging session; a call for
  * its effect is what such a statement is), several outputs (`[a, b] =
  * f(x)`: an array's index gives one), or passing what no
- * array is indexed by — a text or a handle (`siglab('DataAbort')`, `g(@h)`),
+ * array is indexed by — a text or a handle (`sigtag('HaltFeed')`, `g(@h)`),
  * written so or as its record says (see MatlabCallArgs), a function, a cell,
- * or a struct the caller built (`ft_analysis(cfg)`).
+ * or a struct the caller built (`tk_analysis(cfg)`).
  */
 function readsAsCall(call: SyntaxNode, args: MatlabCallArgs | undefined): boolean {
   if (isStatement(call) && (call.nextSibling?.type === ';' || callArgs(call).length > 0)) return true;
@@ -922,7 +923,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   /**
    * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
    * class] — a capitalised callee that is no variable reads as a constructor.
-   * So does a bare `Cls` (`aa = ArchAppliance;`), the constructor called with
+   * So does a bare `Cls` (`aa = VaultStore;`), the constructor called with
    * no arguments. Not a built-in's name, either way (`x = NaN;`, `x = NaN(n,
    * 1)`, `e = MException(…)`): what it makes is MATLAB's, none of whose
    * methods is the project's.
@@ -1224,21 +1225,26 @@ function addRef(
   kind: 'calls' | 'function_ref' | 'extends' | 'imports',
   at: SyntaxNode,
   facts: MatlabRefFacts = {},
-  /** Where on `at`'s line the name starts, when not where `at` does. */
-  column = at.startPosition.column,
+  /** Where on `at`'s line the name starts, when not where `at` does; `anchored` for a name no text written at `at` spells (see unplacedRefs). */
+  column: number | 'anchored' = at.startPosition.column,
 ): void {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
   // A keyword is never a name (see hasMatlabKeywordPart).
   if (!fromNodeId || !name || hasMatlabKeywordPart(name)) return;
   const candidates = matlabRefCandidates(facts);
-  ctx.addUnresolvedReference({
+  const anchored = column === 'anchored';
+  const ref: UnresolvedReference = {
     fromNodeId,
     referenceName: name,
     referenceKind: kind,
-    line: at.startPosition.row + 1,
-    column,
+    line: (anchored ? at.endPosition.row : at.startPosition.row) + 1,
+    column: anchored ? at.endPosition.column : column,
     ...(candidates ? { candidates } : {}),
-  });
+  };
+  // A name no text written there spells, which a value gives (see anchoredRefs): placed once the file is walked.
+  if (anchored) unplacedRefs.add(ref);
+  ctx.addUnresolvedReference(ref);
+  if (anchored && codeDepth === 0) refPlaces.push(ref);
 }
 
 /**
@@ -1338,9 +1344,9 @@ function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: Syn
  * Only where the head says whose member it is: the
  * method's own object, a variable the function says holds a class, or a name
  * that is no variable (a class or a package). On any other variable it is a
- * struct's field far more often than a method of one class (`data.fsample`):
+ * struct's field far more often than a method of one class (`data.smprate`):
  * nothing. Nor deeper (`obj.p.m`, a property's value), nor in a statement the
- * parser could not read whole (text that is no code: `hs_err_pid30205.log`
+ * parser could not read whole (text that is no code: `core_dump_77413.log`
  * in a listing pasted into a file).
  */
 function bareMemberRef(node: SyntaxNode, head: string, member: string): (MemberRef & { at: SyntaxNode; bare: true }) | null {
@@ -1376,7 +1382,7 @@ function inUnreadStatement(node: SyntaxNode): boolean {
  * command `W20`; `5) @4:48, kicker off` a broken range and the command
  * `kicker`. But an `ERROR` that an unclosed bracket opens can run to the end
  * of the file, through lines that parse as statements of their own
- * (`soundtada;`, `t0 = gettime;`): those are code, and their line holds no
+ * (`soundchime;`, `t0 = getclock;`): those are code, and their line holds no
  * text of the error's own. A call written with its arguments (`f(x)`), a
  * handle (`@f`) and a dotted call stay wherever they are: code in a broken
  * file is still code.
@@ -1399,8 +1405,8 @@ function parseErrorRows(tree: Tree, source: string): Set<number> {
     for (let r = n.startPosition.row; r <= n.endPosition.row; r++) rows.add(r);
   };
   // The characters of an `ERROR` that none of its children covers, the ones
-  // it skipped (`data rates` in `correctors data rates (monrates)`): the
-  // lines of those that are neither blank nor a separator (`soundtada;`).
+  // it skipped (`data rates` in `correctors data rates (pollrates)`): the
+  // lines of those that are neither blank nor a separator (`soundchime;`).
   const skipped = (from: number, to: number, row: number): void => {
     for (let i = from; i < to; i++) {
       const c = source.charCodeAt(i);
@@ -1444,7 +1450,7 @@ function handleRef(node: SyntaxNode, source: string): MemberRef | null {
  * output) the superclass's constructor. `m(obj, …)` whose first argument the
  * code says is an object of a class (see dispatchClass and
  * argumentDispatchClass: `char(obj)`, `rne(robot, …)`, `area(c)` after `c =
- * Shape(…)`, `f(obj(k))`, `isjoint(e)` after `e = ets(i)`) is `Cls::m` with
+ * Shape(…)`, `f(obj(k))`, `isfixed(e)` after `e = ets(i)`) is `Cls::m` with
  * `dispatch` set: MATLAB takes the class's method when it
  * has one, behind the caller's own and imported functions and ahead of the
  * path — the resolver decides from the class. So is one whose first such
@@ -1534,7 +1540,7 @@ function runRef(holder: SyntaxNode | undefined, ctx: ExtractorContext, statement
     if (arg.type === 'string') return; // `run('')`
     for (const text of valueAt(arg, ctx.source).strs) {
       const m = /^([A-Za-z][A-Za-z0-9_]*)(?:\.[mM])?$/.exec(text);
-      if (m) addRef(ctx, m[1]!, 'calls', arg, { form: statement ? 'statement' : 'bare' });
+      if (m) addRef(ctx, m[1]!, 'calls', arg, { form: statement ? 'statement' : 'bare' }, 'anchored');
     }
     return;
   }
@@ -1712,7 +1718,7 @@ function valueAt(node: SyntaxNode, source: string): Val {
 /**
  * The names a walk may know the value of where they are passed (see
  * needsWalk): one written from a value (ScopeFacts.valued), or copied from
- * one so known or from a parameter (`r = regr`, `t = s.f`); a parameter
+ * one so known or from a parameter (`r = basisf`, `t = s.f`); a parameter
  * itself when it is assigned, or when something may set names unspelled.
  */
 function knownNames(facts: ScopeFacts, params: ReadonlySet<string>): Set<string> {
@@ -1824,7 +1830,7 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
         for (const text of v.strs) {
           if (!NAME_SHAPED.test(text) || (name === 'cellfun' && MATLAB_CELLFUN_NAMES.has(text))) continue;
           const f = namedRef(text.split('.'));
-          if (f) addRef(ctx, f.name, 'function_ref', arg, computedFact(f.name, computed));
+          if (f) addRef(ctx, f.name, 'function_ref', arg, computedFact(f.name, computed), computed ? 'anchored' : undefined);
         }
         break;
       case 'eval':
@@ -1876,9 +1882,11 @@ function computedFact(name: string, computed: boolean): MatlabRefFacts {
  */
 function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext, computed: boolean): void {
   const cls = dispatchClass(dispatchOn, ctx.source);
+  // A value's names (one of several a variable may hold, what `mfilename` returns) are no text written at `at`: anchored (see anchoredRefs).
+  const column = computed ? 'anchored' : undefined;
   const call = (f: FnVal): void => {
-    if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name });
-    else addRef(ctx, f.name, 'calls', at, { ...(f.variable ? { variable: f.variable } : {}), ...computedFact(f.name, computed) });
+    if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name }, column);
+    else addRef(ctx, f.name, 'calls', at, { ...(f.variable ? { variable: f.variable } : {}), ...computedFact(f.name, computed) }, column);
   };
   for (const text of strs) {
     const f = NAME_SHAPED.test(text) ? namedRef(text.split('.')) : null;
@@ -1909,10 +1917,11 @@ function withRuntimeNames(locals: ReadonlySet<string>, f: Frame): ReadonlySet<st
 
 /**
  * The references of code given as text, each string of it parsed and walked
- * as code (definitions in it aside), all at `at`, the argument that gives
- * it. `asValue` says the code is evaluated for a value (`x = eval('cfg')`),
- * where no statement runs a script. Code in code is read to MAX_CODE_DEPTH;
- * code the walk fails on gives nothing.
+ * as code (definitions in it aside), placed in the file as codeContext says
+ * from `at`, the argument that gives it. `asValue` says the code is
+ * evaluated for a value (`x = eval('cfg')`), where no statement runs a
+ * script. Code in code is read to MAX_CODE_DEPTH; code the walk fails on
+ * gives nothing.
  */
 function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContext, mode: CodeMode, asValue = false, computed = false): void {
   if (codeDepth >= MAX_CODE_DEPTH) return;
@@ -1938,7 +1947,8 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
       if (loads) f.loads = loads;
     }
     const refs: UnresolvedReference[] = [];
-    const sub = codeContext(ctx, text, at, { callback: mode === 'callback', runtime: !here, asValue, computed }, refs);
+    // The literals written where the code is given, when that is all it is: its references are placed in them.
+    const sub = codeContext(ctx, text, at, textPieces(at, code, ctx.source), { callback: mode === 'callback', runtime: !here, asValue, computed }, refs);
     const memo = arrayEvidenceMemo;
     const stem = fileStem;
     // Node ids are per tree: this one's must not meet the file's in the memo.
@@ -1957,8 +1967,137 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
       arrayEvidenceMemo = memo;
       fileStem = stem;
     }
-    for (const r of refs) ctx.addUnresolvedReference(r);
+    for (const r of refs) {
+      ctx.addUnresolvedReference(r);
+      if (codeDepth === 0 && unplacedRefs.has(r)) refPlaces.push(r);
+    }
   }
+}
+
+/**
+ * The references of a file whose name no text written in the file spells,
+ * in the order the walk wrote them, each still at its anchor (see
+ * unplacedRefs), while the file is walked (see inFile).
+ */
+let refPlaces: UnresolvedReference[] = [];
+
+/**
+ * The references placed at an anchor, not where a name is written: one of
+ * code given as text that is no literal (concatenated with a value, computed,
+ * read from a variable, one of several strings a variable may hold) or that
+ * a literal holds only across pieces, and a name a value gives a call
+ * (`feval(fn, …)`, `fh(x)`, `run(s)`, `str2func(s)`, `feval(mfilename, …)`).
+ * The anchor is where the code runs, or the call is made: the end of the
+ * argument that gives it (of the call, for `fh(x)`), after every reference
+ * of the argument's own code and before any after it. Code in code maps an
+ * anchor as it maps a place.
+ */
+const unplacedRefs = new WeakSet<UnresolvedReference>();
+
+/**
+ * Places the anchored references of a file (see unplacedRefs), once its walk
+ * is done: the k-th at an anchor goes to column `MATLAB_ANCHORED_BASE +
+ * anchor × MATLAB_ANCHORED_STRIDE + k` of the anchor's line. No line reaches
+ * such a column, so no reference written in the file is there, and two
+ * anchored references never share one: the store keeps one edge per source,
+ * target, kind, line and column, and two references at one place would be
+ * one edge, which a sync turns back into one row where a fresh index has
+ * two. The order code runs in reads such a place as its anchor
+ * (matlabPlaceOrder): after the argument's own code, before what follows it,
+ * and in the walk's order among themselves. The rule reads the file alone,
+ * so a fresh index and a sync, which both extract the whole file, place the
+ * references alike. The references were handed to the file's context as they
+ * are, which keeps them (see TreeSitterExtractor's context): they move in
+ * place.
+ */
+function placeTextRefs(): void {
+  const next = new Map<string, number>();
+  for (const ref of refPlaces) {
+    const key = `${ref.line}:${ref.column}`;
+    const k = next.get(key) ?? 0;
+    next.set(key, k + 1);
+    ref.column = MATLAB_ANCHORED_BASE + ref.column * MATLAB_ANCHORED_STRIDE + k;
+  }
+}
+
+/**
+ * A string literal written where code is given, holding the code's text from
+ * its character `offset` on: `text`, written `quote…quote` at `line` and
+ * `column` (its opening quote).
+ */
+interface TextPiece {
+  text: string;
+  offset: number;
+  line: number;
+  column: number;
+  quote: string;
+}
+
+/**
+ * The literals the argument `at` writes `code` in, when that is all it is:
+ * one literal (`'f; g'`, `"f; g"`), or a row of char literals concatenated
+ * (`['disp(1); ' 'mkvars']`, over continued lines too). Null for anything
+ * else (a value, a call, a piece that is a string object, which makes a
+ * string array, not one text).
+ */
+function textPieces(at: SyntaxNode, code: string, source: string): TextPiece[] | null {
+  const piece = (node: SyntaxNode, offset: number): TextPiece | null => {
+    const text = stringLiteral(node, source);
+    return text === null ? null : { text, offset, line: node.startPosition.row + 1, column: node.startPosition.column, quote: source[node.startIndex]! };
+  };
+  if (at.type === 'string') {
+    const one = piece(at, 0);
+    return one && one.text === code ? [one] : null;
+  }
+  const rows = at.type === 'matrix' ? namedChildren(at).filter((c) => c.type !== 'comment' && c.type !== 'line_continuation') : [];
+  if (rows.length !== 1 || rows[0]!.type !== 'row') return null;
+  const pieces: TextPiece[] = [];
+  let offset = 0;
+  for (const c of namedChildren(rows[0]!)) {
+    if (c.type === 'comment' || c.type === 'line_continuation') continue;
+    const p = c.type === 'string' && source[c.startIndex] === "'" ? piece(c, offset) : null;
+    if (!p) return null;
+    pieces.push(p);
+    offset += p.text.length;
+  }
+  return pieces.length > 0 && pieces.map((p) => p.text).join('') === code ? pieces : null;
+}
+
+/** How many characters the name written at `column` of the code's line `line` takes (`f`, `pkg.f`, `@f`), at least one. */
+function writtenNameLength(code: string, line: number, column: number): number {
+  const text = code.split('\n')[line - 1] ?? '';
+  return /^@?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/.exec(text.slice(column))?.[0].length ?? 1;
+}
+
+/**
+ * Where in the file the place `column` of the code's line `line` is written,
+ * when the code is `pieces` and the `length` characters from there are all in
+ * one of them: a quote of the text is written twice (`''`, or `""` in a
+ * string). A length of 0 (an anchor) may also be a piece's end, its closing
+ * quote. Null otherwise (a literal holds one line, and a name may be built
+ * across pieces).
+ */
+function piecePlace(pieces: readonly TextPiece[], line: number, column: number, length: number): { line: number; column: number } | null {
+  if (line !== 1) return null;
+  for (const p of pieces) {
+    const from = column - p.offset;
+    if (from < 0 || from + length > p.text.length || (length > 0 && from >= p.text.length)) continue;
+    let at = 1;
+    for (let i = 0; i < from; i++) at += p.text[i] === p.quote ? 2 : 1;
+    return { line: p.line, column: p.column + at };
+  }
+  return null;
+}
+
+/**
+ * `candidates` with the fact `tag` added before the `args` fact, which comes
+ * last in every reference's candidates (see matlabRefCandidates): an edge
+ * keeps `args` apart and puts it back last (joinMatlabArgs), so a reference
+ * a sync turns back from an edge lists its facts as its row did.
+ */
+function withFact(candidates: readonly string[], tag: string): string[] {
+  const at = candidates.findIndex(isMatlabArgsCandidate);
+  return at < 0 ? [...candidates, tag] : [...candidates.slice(0, at), tag, ...candidates.slice(at)];
 }
 
 /** What code given as text defines is nobody's: no symbol of the file. */
@@ -1979,12 +2118,18 @@ interface CodeRefStyle {
 /**
  * The context code given as text is walked in: the visitor's own, over the
  * code's tree. It defines nothing; its references are the enclosing scope's,
- * at `at`'s place in the file, styled as `style` says, and gathered in
- * `sink`; one whose name holds a part nothing here knows is dropped.
+ * styled as `style` says, and gathered in `sink`; one whose name holds a part
+ * nothing here knows is dropped. Each comes in at its place in the code's
+ * text (`source`) and leaves at its place in the code around `at`, the
+ * argument that gives the code, so that no two of one file share a place:
+ * when the argument is `pieces`, the literals that write the code, where its
+ * name is written in them; otherwise, and for a name built across pieces, it
+ * is anchored at the argument's end (see unplacedRefs). Code in code maps
+ * level by level, each from its text to the code around it, an anchor as a
+ * place.
  */
-function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, style: CodeRefStyle, sink: UnresolvedReference[]): ExtractorContext {
-  const line = at.startPosition.row + 1;
-  const column = at.startPosition.column;
+function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, pieces: readonly TextPiece[] | null, style: CodeRefStyle, sink: UnresolvedReference[]): ExtractorContext {
+  const anchor = { line: at.endPosition.row + 1, column: at.endPosition.column };
   const sub: ExtractorContext = {
     createNode: () => null,
     visitNode: (n) => {
@@ -1998,9 +2143,12 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, st
       let candidates = (ref.candidates ?? []).filter((c) => !(isMatlabArgsCandidate(c) && c.includes(PLACEHOLDER)));
       if (ref.referenceName.includes(PLACEHOLDER) || candidates.some((c) => c.includes(PLACEHOLDER))) return;
       if (style.asValue) candidates = candidates.map((c) => (c === 'statement' ? 'bare' : c));
-      if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = [...candidates, RUNTIME_TAG];
-      if (style.computed && isDottedName(ref.referenceName) && !candidates.includes(COMPUTED_TAG)) candidates = [...candidates, COMPUTED_TAG];
-      const out: UnresolvedReference = { ...ref, line, column };
+      if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = withFact(candidates, RUNTIME_TAG);
+      if (style.computed && isDottedName(ref.referenceName) && !candidates.includes(COMPUTED_TAG)) candidates = withFact(candidates, COMPUTED_TAG);
+      const anchored = unplacedRefs.has(ref);
+      const place = pieces && piecePlace(pieces, ref.line, ref.column, anchored ? 0 : writtenNameLength(source, ref.line, ref.column));
+      const out: UnresolvedReference = { ...ref, ...(place ?? anchor) };
+      if (!place || anchored) unplacedRefs.add(out);
       if (candidates.length > 0) out.candidates = candidates;
       else delete out.candidates;
       if (style.callback && ref.referenceKind === 'calls') out.referenceKind = 'function_ref';
@@ -2128,8 +2276,8 @@ interface SinkUse {
 
 /**
  * A place where a function does with a value its caller passed what it would
- * do with a literal written there (`feval(regr, S)`, `str2func(varargin{1})`,
- * `eval(code)`, `fh(x)`, `feval(['ft_' method], …)`): which parameter (and
+ * do with a literal written there (`feval(basisf, S)`, `str2func(varargin{1})`,
+ * `eval(code)`, `fh(x)`, `feval(['tk_' method], …)`): which parameter (and
  * field of it), the text around it, and where.
  */
 export interface MatlabParamSink extends SinkUse {
@@ -2137,12 +2285,12 @@ export interface MatlabParamSink extends SinkUse {
   readonly fn: string;
   /** The parameter's position (a variadic one counts on from the positional ones). */
   readonly position: number;
-  /** The fields read off it (`cfg.winfunc` → [winfunc]). */
+  /** The fields read off it (`cfg.taperfn` → [taperfn]). */
   readonly path: readonly string[];
-  /** The text before and after it, for a template (`ft_` and ``); '' and '' for the value as it is. */
+  /** The text before and after it, for a template (`tk_` and ``); '' and '' for the value as it is. */
   readonly prefix: string;
   readonly suffix: string;
-  /** The parameter as the code names it: `regr`, `varargin{1}`, `cfg.winfunc`. */
+  /** The parameter as the code names it: `basisf`, `varargin{1}`, `cfg.taperfn`. */
   readonly param: string;
   /** Where the reference a literal would make is (1-based line). */
   readonly line: number;
@@ -2527,11 +2675,8 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   const attrsNode = leadingAttributes(node);
 
   const supers = children.find((c) => c.type === 'superclasses');
-  const bases = supers
-    ? namedChildren(supers)
-        .filter((c) => c.type === 'property_name' && !namedChildren(c).some(isCutName))
-        .map((c) => namedChildren(c).map((i) => getNodeText(i, source)).join('.'))
-    : [];
+  const baseNodes = supers ? namedChildren(supers).filter((c) => c.type === 'property_name' && !namedChildren(c).some(isCutName)) : [];
+  const bases = baseNodes.map((c) => namedChildren(c).map((i) => getNodeText(i, source)).join('.'));
   // Written from the AST, so a superclass list over several lines (with
   // `...` continuations and comments) reads `classdef X < A & B` — the
   // resolver finds inherited methods through it.
@@ -2555,9 +2700,10 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   const classFrame: Frame = { kind: 'class', qual, locals: EMPTY, classHints: NO_HINTS, structFields: EMPTY, self: null, parent: null };
   ctx.pushScope(cls.id);
   inFrame(classFrame, () => {
-    for (const base of bases) {
-      if (!BUILTIN_BASES.test(base)) addRef(ctx, base.replace(/\./g, '::'), 'extends', supers!);
-    }
+    // Each at its own name: two references of one file at one place would be one edge (see codeContext).
+    bases.forEach((base, i) => {
+      if (!BUILTIN_BASES.test(base)) addRef(ctx, base.replace(/\./g, '::'), 'extends', baseNodes[i]!);
+    });
     for (const section of children) {
       if (section.type === 'properties') {
         const sectionAttrs = attributesOf(section, source);
@@ -2625,8 +2771,11 @@ function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () 
   fileStem = matlabFileStem(filePath);
   classFile = matlabPathScope(filePath).classFolder !== undefined && !namedChildren(root).some((c) => c.type === 'class_definition');
   try {
-    return body();
+    const out = body();
+    placeTextRefs();
+    return out;
   } finally {
+    refPlaces = [];
     javaImported = EMPTY;
     arrayEvidenceMemo = new Map();
     fileStem = null;
@@ -2776,7 +2925,7 @@ export const matlabExtractor: LanguageExtractor = {
       }
 
       case 'field_expression': {
-        // `s.f(k) = …` writes a field; `Q2.Setpoint.P` in `AO.Q2.Setpoint.P{1}(6, :)` is no chain of its own.
+        // `s.f(k) = …` writes a field; `Q2.Level.P` in `CF.Q2.Level.P{1}(6, :)` is no chain of its own.
         if (isAssignmentTarget(node) || isInnerChain(node)) return false;
         const ref = fieldChainRef(node, source);
         const head = childField(node, 'object');

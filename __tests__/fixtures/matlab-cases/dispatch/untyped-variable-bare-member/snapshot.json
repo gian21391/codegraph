@@ -1,8 +1,8 @@
 {
   "index": {
     "edges": [
-      "use.m use -calls-> Meas::rate @ Meas.m",
-      "use.m use -instantiates-> Meas @ Meas.m"
+      "use.m use -calls-> Kalib::rate @ Kalib.m",
+      "use.m use -instantiates-> Kalib @ Kalib.m"
     ],
     "rows": [],
     "dormant": []

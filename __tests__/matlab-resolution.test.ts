@@ -207,12 +207,12 @@ describe('MATLAB symbols are out of reach of other languages', () => {
   beforeAll(async () => {
     root = tempDir('cg-matlab-gate-');
     writeTree(root, {
-      'matlab/compute_stats.m': 'function s = compute_stats(x)\n    s = normalize_rows(x);\nend\n',
-      'matlab/normalize_rows.m': 'function out = normalize_rows(M)\n    out = M ./ sum(M, 2);\nend\n',
+      'matlab/compute_stats.m': 'function s = compute_stats(x)\n    s = scale_rows(x);\nend\n',
+      'matlab/scale_rows.m': 'function out = scale_rows(M)\n    out = M ./ sum(M, 2);\nend\n',
       'matlab/Color.m': 'classdef Color\n    enumeration\n        String, Red\n    end\nend\n',
-      'py/run.py': 'def main():\n    a = normalize_rows([[1, 2]])\n    b = compute_stats(1)\n    return a, b\n',
-      'js/app.js': 'function main() {\n  const a = normalize_rows([[1, 2]]);\n  return compute_stats(a);\n}\n',
-      'c/mex.c': '#include <stdio.h>\nint main(void) {\n    normalize_rows(0);\n    compute_stats(1);\n    return 0;\n}\n',
+      'py/run.py': 'def main():\n    a = scale_rows([[1, 2]])\n    b = compute_stats(1)\n    return a, b\n',
+      'js/app.js': 'function main() {\n  const a = scale_rows([[1, 2]]);\n  return compute_stats(a);\n}\n',
+      'c/mex.c': '#include <stdio.h>\nint main(void) {\n    scale_rows(0);\n    compute_stats(1);\n    return 0;\n}\n',
       'objc/Thing.m': '#import <Foundation/Foundation.h>\n@implementation Thing\n- (void)go {\n    compute_stats(2);\n}\n@end\n',
       'java/Element.java': 'package x;\npublic class Element {\n    public Object make(byte[] b) {\n        return new String(b);\n    }\n}\n',
       // A Django + FastAPI project: their name lookups must not reach a MATLAB
@@ -235,7 +235,7 @@ describe('MATLAB symbols are out of reach of other languages', () => {
     // Java's `new String(b)` is java.lang.String, not the MATLAB enum member.
     expect(allEdges(cg)).toEqual([
       'api/main.py api/main.py::GET:/ -references-> root @ api/main.py',
-      'matlab/compute_stats.m compute_stats -calls-> normalize_rows @ matlab/normalize_rows.m',
+      'matlab/compute_stats.m compute_stats -calls-> scale_rows @ matlab/scale_rows.m',
       'matlab/tool.m tool -calls-> get_settings @ matlab/tool.m',
     ]);
   });
@@ -593,14 +593,14 @@ describe('MATLAB function precedence', () => {
   it('links a class-folder method to its method file, not the classdef\'s declaration of it', async () => {
     // `p.origin()` on a parameter: origin is Static (on the declaration), so no object calls it.
     expect(await edgesOfProject({
-      '+geo/@Pt/Pt.m': 'classdef Pt\n    properties\n        x\n    end\n    methods\n        function obj = Pt(x)\n            obj.x = x;\n        end\n        d = norm2(obj)\n    end\n    methods (Static)\n        p = origin()\n    end\nend\n',
-      '+geo/@Pt/norm2.m': 'function d = norm2(obj)\nd = obj.x;\nend\n',
+      '+geo/@Pt/Pt.m': 'classdef Pt\n    properties\n        x\n    end\n    methods\n        function obj = Pt(x)\n            obj.x = x;\n        end\n        d = magsq(obj)\n    end\n    methods (Static)\n        p = origin()\n    end\nend\n',
+      '+geo/@Pt/magsq.m': 'function d = magsq(obj)\nd = obj.x;\nend\n',
       '+geo/@Pt/origin.m': 'function p = origin()\np = geo.Pt(0);\nend\n',
-      'user.m': 'function user(p)\nq = geo.Pt(1);\nq.norm2();\ngeo.Pt.origin();\np.norm2();\np.origin();\nend\n',
+      'user.m': 'function user(p)\nq = geo.Pt(1);\nq.magsq();\ngeo.Pt.origin();\np.magsq();\np.origin();\nend\n',
     })).toEqual([
       '+geo/@Pt/origin.m geo::Pt::origin -instantiates-> geo::Pt @ +geo/@Pt/Pt.m',
-      'user.m user -calls-> geo::Pt::norm2 @ +geo/@Pt/norm2.m',
-      'user.m user -calls-> geo::Pt::norm2 @ +geo/@Pt/norm2.m',
+      'user.m user -calls-> geo::Pt::magsq @ +geo/@Pt/magsq.m',
+      'user.m user -calls-> geo::Pt::magsq @ +geo/@Pt/magsq.m',
       'user.m user -calls-> geo::Pt::origin @ +geo/@Pt/origin.m',
       'user.m user -instantiates-> geo::Pt @ +geo/@Pt/Pt.m',
     ]);
@@ -683,23 +683,23 @@ describe('MATLAB function precedence', () => {
 
   it('dispatches set/get on an object of a class-folder class to its method files, and keeps no row for another call of a built-in', async () => {
     const { edges, unresolved } = await indexOfProject({
-      '@AccObj/AccObj.m': 'function obj = AccObj(v)\nobj.v = v;\nobj = class(obj, \'AccObj\');\nend\n',
-      '@AccObj/set.m': 'function obj = set(obj, name, v)\nend\n',
-      '@AccObj/get.m': 'function v = get(obj, name)\nv = 1;\nend\n',
+      '@AcmeObj/AcmeObj.m': 'function obj = AcmeObj(v)\nobj.v = v;\nobj = class(obj, \'AcmeObj\');\nend\n',
+      '@AcmeObj/set.m': 'function obj = set(obj, name, v)\nend\n',
+      '@AcmeObj/get.m': 'function v = get(obj, name)\nv = 1;\nend\n',
       // On its own object, inside a method file.
-      '@AccObj/bump.m': 'function obj = bump(obj)\nobj = set(obj, \'v\', 2);\nend\n',
+      '@AcmeObj/bump.m': 'function obj = bump(obj)\nobj = set(obj, \'v\', 2);\nend\n',
       // `set(h, …)` on a parameter, `plot`, `uicontrol`, `strtrim`, `fclose`: the built-ins, which leave no row.
-      'useAcc.m': 'function useAcc(h, fid)\na = AccObj(1);\na = set(a, \'v\', 2);\nv = get(a, \'v\');\nset(h, \'Visible\', \'off\');\nplot(1:3);\nuicontrol(\'Style\', \'text\');\ns = strtrim(\' x \');\nfclose(fid);\nnotdefined(h);\nend\n',
+      'useAcc.m': 'function useAcc(h, fid)\na = AcmeObj(1);\na = set(a, \'v\', 2);\nv = get(a, \'v\');\nset(h, \'Visible\', \'off\');\nplot(1:3);\nuicontrol(\'Style\', \'text\');\ns = strtrim(\' x \');\nfclose(fid);\nnotdefined(h);\nend\n',
     });
     expect(edges.filter((e) => e.includes(' -calls-> '))).toEqual([
-      '@AccObj/bump.m AccObj::bump -calls-> AccObj::set @ @AccObj/set.m',
-      'useAcc.m useAcc -calls-> AccObj::get @ @AccObj/get.m',
-      'useAcc.m useAcc -calls-> AccObj::set @ @AccObj/set.m',
+      '@AcmeObj/bump.m AcmeObj::bump -calls-> AcmeObj::set @ @AcmeObj/set.m',
+      'useAcc.m useAcc -calls-> AcmeObj::get @ @AcmeObj/get.m',
+      'useAcc.m useAcc -calls-> AcmeObj::set @ @AcmeObj/set.m',
     ]);
-    // `AccObj(1)` instantiates the old-style class. What resolves to nothing and is no call of a
+    // `AcmeObj(1)` instantiates the old-style class. What resolves to nothing and is no call of a
     // built-in's name is kept, for a later sync to retry. `class(obj, …)` on the method's own object
-    // is `AccObj::class`, which AccObj does not define and no symbol is named: the built-in's, no row either.
-    expect(edges.filter((e) => e.includes(' -instantiates-> '))).toEqual(['useAcc.m useAcc -instantiates-> AccObj @ @AccObj/AccObj.m']);
+    // is `AcmeObj::class`, which AcmeObj does not define and no symbol is named: the built-in's, no row either.
+    expect(edges.filter((e) => e.includes(' -instantiates-> '))).toEqual(['useAcc.m useAcc -instantiates-> AcmeObj @ @AcmeObj/AcmeObj.m']);
     expect(unresolved).toEqual(['useAcc.m:10 calls:notdefined']);
   });
 
@@ -712,14 +712,14 @@ describe('MATLAB function precedence', () => {
       'useStats.m': 'function useStats(x)\np = normpdf(x);\nc = strsplit(\'a b\');\ny = prctile(x, 50);\nplot(x);\nend\n',
       // A private function shadows the path one, from beside it only.
       'lib/private/normpdf.m': 'function p = normpdf(x)\np = 0;\nend\n',
-      'lib/useP.m': 'function useP(x)\np = normpdf(x);\nend\n',
+      'lib/useK.m': 'function useK(x)\np = normpdf(x);\nend\n',
       // The file's own `grid`, and `pause.m` shipped as a project's own (a deployed toolbox's copy).
       'useGrid.m': 'function useGrid()\ng = grid(3);\nhold on\nend\nfunction g = grid(n)\ng = n;\nend\n',
       'pause.m': 'function pause(t)\nend\n',
       'usePause.m': 'function usePause()\npause(1);\nend\n',
     });
     expect(edges).toEqual([
-      'lib/useP.m useP -calls-> normpdf @ lib/private/normpdf.m',
+      'lib/useK.m useK -calls-> normpdf @ lib/private/normpdf.m',
       'useGrid.m useGrid -calls-> grid @ useGrid.m',
       'usePause.m usePause -calls-> pause @ pause.m',
       'useStats.m useStats -calls-> normpdf @ normpdf.m',
@@ -940,34 +940,34 @@ describe('MATLAB scripts run by name', () => {
 });
 
 describe('MATLAB stubs: the help text of a MEX function', () => {
-  // `lcaGet.m` beside the `lcaGet.mexa64` the index never reads: comments
+  // `chanGet.m` beside the `chanGet.mexa64` the index never reads: comments
   // only. A call of its name links to its file, the help being what the call
   // reaches, when nothing else answers it.
   const HELP = (name: string): string => `% ${name.toUpperCase()}  help for a MEX function\n%   v = ${name}(pv)\n`;
 
   it('links a call with arguments, an assigned call, a statement, command syntax and a handle of its name to its file', async () => {
     const { edges, unresolved } = await indexOfProject({
-      'mex/lcaGet.m': HELP('lcaGet'),
-      'mex/lcaPut.m': HELP('lcaPut'),
+      'mex/chanGet.m': HELP('chanGet'),
+      'mex/chanPut.m': HELP('chanPut'),
       // A block comment, a blank line and a line comment: no statement either.
-      'mex/lcaClear.m': '%{\nLCACLEAR  help\n%}\n\n% more help\n',
+      'mex/chanClear.m': '%{\nCHANCLEAR  help\n%}\n\n% more help\n',
       'main.m': [
         'function main(pv)',
-        'lcaGet(pv);',
-        'v = lcaGet(pv, 0, "double");',
-        'lcaClear',
-        'lcaPut myPV 1',
-        'h = @lcaGet;',
+        'chanGet(pv);',
+        'v = chanGet(pv, 0, "double");',
+        'chanClear',
+        'chanPut myLink 1',
+        'h = @chanGet;',
         'end',
         '',
       ].join('\n'),
     });
     expect(edges).toEqual([
-      'main.m main -calls-> mex/lcaClear.m @ mex/lcaClear.m',
-      'main.m main -calls-> mex/lcaGet.m @ mex/lcaGet.m',
-      'main.m main -calls-> mex/lcaGet.m @ mex/lcaGet.m',
-      'main.m main -calls-> mex/lcaPut.m @ mex/lcaPut.m',
-      'main.m main -references-> mex/lcaGet.m @ mex/lcaGet.m',
+      'main.m main -calls-> mex/chanClear.m @ mex/chanClear.m',
+      'main.m main -calls-> mex/chanGet.m @ mex/chanGet.m',
+      'main.m main -calls-> mex/chanGet.m @ mex/chanGet.m',
+      'main.m main -calls-> mex/chanPut.m @ mex/chanPut.m',
+      'main.m main -references-> mex/chanGet.m @ mex/chanGet.m',
     ]);
     expect(unresolved).toEqual([]);
   });
@@ -1005,7 +1005,7 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
     const { edges, unresolved, dormant } = await indexOfProject({
       'help/input.m': HELP('input'),
       'oct/octstub.m': '## OCTSTUB  help in Octave\n## more help\n',
-      'bin/binstub.m': 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 encrypted\n',
+      'bin/binstub.m': 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000\u0087 encrypted\n',
       '+pkg/pkgstub.m': HELP('pkgstub'),
       '@Cls/clsstub.m': HELP('clsstub'),
       'lib/private/privstub.m': HELP('privstub'),
@@ -1065,11 +1065,11 @@ describe('MATLAB old-style classes', () => {
     const { edges, members, unresolved } = await indexOfProject({
       '@Poly/Poly.m': "function p = Poly(c)\np.c = c;\np = class(p, 'Poly');\nend\n",
       '@Poly/value.m': 'function v = value(p, x)\nv = x;\nend\n',
-      // `TPS.m` in `@tps` is a method of `tps`, not a constructor: no class.
-      '@tps/TPS.m': 'function t = TPS(x)\nt = x;\nend\n',
+      // `GMAP.m` in `@gmap` is a method of `gmap`, not a constructor: no class.
+      '@gmap/GMAP.m': 'function t = GMAP(x)\nt = x;\nend\n',
       // Methods of a built-in type: no constructor, no class.
       '@double/twice.m': 'function y = twice(x)\ny = 2 * x;\nend\n',
-      'use.m': 'function use()\np = Poly([1 2]);\nh = @Poly;\nv = value(p, 3);\nq = Poly;\nt = TPS(1);\nend\n',
+      'use.m': 'function use()\np = Poly([1 2]);\nh = @Poly;\nv = value(p, 3);\nq = Poly;\nt = GMAP(1);\nend\n',
     });
     expect(edges).toEqual([
       'use.m use -calls-> Poly::value @ @Poly/value.m',
@@ -1081,7 +1081,7 @@ describe('MATLAB old-style classes', () => {
       'Poly > Poly::Poly @ @Poly/Poly.m',
       'Poly > Poly::value @ @Poly/value.m',
     ]);
-    expect(unresolved).toEqual(['use.m:6 calls:TPS']);
+    expect(unresolved).toEqual(['use.m:6 calls:GMAP']);
   });
 });
 
@@ -1091,9 +1091,9 @@ describe('MATLAB methods on a variable', () => {
     const cls = (name: string, base: string, ...methods: string[]) =>
       `classdef ${name} < ${base}\n    methods\n${methods.map(method).join('')}    end\nend\n`;
     const { edges, unresolved } = await indexOfProject({
-      'PROBLEM.m': cls('PROBLEM', 'handle', 'CalObj'),
-      'ZDT1.m': cls('ZDT1', 'PROBLEM', 'CalObj'),
-      'ZDT2.m': cls('ZDT2', 'ZDT1', 'CalObj'),
+      'PROBLEM.m': cls('PROBLEM', 'handle', 'ScoreAll'),
+      'PRB1.m': cls('PRB1', 'PROBLEM', 'ScoreAll'),
+      'PRB2.m': cls('PRB2', 'PRB1', 'ScoreAll'),
       // Two unrelated classes define Evaluate, and two getData.
       'Alg.m': cls('Alg', 'handle', 'Evaluate'),
       'Other.m': cls('Other', 'handle', 'Evaluate'),
@@ -1103,7 +1103,7 @@ describe('MATLAB methods on a variable', () => {
       'Expr.m': cls('Expr', 'handle', 'simplify'),
       'run_alg.m': [
         'function run_alg(Problem, A, e)',
-        'y = Problem.CalObj(1);', // PROBLEM or a subclass: PROBLEM's
+        'y = Problem.ScoreAll(1);', // PROBLEM or a subclass: PROBLEM's
         'z = A.Evaluate(1);', // Alg's or Other's: none
         'aa = Archive;', // the constructor, without parentheses
         'd = aa.getData(2);',
@@ -1114,12 +1114,12 @@ describe('MATLAB methods on a variable', () => {
     });
     expect(edges).toEqual([
       // The overrides, from the base's (see matlab-dispatch.test.ts).
-      'PROBLEM.m PROBLEM::CalObj -calls-> ZDT1::CalObj @ ZDT1.m',
-      'ZDT1.m ZDT1 -extends-> PROBLEM @ PROBLEM.m',
-      'ZDT1.m ZDT1::CalObj -calls-> ZDT2::CalObj @ ZDT2.m',
-      'ZDT2.m ZDT2 -extends-> ZDT1 @ ZDT1.m',
+      'PRB1.m PRB1 -extends-> PROBLEM @ PROBLEM.m',
+      'PRB1.m PRB1::ScoreAll -calls-> PRB2::ScoreAll @ PRB2.m',
+      'PRB2.m PRB2 -extends-> PRB1 @ PRB1.m',
+      'PROBLEM.m PROBLEM::ScoreAll -calls-> PRB1::ScoreAll @ PRB1.m',
       'run_alg.m run_alg -calls-> Archive::getData @ Archive.m',
-      'run_alg.m run_alg -calls-> PROBLEM::CalObj @ PROBLEM.m',
+      'run_alg.m run_alg -calls-> PROBLEM::ScoreAll @ PROBLEM.m',
       'run_alg.m run_alg -instantiates-> Archive @ Archive.m',
     ]);
     expect(unresolved).toEqual(['run_alg.m:3 calls:A.Evaluate', 'run_alg.m:6 calls:simplify']);
@@ -1211,35 +1211,35 @@ describe('MATLAB names matched with their case', () => {
   it('links no call when a file of the name in another case is nearer than the nearest exact match', async () => {
     const cls = (name: string) => `classdef ${name} < handle\n    methods\n        function obj = ${name}(x)\n        end\n    end\nend\n`;
     const { edges } = await indexOfProject({
-      // `TPS.m` in `@tps` is a method of `tps`; the class `TPS` is another toolbox's.
-      'peace/@tps/TPS.m': 'function t = TPS(x)\nt = x;\nend\n',
-      'peace/use.m': 'function use()\nt = TPS(1);\nend\n',
-      'portmann/@TPS/TPS.m': cls('TPS'),
-      'portmann/near.m': 'function near()\nt = TPS(1);\nend\n',
-      // `FindCells.m` beside the caller; `findcells.m` in another copy.
-      'at1/FindCells.m': 'function i = FindCells(r)\ni = r;\nend\n',
-      'at1/ring.m': 'function ring(r)\ni = findcells(r);\nend\n',
-      'at2/findcells.m': 'function i = findcells(r)\ni = r;\nend\n',
+      // `GMAP.m` in `@gmap` is a method of `gmap`; the class `GMAP` is another toolbox's.
+      'peace/@gmap/GMAP.m': 'function t = GMAP(x)\nt = x;\nend\n',
+      'peace/use.m': 'function use()\nt = GMAP(1);\nend\n',
+      'jdoe/@GMAP/GMAP.m': cls('GMAP'),
+      'jdoe/near.m': 'function near()\nt = GMAP(1);\nend\n',
+      // `FindSlots.m` beside the caller; `findslots.m` in another copy.
+      'at1/FindSlots.m': 'function i = FindSlots(r)\ni = r;\nend\n',
+      'at1/ring.m': 'function ring(r)\ni = findslots(r);\nend\n',
+      'at2/findslots.m': 'function i = findslots(r)\ni = r;\nend\n',
       // Exact nearer than the other case: linked.
-      'at2/sub/lat.m': 'function lat(r)\ni = findcells(r);\nend\n',
-      'at2/lat2.m': 'function lat2(r)\ni = findcells(r);\nend\n',
+      'at2/sub/lat.m': 'function lat(r)\ni = findslots(r);\nend\n',
+      'at2/lat2.m': 'function lat2(r)\ni = findslots(r);\nend\n',
       // A script in another case beside the caller.
       'p/Setup.m': 'x = 1;\n',
       'p/go.m': 'function go()\nsetup\nend\n',
       'q/setup.m': 'y = 2;\n',
       'q/go2.m': 'function go2()\nsetup\nend\n',
       // The help text of a MEX function beside the caller's folder.
-      'at0/RingPass.m': '% RINGPASS is a mex function built from RingPass.c\n',
-      'at0/sub/track.m': 'function track(r)\nringpass(r);\nend\n',
-      'at3/ringpass.m': 'function ringpass(r)\nend\n',
-      // A method of `tps` calling `tps`: its folder's constructor-shaped file is `TPS.m`.
-      'peace/@tps/vps.m': 'function v = vps(t)\nv = tps(1);\nend\n',
-      'far/@tps/tps.m': "function t = tps(x)\nt = class(struct('x', x), 'tps');\nend\n",
+      'at0/LoopStep.m': '% LOOPSTEP  compiled from LoopStep.c; its help lives here\n',
+      'at0/sub/track.m': 'function track(r)\nloopstep(r);\nend\n',
+      'at3/loopstep.m': 'function loopstep(r)\nend\n',
+      // A method of `gmap` calling `gmap`: its folder's constructor-shaped file is `GMAP.m`.
+      'peace/@gmap/vstep.m': 'function v = vstep(t)\nv = gmap(1);\nend\n',
+      'far/@gmap/gmap.m': "function t = gmap(x)\nt = class(struct('x', x), 'gmap');\nend\n",
     });
     expect(edges).toEqual([
-      'at2/lat2.m lat2 -calls-> findcells @ at2/findcells.m',
-      'at2/sub/lat.m lat -calls-> findcells @ at2/findcells.m',
-      'portmann/near.m near -instantiates-> TPS @ portmann/@TPS/TPS.m',
+      'at2/lat2.m lat2 -calls-> findslots @ at2/findslots.m',
+      'at2/sub/lat.m lat -calls-> findslots @ at2/findslots.m',
+      'jdoe/near.m near -instantiates-> GMAP @ jdoe/@GMAP/GMAP.m',
       'q/go2.m go2 -calls-> q/setup.m @ q/setup.m',
     ]);
   });
@@ -1263,7 +1263,7 @@ describe('MATLAB unresolved rows', () => {
         'w = cfgval;', // a bare read nothing defines: none
         'g = gain;', // one a property carries: kept
         'h = pyhelper;',
-        'q = tango_read_attribute(aa);', // an outside call: kept
+        'q = dev_read_attr(aa);', // an outside call: kept
         'pkg.missing(1);', // a package path nothing defines: none
         'setup_paths', // the script: linked to its file
         'other_cmd on', // a command nothing defines: none
@@ -1292,7 +1292,7 @@ describe('MATLAB unresolved rows', () => {
         'user.m:2 calls:aa.getData',
         'user.m:5 calls:gain',
         'user.m:6 calls:pyhelper',
-        'user.m:7 calls:tango_read_attribute',
+        'user.m:7 calls:dev_read_attr',
       ]);
       // What the dead-code check sees: every name a symbol carries still has its rows.
       expect([...cg.getUnresolvedNamesAmong(['getData', 'gain', 'value', 'cfgval', 'missing'])].sort()).toEqual(['gain', 'getData']);
@@ -1452,12 +1452,12 @@ describe('MATLAB unresolved rows', () => {
 });
 
 describe('MATLAB\'s names that are only methods of its classes are no built-ins', () => {
-  // physbase-style: the startup's aoinit adds tools/ with '-end'. MATLAB has no
+  // The startup's cfginit adds tools/ with '-end'. MATLAB has no
   // function `update`, `setup`, `time`, `add`, `keys` or `read` (only methods
   // of its classes), so MATLAB runs the project's copies wherever the path
   // puts them, MEX help stubs included.
-  const AOINIT = (where: string): string =>
-    `function aoinit\nDirectory = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'tools');\nif exist(Directory, 'dir')\n    addpath(Directory, '${where}');\nend\nend\n`;
+  const CFGINIT = (where: string): string =>
+    `function cfginit\nDirectory = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'tools');\nif exist(Directory, 'dir')\n    addpath(Directory, '${where}');\nend\nend\n`;
   const F1: Record<string, string> = {
     'app/main.m': "function main()\nupdate(1);\nsetup('for', 'users');\nt = time(3);\nr = add(1, 2);\nk = keys(7);\nd = read('f.bin');\nend\n",
     'tools/update.m': 'function update(x)\ndisp(x);\nend\n',
@@ -1467,7 +1467,7 @@ describe('MATLAB\'s names that are only methods of its classes are no built-ins'
     'tools/keys.m': 'function r = keys(a)\nr = a;\nend\n',
     'tools/read.m': '% READ  Help text of a MEX function.\n',
   };
-  const STARTUP = { 'startup.m': "addpath(fullfile(pwd, 'app'));\naddpath(fullfile(pwd, 'mml'));\naoinit;\n" };
+  const STARTUP = { 'startup.m': "addpath(fullfile(pwd, 'app'));\naddpath(fullfile(pwd, 'mid'));\ncfginit;\n" };
   const F1_EDGES = [
     'app/main.m main -calls-> add @ tools/add.m',
     'app/main.m main -calls-> keys @ tools/keys.m',
@@ -1478,9 +1478,9 @@ describe('MATLAB\'s names that are only methods of its classes are no built-ins'
   ];
 
   it('links a call of one to the project\'s copy behind MATLAB\'s own folders, ahead of them, and with no path, its MEX stub too', async () => {
-    for (const files of [{ ...F1, ...STARTUP, 'mml/aoinit.m': AOINIT('-end') }, { ...F1, ...STARTUP, 'mml/aoinit.m': AOINIT('-begin') }, F1]) {
+    for (const files of [{ ...F1, ...STARTUP, 'mid/cfginit.m': CFGINIT('-end') }, { ...F1, ...STARTUP, 'mid/cfginit.m': CFGINIT('-begin') }, F1]) {
       const r = await indexOfProject(files);
-      const what = files['mml/aoinit.m'] ?? 'no startup';
+      const what = files['mid/cfginit.m'] ?? 'no startup';
       expect(r.edges.filter((e) => e.startsWith('app/')), what).toEqual(F1_EDGES);
       expect([r.unresolved, r.dormant], what).toEqual([[], []]);
     }
@@ -1517,12 +1517,12 @@ describe('MATLAB\'s names that are only methods of its classes are no built-ins'
   }, 120_000);
 
   it('keeps a live row of one that a project class\'s method carries, called on an object resolution cannot type', async () => {
-    // fieldtrip: ft_write_cifti.m builds an xmltree and adds to it with function syntax.
+    // tk_write_grid.m builds a doctree and adds to it with function syntax.
     const r = await indexOfProject({
-      'external/gifti/@xmltree/xmltree.m': "function t = xmltree(f)\nt = class(struct('f', f), 'xmltree');\nend\n",
-      'external/gifti/@xmltree/add.m': 'function t = add(t, uid, kind, name)\nend\n',
-      'fileio/ft_write_cifti.m': "function ft_write_cifti(f)\ntree = xmltree(f);\ntree = add(tree, 1, 'element', 'New_Node');\nend\n",
+      'external/gridf/@doctree/doctree.m': "function t = doctree(f)\nt = class(struct('f', f), 'doctree');\nend\n",
+      'external/gridf/@doctree/add.m': 'function t = add(t, uid, kind, name)\nend\n',
+      'iolib/tk_write_grid.m': "function tk_write_grid(f)\ntree = doctree(f);\ntree = add(tree, 1, 'element', 'Fresh_Leaf');\nend\n",
     });
-    expect(r.unresolved).toEqual(['fileio/ft_write_cifti.m:3 calls:add']);
+    expect(r.unresolved).toEqual(['iolib/tk_write_grid.m:3 calls:add']);
   });
 });

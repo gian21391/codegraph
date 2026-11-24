@@ -1,8 +1,8 @@
 {
   "index": {
     "edges": [
-      "dfit.m dfit -calls-> regA @ regA.m",
-      "main.m main -calls-> dfit @ dfit.m"
+      "krvfit.m krvfit -calls-> regA @ regA.m",
+      "main.m main -calls-> krvfit @ krvfit.m"
     ],
     "rows": [],
     "dormant": []
@@ -10,8 +10,8 @@
   "steps": [
     {
       "edges": [
-        "dfit.m dfit -calls-> regA @ regA.m",
-        "main.m main -calls-> dfit @ dfit.m"
+        "krvfit.m krvfit -calls-> regA @ regA.m",
+        "main.m main -calls-> krvfit @ krvfit.m"
       ],
       "rows": [],
       "dormant": []

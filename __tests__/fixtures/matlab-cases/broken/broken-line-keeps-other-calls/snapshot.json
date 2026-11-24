@@ -1,11 +1,11 @@
 {
   "index": {
     "edges": [
-      "plotit.m plotit -calls-> Board::refresh @ Board.m",
-      "plotit.m plotit -calls-> applyGain @ applyGain.m",
-      "plotit.m plotit -calls-> initPanel @ initPanel.m",
-      "plotit.m plotit -calls-> redrawAll @ redrawAll.m",
-      "plotit.m plotit -references-> getVal @ getVal.m"
+      "plotview.m plotview -calls-> Board::refresh @ Board.m",
+      "plotview.m plotview -calls-> applyGain @ applyGain.m",
+      "plotview.m plotview -calls-> initPanel @ initPanel.m",
+      "plotview.m plotview -calls-> redrawAll @ redrawAll.m",
+      "plotview.m plotview -references-> getVal @ getVal.m"
     ],
     "rows": [],
     "dormant": []

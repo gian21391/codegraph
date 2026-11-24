@@ -705,7 +705,7 @@ const C_LINE_COMMENT = /^[ \t]*(?:\/\/.*$|\/\*[\s\S]*?\*\/)/gm;
  * `%` line, `end;` or `...` in plain C); a weaker MATLAB shape makes it
  * MATLAB; and so does any other content left once C comments and the
  * directives a comment may read as are set aside, since a MATLAB script may
- * be nothing but statements (`c_obs = zeros(100, 100, 100);`). A file of
+ * be nothing but statements (`c_buf = zeros(100, 100, 100);`). A file of
  * nothing else — empty, white space or a BOM only, or MATLAB comments only (a
  * `%` line, `%{ … %}` blocks, an unclosed `%{`) — is MATLAB too: an empty
  * MATLAB script, or one of comments (the user's rulings, step 11). One of C

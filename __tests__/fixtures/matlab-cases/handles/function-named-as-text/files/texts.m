@@ -3,5 +3,5 @@ h = str2func('myfun');
 cellfun('myfun2', c);
 cellfun('isempty', c);
 cellfun('size', c);
-fzero('froot', x0);
+fzero('fbase', x0);
 end

@@ -50,13 +50,13 @@ function evaluate(files: Record<string, string>, code: string, settings: Partial
 }
 
 // ---------------------------------------------------------------------------
-// 1. The evaluator, on MML in miniature
+// 1. The evaluator, on a middle-layer toolbox in miniature
 // ---------------------------------------------------------------------------
 
-const MINI_MML: Record<string, string> = {
-  'mml/setpathx.m': "function setpathx(varargin)\nLinkFlag = 'LabCA';\nsetpathcore('X', 'Ring', 'Ring', LinkFlag);\nend\n",
-  // MML's getmmlroot: the folder above this file's, cut at the second-to-last separator.
-  'mml/getroot.m': [
+const MINI_MID: Record<string, string> = {
+  'mid/setpathx.m': "function setpathx(varargin)\nJoinMode = 'ChanLib';\nsetpathcore('X', 'Ring', 'Ring', JoinMode);\nend\n",
+  // A middle layer's root finder: the folder above this file's, cut at the second-to-last separator.
+  'mid/getroot.m': [
     'function ROOT = getroot()',
     "[ROOT, FileName, Ext] = fileparts(mfilename('fullpath'));",
     'ROOT = [ROOT, filesep];',
@@ -66,14 +66,14 @@ const MINI_MML: Record<string, string> = {
     'end',
     '',
   ].join('\n'),
-  'mml/setpathcore.m': [
-    'function setpathcore(Machine, Sub, Type, LinkFlag)',
+  'mid/setpathcore.m': [
+    'function setpathcore(Machine, Sub, Type, JoinMode)',
     'ROOT = getroot;',
-    'switch upper(LinkFlag)',
+    'switch upper(JoinMode)',
     "    case 'MCA'",
     "        addpath(fullfile(ROOT, 'online', 'mca'), '-begin');",
-    "    case {'LABCA', 'LABCA2'}",
-    "        addpath(fullfile(ROOT, 'online', 'labca'), '-begin');",
+    "    case {'CHANLIB', 'CHANLIB2'}",
+    "        addpath(fullfile(ROOT, 'online', 'chanlib'), '-begin');",
     '    otherwise',
     "        addpath(fullfile(ROOT, 'online', 'sca'), '-begin');",
     'end',
@@ -83,7 +83,7 @@ const MINI_MML: Record<string, string> = {
     "    case 'GLNXA64'",
     "        addpath(fullfile(ROOT, 'online', 'linux'), '-begin');",
     'end',
-    "d = fullfile(ROOT, 'apps', 'naff');",
+    "d = fullfile(ROOT, 'apps', 'fqtool');",
     "if exist(d, 'dir')",
     "    addpath(d, '-begin');",
     'end',
@@ -95,15 +95,15 @@ const MINI_MML: Record<string, string> = {
     "    addpath(fullfile(ROOT, 'apps', 'maybe'), '-end');",
     'end',
     'setpathsim;',
-    "addpath(fullfile(ROOT, 'mml'), '-begin');",
+    "addpath(fullfile(ROOT, 'mid'), '-begin');",
     "addpath(fullfile(ROOT, 'machine', Machine, Sub), '-begin');",
-    'aoinit(Sub);',
+    'cfginit(Sub);',
     '',
   ].join('\n'),
-  // MML's setpathat: finds the simulators beside the folder `getpv` is in.
-  'mml/setpathsim.m': [
+  // A middle layer's simulator path: finds the simulators beside the folder `readsig` is in.
+  'mid/setpathsim.m': [
     'function setpathsim',
-    "[d, f, e] = fileparts(which('getpv'));",
+    "[d, f, e] = fileparts(which('readsig'));",
     'i = findstr(d, filesep);',
     "simroot = [d(1:i(end)), 'sims', filesep];",
     "if verLessThan('matlab', '9.9')",
@@ -111,16 +111,16 @@ const MINI_MML: Record<string, string> = {
     'else',
     "    simdir = [simroot, 'sim2'];",
     'end',
-    'olddir = pwd;',
+    'lastdir = pwd;',
     'cd(simdir);',
-    'atpath;',
-    'cd(olddir);',
+    'toolpath;',
+    'cd(lastdir);',
     '',
   ].join('\n'),
-  'mml/getpv.m': 'function v = getpv(x)\nv = x;\n',
+  'mid/readsig.m': 'function v = readsig(x)\nv = x;\n',
   // Two copies: the folder the code cds to decides which runs.
-  'sims/sim1/atpath.m': "function atpath\naddpath(genpath(fileparts(mfilename('fullpath'))));\n",
-  'sims/sim2/atpath.m': "function atpath\nROOT = fileparts(mfilename('fullpath'));\naddpath(genpath(ROOT));\n",
+  'sims/sim1/toolpath.m': "function toolpath\naddpath(genpath(fileparts(mfilename('fullpath'))));\n",
+  'sims/sim2/toolpath.m': "function toolpath\nROOT = fileparts(mfilename('fullpath'));\naddpath(genpath(ROOT));\n",
   'sims/sim2/core/track.m': 'function track\n',
   'sims/sim2/Alpha/a.m': 'function a\n',
   'sims/sim2/zeta/z.m': 'function z\n',
@@ -129,45 +129,45 @@ const MINI_MML: Record<string, string> = {
   'sims/sim2/private/p.m': 'function p\n',
   'sims/sim2/resources/r.m': 'function r\n',
   'online/mca/x.m': 'function x\n',
-  'online/labca/x.m': 'function x\n',
+  'online/chanlib/x.m': 'function x\n',
   'online/sca/x.m': 'function x\n',
   'online/win/x.m': 'function x\n',
   'online/linux/x.m': 'function x\n',
-  'apps/naff/x.m': 'function x\n',
+  'apps/fqtool/x.m': 'function x\n',
   'apps/maybe/x.m': 'function x\n',
   // Not path-affecting: called for no value, it is not followed.
-  'machine/X/Ring/aoinit.m': "function aoinit(s)\nerror('not followed');\n",
+  'machine/X/Ring/cfginit.m': "function cfginit(s)\nerror('not followed');\n",
 };
 
 const MINI_PATH = [
   'machine/X/Ring',
-  'mml',
+  'mid',
   'sims/sim2',
   'sims/sim2/Alpha',
   'sims/sim2/core',
   'sims/sim2/zeta',
-  'apps/naff',
+  'apps/fqtool',
   'online/linux',
-  'online/labca',
+  'online/chanlib',
   'apps/maybe',
 ];
 
-describe('MATLAB path: the evaluator on MML in miniature', () => {
-  it('runs setpathx → setpathcore → getroot / setpathsim → atpath to the exact path, current folder and notes', async () => {
-    const root = project({ ...MINI_MML, 'codegraph.json': config({ startup: "setpathx('StorageRing')" }) });
+describe('MATLAB path: the evaluator on a middle-layer toolbox in miniature', () => {
+  it('runs setpathx → setpathcore → getroot / setpathsim → toolpath to the exact path, current folder and notes', async () => {
+    const root = project({ ...MINI_MID, 'codegraph.json': config({ startup: "setpathx('MainRing')" }) });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       const record = cg.getMatlabPathRecord()!;
       expect(record.source).toBe('codegraph.json');
       expect(record.folders).toEqual(MINI_PATH);
-      // The default current folder: the one file defining setpathx is in mml/; setpathsim cds back.
-      expect(record.cwd).toBe('mml');
-      expect(record.notes).toEqual(['mml/setpathcore.m:25: a condition is not known: every branch it may take is run']);
+      // The default current folder: the one file defining setpathx is in mid/; setpathsim cds back.
+      expect(record.cwd).toBe('mid');
+      expect(record.notes).toEqual(['mid/setpathcore.m:25: a condition is not known: every branch it may take is run']);
       // What a sync asks again: the files read, the folders genpath listed, the names and folders asked about.
       expect(Object.keys(record.answers!)).toEqual(expect.arrayContaining([
-        'f:mml/setpathx.m', 'f:mml/setpathcore.m', 'f:mml/getroot.m', 'f:mml/setpathsim.m', 'f:sims/sim2/atpath.m',
-        'l:sims/sim2', 'l:sims/sim2/core', 'n:getpv', 'n:atpath', 'n:setpathcore', 'n:hardware_present',
-        'd:apps/naff', 'd:apps/missing', 'd:sims/sim2', 'd:mml',
+        'f:mid/setpathx.m', 'f:mid/setpathcore.m', 'f:mid/getroot.m', 'f:mid/setpathsim.m', 'f:sims/sim2/toolpath.m',
+        'l:sims/sim2', 'l:sims/sim2/core', 'n:readsig', 'n:toolpath', 'n:setpathcore', 'n:hardware_present',
+        'd:apps/fqtool', 'd:apps/missing', 'd:sims/sim2', 'd:mid',
       ]));
       expect(record.answers!['d:apps/missing']).toBe('0');
       expect(record.answers!['n:hardware_present']).toBe('');
@@ -176,11 +176,11 @@ describe('MATLAB path: the evaluator on MML in miniature', () => {
     }
   });
 
-  it('an older release takes the other branch, and so the other atpath', async () => {
-    const root = project({ ...MINI_MML, 'codegraph.json': config({ startup: "setpathx('StorageRing')", release: 'R2019b', computer: 'PCWIN64' }) });
+  it('an older release takes the other branch, and so the other toolpath', async () => {
+    const root = project({ ...MINI_MID, 'codegraph.json': config({ startup: "setpathx('MainRing')", release: 'R2019b', computer: 'PCWIN64' }) });
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      expect(cg.getMatlabPathRecord()!.folders).toEqual(['machine/X/Ring', 'mml', 'sims/sim1', 'apps/naff', 'online/win', 'online/labca', 'apps/maybe']);
+      expect(cg.getMatlabPathRecord()!.folders).toEqual(['machine/X/Ring', 'mid', 'sims/sim1', 'apps/fqtool', 'online/win', 'online/chanlib', 'apps/maybe']);
     } finally {
       cg.close();
     }
@@ -340,7 +340,7 @@ describe('MATLAB path: resolution', () => {
     'old/setup_x.m': 'disp(1);\n',
     'lib2/setup_x.m': 'disp(2);\n',
     'lib1/private/p.m': 'function p(x)\nend\n',
-    'lib1/usep.m': 'function usep()\np(1);\nend\n',
+    'lib1/usek.m': 'function usek()\np(1);\nend\n',
   };
 
   it('an on-path caller takes the path\'s copy in path order, even with a nearer one, and nothing off the path', async () => {
@@ -363,7 +363,7 @@ describe('MATLAB path: resolution', () => {
       ]));
       // Superclass lookup sees the path too, and private/ stays its parent's.
       expect(edgesFrom(cg, 'lib2/Arm.m', 'Arm')).toEqual(['Arm -extends-> Base @ lib1/Base.m']);
-      expect(edgesFrom(cg, 'lib1/usep.m', 'usep')).toEqual(['usep -calls-> p @ lib1/private/p.m']);
+      expect(edgesFrom(cg, 'lib1/usek.m', 'usek')).toEqual(['usek -calls-> p @ lib1/private/p.m']);
     } finally {
       cg.close();
     }
@@ -426,8 +426,8 @@ describe('MATLAB path: stubs, the help text of a MEX function', () => {
 });
 
 describe('MATLAB path: MATLAB\'s own functions come before a folder put after them', () => {
-  // physbase: aoinit.m puts matlab/chris/commands on the path with '-end', and
-  // its sound.m and split.m never run (MATLAB's own do); downloads/minpack's
+  // A startup's cfginit.m puts matlab/user1/commands on the path with '-end', and
+  // its sound.m and split.m never run (MATLAB's own do); vendor/fitpack's
   // optimset.m is on no path, and an off-path caller runs MATLAB's (a name
   // only a toolbox defines, such as lsqcurvefit, is no built-in here).
   const FILES: Record<string, string> = {
@@ -583,25 +583,25 @@ describe('MATLAB path: sync converges on a fresh index', () => {
   });
 
   it('after a folder moves from after MATLAB\'s own folders to before them, and back', async () => {
-    const initial = { ...BASE, 'extra/sound.m': 'function sound()\nend\n', 'lib1/beeper.m': 'function beeper()\nsound();\nend\n', 'codegraph.json': config({ startup: "addpath('lib1'); addpath('extra', '-end')" }) };
+    const initial = { ...BASE, 'extra/sound.m': 'function sound()\nend\n', 'lib1/buzzer.m': 'function buzzer()\nsound();\nend\n', 'codegraph.json': config({ startup: "addpath('lib1'); addpath('extra', '-end')" }) };
     const r = await syncedAndFresh(
       initial,
       // The same folders in the same order: only where MATLAB's own folders are moves.
       { 'codegraph.json': config({ startup: "addpath('extra'); addpath('lib1')" }) },
       { 'codegraph.json': config({ startup: "addpath('lib1'); addpath('extra', '-end')" }) },
     );
-    expect(r.steps.map((s) => s.filter((e) => e.includes('-calls-> sound')))).toEqual([[], ['lib1/beeper.m beeper -calls-> sound @ extra/sound.m'], []]);
+    expect(r.steps.map((s) => s.filter((e) => e.includes('-calls-> sound')))).toEqual([[], ['lib1/buzzer.m buzzer -calls-> sound @ extra/sound.m'], []]);
     expect(r.synced).toEqual(r.fresh);
     expect(r.syncedRows).toEqual(r.freshRows);
   });
 
   it('after an edit of a setpath file that flips a branch', async () => {
     // The edit changes the file's size too: a sync tells an edit by it within one clock tick.
-    const setp = (v: number) => `function setp()\nv = ${v};${' '.repeat(v)}\nif v == 1\n  addpath('lib1');\nelse\n  addpath('lib2', 'lib1');\nend\n`;
+    const storq = (v: number) => `function storq()\nv = ${v};${' '.repeat(v)}\nif v == 1\n  addpath('lib1');\nelse\n  addpath('lib2', 'lib1');\nend\n`;
     const r = await syncedAndFresh(
       // From the root: the folders the code adds are the root's.
-      { ...BASE, 'setup/setp.m': setp(1), 'codegraph.json': config({ startup: "addpath('setup'); setp", cwd: '' }) },
-      { 'setup/setp.m': setp(2) },
+      { ...BASE, 'setup/storq.m': storq(1), 'codegraph.json': config({ startup: "addpath('setup'); storq", cwd: '' }) },
+      { 'setup/storq.m': storq(2) },
     );
     expect(r.steps.map((s) => s.filter((e) => e.startsWith('lib1/caller.m caller -calls-> util')))).toEqual([[TO_LIB1], [TO_LIB2]]);
     expect(r.synced).toEqual(r.fresh);
@@ -649,7 +649,7 @@ describe('MATLAB path: sync converges on a fresh index', () => {
   });
 
   it('an edit of an unrelated .m file works nothing out again', async () => {
-    const root = project({ ...BASE, 'setup/setp.m': "function setp()\naddpath('lib2');\n", 'codegraph.json': config({ startup: "addpath('setup'); setp", cwd: '' }) });
+    const root = project({ ...BASE, 'setup/storq.m': "function storq()\naddpath('lib2');\n", 'codegraph.json': config({ startup: "addpath('setup'); storq", cwd: '' }) });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       const before = allEdges(cg);
@@ -661,7 +661,7 @@ describe('MATLAB path: sync converges on a fresh index', () => {
       expect(JSON.stringify(cg.getMatlabPathRecord())).toBe(record);
       expect(allEdges(cg).filter((e) => !e.startsWith('app/'))).toEqual(before.filter((e) => !e.startsWith('app/')));
       // A file the startup code read is no unrelated file.
-      writeTree(root, { 'setup/setp.m': "function setp()\naddpath('lib1', 'lib2');\n" });
+      writeTree(root, { 'setup/storq.m': "function storq()\naddpath('lib1', 'lib2');\n" });
       await cg.sync();
       expect(matlabPathEvaluations.count).toBe(runs + 1);
     } finally {
@@ -817,25 +817,25 @@ describe('MATLAB path: status, explore and node', () => {
 
 describe('MATLAB path: explore renders every named function the path makes visible', () => {
   /**
-   * physbase's `measbpmresp measrespmat setsp getam`: two names of one copy
+   * A query `meassigresp measgainmat setlvl getlvl`: two names of one copy
    * each, two of fourteen, and prefix namesakes enough to fill the text
-   * search. The Flow ran measbpmresp → measrespmat → setsp and said their
-   * bodies were below, but only setsp's and getam's were: a bare lowercase
+   * search. The Flow ran meassigresp → measgainmat → a callee and said their
+   * bodies were below, but only setlvl's and getlvl's were: a bare lowercase
    * name of one copy was not seeded, and fell under the floor the seeded
    * names raised.
    */
   function measurement(): Record<string, string> {
     const files: Record<string, string> = {
-      'startup.m': "addpath('mml');\n",
-      'mml/measbpmresp.m': 'function R = measbpmresp(Family)\n% MEASBPMRESP - measures the BPM response matrix\nR = measrespmat(Family, 1);\nend\n',
-      'mml/measrespmat.m': 'function R = measrespmat(Family, Kick)\n% MEASRESPMAT - kicks each corrector and reads the orbit\nfor k = 1:Kick\n  setsp(Family, k);\n  R(k) = getam(Family);\nend\nend\n',
+      'startup.m': "addpath('mid');\n",
+      'mid/meassigresp.m': 'function R = meassigresp(Family)\n% MEASSIGRESP - measures the BPM response matrix\nR = measgainmat(Family, 1);\nend\n',
+      'mid/measgainmat.m': 'function R = measgainmat(Family, Kick)\n% MEASGAINMAT - kicks each corrector and reads the orbit\nfor k = 1:Kick\n  setlvl(Family, k);\n  R(k) = getlvl(Family);\nend\nend\n',
     };
     for (let i = 1; i <= 14; i++) {
-      const dir = i === 1 ? 'mml' : `old${i}`;
-      files[`${dir}/setsp.m`] = `function setsp(Family, v)\n% SETSP in ${dir}\ndisp(v);\nend\n`;
-      files[`${dir}/getam.m`] = `function v = getam(Family)\n% GETAM in ${dir}\nv = 1;\nend\n`;
+      const dir = i === 1 ? 'mid' : `old${i}`;
+      files[`${dir}/setlvl.m`] = `function setlvl(Family, v)\n% SETLVL in ${dir}\ndisp(v);\nend\n`;
+      files[`${dir}/getlvl.m`] = `function v = getlvl(Family)\n% GETLVL in ${dir}\nv = 1;\nend\n`;
     }
-    for (const name of ['measbpmresp', 'measrespmat', 'setsp', 'getam']) {
+    for (const name of ['meassigresp', 'measgainmat', 'setlvl', 'getlvl']) {
       for (let i = 1; i <= 4; i++) files[`var/${name}_v${i}.m`] = `function ${name}_v${i}()\n% ${name} variant ${i}\nend\n`;
     }
     return files;
@@ -845,12 +845,16 @@ describe('MATLAB path: explore renders every named function the path makes visib
   it('a bag of names mixing one-copy and many-copy names renders every Flow hop\'s body', async () => {
     const cg = await CodeGraph.init(project(measurement()), { index: true });
     try {
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'measbpmresp measrespmat setsp getam' })).content[0]!.text;
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'meassigresp measgainmat setlvl getlvl' })).content[0]!.text;
       const hops = [...text.slice(0, text.indexOf('**Exploration')).matchAll(/^\d+\. (\w+) \((.+?):\d+\)$/gm)].map((m) => m[2]!);
-      expect(hops).toEqual(['mml/measbpmresp.m', 'mml/measrespmat.m', 'mml/setsp.m']);
+      // The Flow ends at either callee of measgainmat; both bodies are below.
+      expect(hops.slice(0, 2)).toEqual(['mid/meassigresp.m', 'mid/measgainmat.m']);
+      expect(hops).toHaveLength(3);
+      expect(['mid/setlvl.m', 'mid/getlvl.m']).toContain(hops[2]);
       const sourced = sourcedFiles(text);
       for (const hop of hops) expect(sourced).toContain(hop);
-      expect(sourced).toContain('mml/getam.m');
+      expect(sourced).toContain('mid/setlvl.m');
+      expect(sourced).toContain('mid/getlvl.m');
       expect(sourced.filter((f) => f.startsWith('old'))).toEqual([]);
       expect(text).toContain('Full source for these symbols is below');
     } finally {
@@ -863,31 +867,31 @@ describe('MATLAB path: explore renders every named function the path makes visib
     delete files['startup.m'];
     const cg = await CodeGraph.init(project(files), { index: true });
     try {
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'measbpmresp measrespmat setsp getam' })).content[0]!.text;
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'meassigresp measgainmat setlvl getlvl' })).content[0]!.text;
       const sourced = sourcedFiles(text);
       // Its one definition is the copy MATLAB runs: as good as named.
-      expect(sourced).toContain('mml/measbpmresp.m');
-      expect(sourced).toContain('mml/measrespmat.m');
+      expect(sourced).toContain('mid/meassigresp.m');
+      expect(sourced).toContain('mid/measgainmat.m');
     } finally {
       cg.close();
     }
   });
 
   it('a bag of names of one definition each still renders the unnamed callee the output has room for', async () => {
-    // DeepLearnToolbox's `saesetup saetrain nntrain`: `nnff`, the forward pass
-    // `nntrain` calls, is named by nobody, and the budget has room for it.
+    // A query `aesetup aetrain nettrain`: `netff`, the forward pass
+    // `nettrain` calls, is named by nobody, and the budget has room for it.
     const cg = await CodeGraph.init(project({
-      'SAE/saesetup.m': 'function sae = saesetup(size)\n  sae.size = size;\nend\n',
-      'SAE/saetrain.m': 'function sae = saetrain(sae, x, opts)\n  sae.ae{1} = nntrain(sae.ae{1}, x, x, opts);\nend\n',
-      'NN/nntrain.m': 'function nn = nntrain(nn, x, y, opts)\n  for i = 1 : opts.numepochs\n    nn = nnff(nn, x, y);\n  end\nend\n',
-      'NN/nnff.m': 'function nn = nnff(nn, x, y)\n  % NNFF the forward pass\n  nn.a{1} = x;\n  nn.e = y - nn.a{1};\nend\n',
+      'SAE/aesetup.m': 'function sae = aesetup(size)\n  sae.size = size;\nend\n',
+      'SAE/aetrain.m': 'function sae = aetrain(sae, x, opts)\n  sae.ae{1} = nettrain(sae.ae{1}, x, x, opts);\nend\n',
+      'NN/nettrain.m': 'function nn = nettrain(nn, x, y, opts)\n  for i = 1 : opts.nrounds\n    nn = netff(nn, x, y);\n  end\nend\n',
+      'NN/netff.m': 'function nn = netff(nn, x, y)\n  % NETFF the forward pass\n  nn.a{1} = x;\n  nn.e = y - nn.a{1};\nend\n',
     }), { index: true });
     try {
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'saesetup saetrain nntrain' })).content[0]!.text;
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'aesetup aetrain nettrain' })).content[0]!.text;
       const sourced = sourcedFiles(text);
       // The named bodies first, then the callee.
-      expect(sourced.slice(0, 3).sort()).toEqual(['NN/nntrain.m', 'SAE/saesetup.m', 'SAE/saetrain.m']);
-      expect(sourced).toContain('NN/nnff.m');
+      expect(sourced.slice(0, 3).sort()).toEqual(['NN/nettrain.m', 'SAE/aesetup.m', 'SAE/aetrain.m']);
+      expect(sourced).toContain('NN/netff.m');
     } finally {
       cg.close();
     }
@@ -929,12 +933,12 @@ describe('MATLAB path: explore renders every named function the path makes visib
 
   it.each([['a search path', true], ['no search path', false]])('a question in prose seeds no project function named after one of its words, with %s', async (_label, withPath) => {
     const files: Record<string, string> = {
-      ...(withPath ? { 'startup.m': "addpath('mml');\n" } : {}),
-      'mml/run.m': 'function run(task)\n% RUN - runs a task\ndisp(task);\nend\n',
-      'mml/check.m': 'function check(x)\n% CHECK - checks a value\ndisp(x);\nend\n',
-      'mml/setorbit.m': 'function setorbit(Goal)\n% SETORBIT - applies the orbit correction\nR = getrespmat(Goal);\nsetsp(Goal, R);\nend\n',
-      'mml/getrespmat.m': 'function R = getrespmat(Goal)\n% GETRESPMAT - the orbit response matrix\nR = Goal;\nend\n',
-      'mml/setsp.m': 'function setsp(Family, v)\ndisp(v);\nend\n',
+      ...(withPath ? { 'startup.m': "addpath('mid');\n" } : {}),
+      'mid/run.m': 'function run(task)\n% RUN - runs a task\ndisp(task);\nend\n',
+      'mid/check.m': 'function check(x)\n% CHECK - checks a value\ndisp(x);\nend\n',
+      'mid/settrack.m': 'function settrack(Goal)\n% SETTRACK - applies the orbit correction\nR = getgainmat(Goal);\nsetlvl(Goal, R);\nend\n',
+      'mid/getgainmat.m': 'function R = getgainmat(Goal)\n% GETGAINMAT - the orbit response matrix\nR = Goal;\nend\n',
+      'mid/setlvl.m': 'function setlvl(Family, v)\ndisp(v);\nend\n',
     };
     const root = project(files);
     const cg = await CodeGraph.init(root, { index: true });
@@ -943,7 +947,7 @@ describe('MATLAB path: explore renders every named function the path makes visib
     const previous = process.env.CODEGRAPH_EXPLORE_DEBUG;
     process.env.CODEGRAPH_EXPLORE_DEBUG = sidecar;
     try {
-      await new ToolHandler(cg).execute('codegraph_explore', { query: 'how does the orbit correction run and check the setpoint' });
+      await new ToolHandler(cg).execute('codegraph_explore', { query: 'how does the orbit correction run and check the setlvl' });
       const report = JSON.parse(fs.readFileSync(sidecar, 'utf-8').trim().split('\n').pop()!) as { files: Array<{ path: string; named: boolean }> };
       expect(report.files.filter((f) => f.named).map((f) => f.path)).toEqual([]);
     } finally {
@@ -1098,12 +1102,12 @@ describe('MATLAB path: a sync ends where a fresh index of the same files ends (r
         'app/main.m': MAIN,
         'lib1/foo.m': FOO1,
         'lib2/foo.m': FOO2,
-        'tools1/setp.m': "function setp()\naddpath('lib1');\nend\n",
+        'tools1/storq.m': "function storq()\naddpath('lib1');\nend\n",
         'tools1/keep.m': 'function keep()\nend\n',
         'tools2/keep.m': 'function keep()\nend\n',
-        'startup.m': "addpath('app');\naddpath('tools1');\naddpath('tools2');\nsetp;\n",
+        'startup.m': "addpath('app');\naddpath('tools1');\naddpath('tools2');\nstorq;\n",
       },
-      { 'tools2/setp.m': "function setp()\naddpath('lib2');\nend\n" },
+      { 'tools2/storq.m': "function storq()\naddpath('lib2');\nend\n" },
     );
     expect(r.fresh.edges).toContain('app/main.m main -calls-> foo @ lib2/foo.m');
     expectSame(r);
@@ -1114,7 +1118,7 @@ describe('MATLAB path: the evaluator (review cases)', () => {
   it('case 2: a function that saves pwd and cds back is still followed into what it calls (H4)', () => {
     const files = {
       'app/main.m': 'function main()\nz = foo(3);\nend\n',
-      'init_all.m': 'function init_all()\nolddir = pwd;\nsetlibs();\ncd(olddir);\nend\n',
+      'init_all.m': 'function init_all()\nlastdir = pwd;\nsetlibs();\ncd(lastdir);\nend\n',
       'lib1/foo.m': 'function y = foo(x)\ny = 1;\nend\n',
       'lib2/foo.m': 'function y = foo(x)\ny = 2;\nend\n',
       'setlibs.m': "function setlibs()\naddpath('lib2', '-begin');\nend\n",
@@ -1239,11 +1243,11 @@ describe('MATLAB path: what the index keeps (review cases)', () => {
   it('a followed setpath file that does not parse sets no path; one followed for its value gives unknown', () => {
     const files = {
       'a/x.m': '', 'b/x.m': '',
-      'setp.m': "function setp()\naddpath('a');\nif true\n  x = [1 2;\nend\n",
+      'storq.m': "function storq()\naddpath('a');\nif true\n  x = [1 2;\nend\n",
       'name.m': "function n = name()\nn = 'b';\nx = [1 2;\n",
     };
-    const broken = evaluate(files, "addpath('b');\nsetp;");
-    expect(broken.failed).toMatch(/^setp\.m:\d+: the code does not parse/);
+    const broken = evaluate(files, "addpath('b');\nstorq;");
+    expect(broken.failed).toMatch(/^storq\.m:\d+: the code does not parse/);
     const value = evaluate(files, "addpath('a');\nif strcmp(name(), 'b'), addpath('b'); end");
     expect(value.failed).toBeNull();
     expect(value.notes).toEqual(expect.arrayContaining(['startup:2: a condition is not known: every branch it may take is run']));
@@ -1270,20 +1274,20 @@ describe('MATLAB path: explore names the copies it collapses (review case 17)', 
   it('collapses a named symbol\'s case-variant copies off the path, and gives no line for a name it only gathered', async () => {
     const files: Record<string, string> = {
       'startup.m': "addpath('cur');\n",
-      'cur/findm44.m': 'function m = findm44(r)\n% the copy on the path\nm = stepper(r);\nend\n',
-      'old1/FindM44.m': 'function m = FindM44(r)\n% an old case variant\nm = 1;\nend\n',
-      'old2/findm44.m': 'function m = findm44(r)\nm = 2;\nend\n',
+      'cur/findmat9.m': 'function m = findmat9(r)\n% the copy on the path\nm = stepper(r);\nend\n',
+      'old1/FindMat9.m': 'function m = FindMat9(r)\n% an old case variant\nm = 1;\nend\n',
+      'old2/findmat9.m': 'function m = findmat9(r)\nm = 2;\nend\n',
       'cur/stepper.m': 'function s = stepper(r)\ns = r;\nend\n',
       'old3/stepper.m': 'function s = stepper(r)\ns = 3;\nend\n',
-      'cur/ringtrack.m': 'function ringtrack()\nfindm44(1);\nend\n',
+      'cur/ringtrack.m': 'function ringtrack()\nfindmat9(1);\nend\n',
     };
     const root = project(files);
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'ringtrack findm44' })).content[0]!.text;
+      const text = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'ringtrack findmat9' })).content[0]!.text;
       const sourced = [...text.matchAll(/^\*\*`(.+?)`\*\* —/gm)].map((m) => m[1]);
       expect(sourced.filter((f) => f!.startsWith('old'))).toEqual([]);
-      expect(text).toContain('+1 more definition of findm44 off the MATLAB path, 1 more spelled differently');
+      expect(text).toContain('+1 more definition of findmat9 off the MATLAB path, 1 more spelled differently');
       // stepper is only gathered: a line for it only when its on-path copy is rendered.
       if (!sourced.includes('cur/stepper.m')) expect(text).not.toContain('of stepper off the MATLAB path');
       expect(text.split('\n').filter((l) => l.includes('off the MATLAB path') && /\bRead\b/.test(l))).toEqual([]);
@@ -1501,8 +1505,8 @@ describe('MATLAB path: review round 2', () => {
     it('case 3: a function that cds and returns in one branch leaves the folder unknown to its caller', async () => {
       const root = project({
         ...FILES,
-        'startup.m': "addpath('app');\naddpath('tools');\ngotowork('');\naddpath('lib1');\n",
-        'tools/gotowork.m': "function gotowork(home)\nif exist('/etc/site_matlab.txt', 'file')\n  cd('a');\n  return\nend\ndisp('staying');\nend\n",
+        'startup.m': "addpath('app');\naddpath('tools');\ngotodesk('');\naddpath('lib1');\n",
+        'tools/gotodesk.m': "function gotodesk(home)\nif exist('/etc/site_matlab.txt', 'file')\n  cd('a');\n  return\nend\ndisp('staying');\nend\n",
       });
       const cg = await CodeGraph.init(root, { index: true });
       try {
@@ -1560,17 +1564,17 @@ describe('MATLAB path: review round 2', () => {
 
     it('case 7: explore and node count the same copies', async () => {
       const root = project({
-        'app/main.m': 'function main()\nfindm44(1);\nend\n',
-        'lib1/findm44.m': 'function findm44(x)\nend\n',
-        'old/findm44.m': 'function findm44(x)\nend\n',
-        'old2/FindM44.m': 'function FindM44(x)\nend\n',
+        'app/main.m': 'function main()\nfindmat9(1);\nend\n',
+        'lib1/findmat9.m': 'function findmat9(x)\nend\n',
+        'old/findmat9.m': 'function findmat9(x)\nend\n',
+        'old2/FindMat9.m': 'function FindMat9(x)\nend\n',
         'startup.m': "addpath('app');\naddpath('lib1');\n",
       });
       const cg = await CodeGraph.init(root, { index: true });
       try {
-        const line = '+1 more definition of findm44 off the MATLAB path, 1 more spelled differently';
-        const explore = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'findm44' })).content[0]!.text;
-        const node = (await new ToolHandler(cg).execute('codegraph_node', { symbol: 'findm44', includeCode: true })).content[0]!.text;
+        const line = '+1 more definition of findmat9 off the MATLAB path, 1 more spelled differently';
+        const explore = (await new ToolHandler(cg).execute('codegraph_explore', { query: 'findmat9' })).content[0]!.text;
+        const node = (await new ToolHandler(cg).execute('codegraph_node', { symbol: 'findmat9', includeCode: true })).content[0]!.text;
         expect(explore.split('\n').filter((l) => l.includes('off the MATLAB path'))).toEqual([line]);
         expect(node.split('\n').filter((l) => l.includes('off the MATLAB path'))).toEqual([line]);
       } finally {

@@ -186,7 +186,7 @@ describe('what every synthesis reads, and which passes it runs', () => {
 
   it('takes a stored MATLAB file for an input without reading it, but not one of Octave or binary text, and reads every other file', async () => {
     const OCTAVE = '## Copyright (C) 2000 A. Author\nfunction t = stamp\n  t = 1;\nendfunction\n';
-    const BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1)\n';
+    const BLOB = 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000\u0087 pause(1)\n';
     const { root, graph } = await indexed({
       'run_all.m': 'x = 1;\n',
       'lib/solve.m': 'function y = solve(x)\n  y = x;\nend\n',

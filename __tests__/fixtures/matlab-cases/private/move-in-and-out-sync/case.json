@@ -2,7 +2,7 @@
   "why": "A function moved out of private/ into its parent folder becomes reachable from everywhere, and moved back only from the parent; a sync ends where a fresh index ends each way (MATLAB doc 'Private Functions'; project rule for sync).",
   "truth": {
     "edges": [
-      "lib/usep.m usep -calls-> p @ lib/private/p.m"
+      "lib/usek.m usek -calls-> p @ lib/private/p.m"
     ],
     "noEdges": [
       {
@@ -19,7 +19,7 @@
       },
       "truth": {
         "edges": [
-          "lib/usep.m usep -calls-> p @ lib/p.m",
+          "lib/usek.m usek -calls-> p @ lib/p.m",
           "app/other.m other -calls-> p @ lib/p.m"
         ]
       }
@@ -31,7 +31,7 @@
       },
       "truth": {
         "edges": [
-          "lib/usep.m usep -calls-> p @ lib/private/p.m"
+          "lib/usek.m usek -calls-> p @ lib/private/p.m"
         ],
         "noEdges": [
           {
@@ -47,7 +47,7 @@
       },
       "truth": {
         "edges": [
-          "lib/usep.m usep -calls-> p @ lib/private/p.m",
+          "lib/usek.m usek -calls-> p @ lib/private/p.m",
           "app/other.m other -calls-> p @ app/private/p.m"
         ]
       }

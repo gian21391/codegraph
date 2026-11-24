@@ -2,12 +2,12 @@
   "why": "A copy of the own object that a nested function, `eval`, `load`, `global` or `persistent` may write is no known object: no dispatch (step 9 fix F5; harvested from matlab-dispatch.test.ts 'dispatches on a copy … only when every write of it is seen' and 'dispatches on no copy that a global or persistent declaration writes').",
   "truth": {
     "edges": [
-      "lib/Seg3.m Seg3::control -calls-> Seg3::isj @ lib/Seg3.m"
+      "lib/Pqr5.m Pqr5::control -calls-> Pqr5::isj @ lib/Pqr5.m"
     ],
     "noEdges": [
-      "lib/Seg3.m Seg3::viaGlobal -calls-> Seg3::isj @ lib/Seg3.m",
-      "lib/Seg3.m Seg3::viaEval -calls-> Seg3::isj @ lib/Seg3.m",
-      "lib/Seg3.m Seg3::viaLoad -calls-> Seg3::isj @ lib/Seg3.m"
+      "lib/Pqr5.m Pqr5::viaGlobal -calls-> Pqr5::isj @ lib/Pqr5.m",
+      "lib/Pqr5.m Pqr5::viaEval -calls-> Pqr5::isj @ lib/Pqr5.m",
+      "lib/Pqr5.m Pqr5::viaLoad -calls-> Pqr5::isj @ lib/Pqr5.m"
     ]
   }
 }

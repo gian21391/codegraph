@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "main.m main -calls-> setMode @ setMode.m"
+      "main.m main -calls-> pickMode @ pickMode.m"
     ],
     "rows": [],
     "dormant": []

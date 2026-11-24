@@ -28,16 +28,16 @@
  *     (`eval('f = @g;'); f(1)` — MATLAB reads `f` as a function from the
  *     function's own code, so `f.m` is called unless the eval ran); one read
  *     after a `load` that does not list what it makes (`load(f); x =
- *     BPMnum(3);`, in a function whose workspace is not static, a script or
+ *     DEVnum(3);`, in a function whose workspace is not static, a script or
  *     code `eval` runs: see loadMayMake in matlab.ts), unless the call reads
  *     as no index (a text passed, a statement of its own with arguments:
- *     `siglab('DataAbort')`, `hor_line(x, y)`); and
+ *     `sigtag('HaltFeed')`, `hz_mark(x, y)`); and
  *     every name of code run in another workspace (a callback given as text,
  *     what `evalin` runs), whose variables the index cannot see: resolved
  *     like any other, and dropped when nothing answers it (see
  *     ../../resolution/matlab-failures.ts).
  *   - `self` — a member call on the method's own object (`obj.step()`,
- *     `veh.deriv(t, y)`), recorded as `Cls::m`: one whose class neither
+ *     `veh.dxstate(t, y)`), recorded as `Cls::m`: one whose class neither
  *     defines nor inherits `m` runs a subclass's (see
  *     ../../resolution/matlab-override-synthesizer.ts);
  *   - `param` — a member call on a parameter of the calling function that the
@@ -63,8 +63,8 @@
  *     nothing else answers, it is taken for a call of the class's method
  *     (see classMethodGuess in ../../resolution/matlab-lookup.ts), a guess
  *     the edge says it is;
- *   - `args:<json>` — what a call written with arguments (`dacefit(S, Y,
- *     'regpoly0')`, `gui('LoadLattice', h)` in callback code) passes, where
+ *   - `args:<json>` — what a call written with arguments (`fitmodel(S, Y,
+ *     'basis0')`, `gui('LoadLattice', h)` in callback code) passes, where
  *     the code says (see MatlabCallArgs): read by nothing in resolution, it
  *     rides to the edge the call becomes as `metadata.args` (not in
  *     `refCandidates`, and back from there when the edge is resurrected), for
@@ -78,10 +78,10 @@
 
 /**
  * One value an argument may hold, as the call site knows it:
- *   - `'text` — a text: a name (`'regpoly0`), or code an `eval` may run
+ *   - `'text` — a text: a name (`'basis0`), or code an `eval` may run
  *     (`'helper(3)`);
  *   - `@name` — a handle to a named function, its reference name as the
- *     caller's `@name` gives it (`@regpoly1`, `@pkg::f`), looked up where the
+ *     caller's `@name` gives it (`@basis1`, `@pkg::f`), looked up where the
  *     caller is;
  *   - `n` — the caller's own parameter n, as passed to it;
  *   - `{p, f?, s?}` — the caller's parameter p, or its field path f (`a.b`);

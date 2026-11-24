@@ -1,3 +1,3 @@
 function use()
-y = sig1(1);
+y = qvk1(1);
 end

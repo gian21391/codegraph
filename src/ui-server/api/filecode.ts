@@ -36,6 +36,7 @@ import { isTestFile } from '../../search/query-utils';
 import { buildOutlineEntries, type WireOutlineEntry } from './file';
 import { readFileShape, resolveRequestedFile } from './source';
 import { badRequest } from './respond';
+import { matlabShownColumn } from '../../extraction/languages/matlab-places';
 import {
   firstLine,
   groupRelations,
@@ -284,7 +285,7 @@ function buildOutsideRefs(
     if (!ref.line) continue;
     total++;
     if (items.length < MAX_FILE_OUTSIDE_REFS) {
-      items.push({ line: ref.line, col: ref.column ?? 0, name, kind: ref.referenceKind });
+      items.push({ line: ref.line, col: matlabShownColumn(ref.column ?? 0), name, kind: ref.referenceKind });
     }
   }
   return { items, total };

@@ -21,7 +21,7 @@
  *     path (MATLAB_PATH_CARRIER_KINDS: a function file, a script, a plain
  *     function of another file), and no `.m` file of the name is one MATLAB
  *     may run ahead of its own from the caller (matlabBuiltinCopyMayWin in
- *     ./matlab-lookup: physbase's `sound`, whose project copy its startup
+ *     ./matlab-lookup: a project's `sound`, whose project copy its startup
  *     adds with `addpath(…, '-end')`, and a copy off the path or out of
  *     reach, are not). It stays failed when a method, a class or an
  *     enumeration carries the name (a call of the class's own overload that
@@ -70,8 +70,8 @@
  *     and the only code of the name MATLAB has is its class's method; kept
  *     dormant under its name, which the carrier step wakes when such a
  *     symbol of the name comes. Nor is one of a name a
- *     script makes that the call's scope ran before it (`alsglobe` declaring
- *     `global IDXgolden`, then `IDXgolden(k)`): a variable that script left
+ *     script makes that the call's scope ran before it (`setup_globals` declaring
+ *     `global REFTABLE`, then `REFTABLE(k)`): a variable that script left
  *     in the scope's workspace. That one is judged after resolution, by a
  *     pass of its own over every such call (see isMatlabPlainCall and
  *     ./matlab-script-workspace), which keeps it dormant.
@@ -91,7 +91,7 @@
 
 import type { NodeFilter, QueryBuilder } from '../db/queries';
 import type { UnresolvedRef } from './types';
-import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, callsByName } from '../extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, addMatlabReachableNames, callsByName, withoutUnanswerableMatlabBuiltins } from '../extraction/languages/matlab-builtins';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { referenceNameTail } from '../db/reference-tail';
@@ -125,6 +125,17 @@ export interface MatlabFreshReferences {
 
 function isFreshReference(ref: UnresolvedRef, fresh: MatlabFreshReferences | undefined): boolean {
   return fresh === undefined || fresh.files.has(ref.filePath) || (ref.rowId != null && fresh.rowIds.has(ref.rowId));
+}
+
+/**
+ * Whether `ref`, a fresh one, is so only as a row (MatlabFreshReferences.rowIds)
+ * of a file the pass did not extract: its text never went through the
+ * extraction's discard (withoutUnanswerableMatlabBuiltins), which a fresh
+ * index's rows of it did (a call a sync turned back from an edge into a file
+ * that is Octave now, or an interrupted run's row).
+ */
+function isUnfilteredFreshReference(ref: UnresolvedRef, fresh: MatlabFreshReferences | undefined): boolean {
+  return fresh !== undefined && !fresh.files.has(ref.filePath) && ref.rowId != null && fresh.rowIds.has(ref.rowId);
 }
 
 /** Whether `ref` is a bare MATLAB call of a built-in's name, or a handle to one (`plot(x)`, `@plot`; not `Cls::plot` or `obj.plot`). */
@@ -278,7 +289,7 @@ export function matlabCarriedKeys(keys: Iterable<string>, known: ReadonlySet<str
  * name (no member, no qualifier) that is no built-in's, written with
  * arguments (no `form` fact), with no `runtime`, `dispatch` or `computed`
  * fact, and no name MATLAB has only as a method (see isMatlabMethodNameCall)
- * — `IDXgolden(k)`. When a script its scope ran before it makes the
+ * — `REFTABLE(k)`. When a script its scope ran before it makes the
  * name, it is one of the variables that script left in the scope's workspace,
  * and kept dormant instead (see ./matlab-script-workspace). Its carriers are
  * not asked here.
@@ -324,9 +335,15 @@ function matlabOwnFunctionWins(
  * that only the path gives, none in the caller's folder: see the top of
  * this file), into `deleted` and `dormant`; the rest stay failed. Whether a
  * symbol carries a name is asked of `known` first, when the caller has it.
+ * A fresh one whose text the extraction's discard never saw (`unfiltered`:
+ * see isUnfilteredFreshReference) is deleted too when that discard would
+ * have dropped it, carried or not: no `.m` file of MATLAB code a bare call
+ * reaches is named for it, and its file imports nothing and defines no
+ * symbol of the name (see withoutUnanswerableMatlabBuiltins). A fresh index
+ * never wrote it.
  */
 function judgeMatlabBuiltinFailures(
-  list: ReadonlyArray<{ ref: UnresolvedRef; keys: string[]; fresh: boolean }>,
+  list: ReadonlyArray<{ ref: UnresolvedRef; keys: string[]; fresh: boolean; unfiltered: boolean }>,
   known: ReadonlySet<string> | null,
   queries: QueryBuilder,
   out: UnanswerableMatlabFailures,
@@ -336,9 +353,18 @@ function judgeMatlabBuiltinFailures(
   const keys = new Set(list.flatMap((p) => p.keys).filter((k) => known === null || known.has(k)));
   const carriers = keys.size > 0 ? queries.getFilesCarryingNames(keys, MATLAB_CALLABLE_NODES) : new Map<string, Set<string>>();
   const overloads = carriers.size > 0 ? queries.getNodeNamesAmong(carriers.keys(), MATLAB_OVERLOAD_CARRIER_NODES) : new Set<string>();
-  for (const { ref, keys: own, fresh } of list) {
+  let reachable: Set<string> | null = null;
+  const unreached = (ref: UnresolvedRef): boolean => {
+    if (!reachable) {
+      reachable = new Set();
+      const unread = queries.getUnreadMatlabFilePaths();
+      addMatlabReachableNames(queries.getFilePathsOfLanguage('matlab').filter((p) => !unread.has(p)), reachable);
+    }
+    return withoutUnanswerableMatlabBuiltins([ref], queries.getNodesByFiles([ref.filePath]), reachable).length === 0;
+  };
+  for (const { ref, keys: own, fresh, unfiltered } of list) {
     const carried = own.filter((k) => carriers.has(k));
-    if (carried.length === 0) {
+    if (carried.length === 0 || (unfiltered && unreached(ref))) {
       if (fresh) out.deleted.add(ref);
     } else if (!carried.some((k) => overloads.has(k)) && matlabOwnFunctionWins(ref, carriers, mayWin)) {
       out.dormant.add(ref);
@@ -383,7 +409,7 @@ export function unanswerableMatlabFailures(
   const dormant = new Set<UnresolvedRef>();
   const pending: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   const methodNames: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
-  const builtins: Array<{ ref: UnresolvedRef; keys: string[]; fresh: boolean }> = [];
+  const builtins: Array<{ ref: UnresolvedRef; keys: string[]; fresh: boolean; unfiltered: boolean }> = [];
   const bareMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   const calledMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   for (const ref of failures) {
@@ -397,7 +423,7 @@ export function unanswerableMatlabFailures(
       continue;
     }
     if (isMatlabBuiltinCall(ref)) {
-      builtins.push({ ref, keys: matlabNameKeys(ref.referenceName), fresh: isFreshReference(ref, fresh) });
+      builtins.push({ ref, keys: matlabNameKeys(ref.referenceName), fresh: isFreshReference(ref, fresh), unfiltered: isUnfilteredFreshReference(ref, fresh) });
     } else if (isMatlabMethodNameCall(ref)) {
       methodNames.push({ ref, keys: matlabNameKeys(ref.referenceName) });
     } else {

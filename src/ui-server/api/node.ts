@@ -27,6 +27,7 @@ import { buildHierarchy, type WireOverride } from './hierarchy';
 import { notFound } from './respond';
 import { findIndexedFile, hasDriftedOnDisk } from './source';
 import { annotateWhen } from './when';
+import { matlabShownColumn } from '../../extraction/languages/matlab-places';
 import {
   BLAST_DEPTH,
   CALLER_EDGE_KINDS,
@@ -432,7 +433,7 @@ function summarizeOutsideIndex(
       name: ref.referenceName,
       kind: ref.referenceKind,
       line: ref.line,
-      col: ref.column,
+      col: matlabShownColumn(ref.column),
     }));
 
   return { total: refs.length, byKind, samples };

@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "lib/useP.m useP -calls-> normpdf @ lib/private/normpdf.m",
+      "lib/useK.m useK -calls-> normpdf @ lib/private/normpdf.m",
       "useGrid.m useGrid -calls-> grid @ useGrid.m",
       "usePause.m usePause -calls-> pause @ pause.m",
       "useStats.m useStats -calls-> normpdf @ normpdf.m",

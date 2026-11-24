@@ -62,14 +62,14 @@ import { findGoModuleForImport, goModulePackageDir, loadGoModule, type GoModule 
 import { loadWorkspacePackagesAndManifests, workspaceFingerprint, workspacePackageDirOf, type ManifestDiscovery, type WorkspacePackages } from './workspace-packages';
 import { logDebug } from '../errors';
 import { stripCommentsForRegex } from './strip-comments';
-import { lexicalPathWithinRoot } from '../utils';
+import { foldName, ignoresCase, lexicalPathWithinRoot } from '../utils';
 import type { CrossFileNodes, ReExport } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
 import { LRUCache } from './lru-cache';
 import { clearMatlabLookupMemos, matchMatlabReference, matlabBuiltinCopyMayWin } from './matlab-lookup';
 import { splitMatlabArgs } from '../extraction/languages/matlab-ref-facts';
 import { splitDiscarded, unanswerableMatlabFailures, type MatlabFreshReferences } from './matlab-failures';
-import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabNamesakes, reopenMatlabScriptRuns } from './matlab-sync';
+import { MatlabSuperclassChange, matlabScriptCandidates, reopenMatlabInheritedFailures, reopenMatlabNamesakes, reopenMatlabScriptRuns } from './matlab-sync';
 import { MatlabScriptMemo, settleMatlabScriptWorkspaces, type MatlabScriptWorkspaceStats } from './matlab-script-workspace';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
 import { MATLAB_PATH_METADATA_KEY, MATLAB_PATH_PENDING_METADATA_KEY, MatlabSearchPath, parseMatlabPathRecord, type MatlabPathRecord } from '../graph/matlab-search-path';
@@ -459,6 +459,9 @@ export class ReferenceResolver {
   private fileExistsMemo = new Map<string, boolean>();
   private knownNames: Set<string> | null = null; // all known symbol names for fast pre-filtering
   private knownFiles: Set<string> | null = null;
+  // The indexed paths by case-folded form (null for a form two share), for
+  // indexedCaseVariant; built on first need, with knownFiles' lifetime.
+  private foldedFiles: Map<string, string | null> | null = null;
   private cachesWarmed = false;
   // tsconfig/jsconfig path-alias map. `undefined` = not yet computed,
   // `null` = computed and absent. Treated as immutable for the
@@ -687,6 +690,7 @@ export class ReferenceResolver {
 
     // Only cache the set of known file paths (lightweight string set)
     this.knownFiles = new Set(this.queries.getAllFilePaths());
+    this.foldedFiles = null;
 
     // Cache all distinct symbol names for fast pre-filtering (just strings, not full nodes)
     this.knownNames = new Set(this.queries.getAllNodeNames());
@@ -706,6 +710,7 @@ export class ReferenceResolver {
     if (this.cachesWarmed) return;
 
     this.knownFiles = new Set(this.queries.getAllFilePaths());
+    this.foldedFiles = null;
 
     const names = new Set<string>();
     let scanned = 0;
@@ -769,6 +774,7 @@ export class ReferenceResolver {
     this.knownNames = null;
     this.knownLowerNames = null;
     this.knownFiles = null;
+    this.foldedFiles = null;
     this.goModules = null;
     this.goPackageDirs.clear();
     this.matlabSearchPath = undefined;
@@ -919,6 +925,7 @@ export class ReferenceResolver {
         resolveImportPath(source, fromFile, language, this.context),
       isDeclaredPackage: (source, fromFile) => this.isDeclaredOutsidePackage(source, fromFile),
       isIndexedFile: (filePath) => this.isIndexedFile(filePath),
+      indexedCaseVariant: (filePath) => this.indexedCaseVariant(filePath),
       getNodesInFile: (filePath: string) => {
         if (!this.nodeCache.has(filePath)) {
           this.nodeCache.set(filePath, this.queries.getNodesByFile(filePath));
@@ -1912,7 +1919,7 @@ export class ReferenceResolver {
     // A MATLAB name is what MATLAB's own lookup order reaches from where it is
     // written (see ./matlab-lookup), or a built-in or toolbox function: no
     // framework, import or name strategy may guess past it — every MATLAB
-    // project has a dozen local `parseInputs` another file cannot call.
+    // project has a dozen local `readOpts` another file cannot call.
     if (ref.language === 'matlab') return this.gateLanguage(matchMatlabReference(ref, this.context), ref);
 
     // The last name of a TypeScript type written qualified (`React.ReactNode`,
@@ -3650,6 +3657,11 @@ export class ReferenceResolver {
     return reopenMatlabNamesakes(this.queries, definitionDelta, changedFilePaths);
   }
 
+  /** See ./matlab-sync's reopenMatlabInheritedFailures. */
+  reopenMatlabInheritedFailures(names: readonly string[], changedFilePaths: readonly string[]): number {
+    return reopenMatlabInheritedFailures(this.queries, names, changedFilePaths);
+  }
+
   /** See ./matlab-sync's reopenMatlabScriptRuns. */
   reopenMatlabScriptRuns(matlabFilePaths: readonly string[], changedFilePaths: readonly string[]): { count: number; fromEdges: number[] } {
     return reopenMatlabScriptRuns(this.queries, this.context, matlabFilePaths, changedFilePaths);
@@ -4917,6 +4929,22 @@ export class ReferenceResolver {
   private isIndexedFile(filePath: string): boolean {
     const normalized = filePath.replace(/\\/g, '/');
     return this.knownFiles ? this.knownFiles.has(normalized) : this.queries.getFileByPath(normalized) !== null;
+  }
+
+  /** See ResolutionContext.indexedCaseVariant. */
+  private indexedCaseVariant(filePath: string): string | null {
+    if (!ignoresCase(this.projectRoot)) return null;
+    const normalized = filePath.replace(/\\/g, '/');
+    if (this.isIndexedFile(normalized)) return null;
+    if (!this.foldedFiles) {
+      const folded = new Map<string, string | null>();
+      for (const file of this.knownFiles ?? this.queries.getAllFilePaths()) {
+        const key = foldName(file);
+        folded.set(key, folded.has(key) ? null : file);
+      }
+      this.foldedFiles = folded;
+    }
+    return this.foldedFiles.get(foldName(normalized)) ?? null;
   }
 
   /** The repository's own package name, from its root package.json; null without one. */

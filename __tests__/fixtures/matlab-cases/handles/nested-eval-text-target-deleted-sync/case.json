@@ -1,0 +1,31 @@
+{
+  "why": "Code `eval` runs may run code in turn: here code in literal pieces, and code `sprintf` builds, each calling `f` twice (MATLAB doc 'eval'). Each call is a reference of its own, at its own place (step 14): where a piece writes its name, mapped through each literal around it, and, for the code `sprintf` builds, which no text written there spells, after the inner argument, mapped the same way. So with `lib/f.m` deleted, a fresh index keeps a failed row for each of the four calls, and so must a sync, and both link all four again when it is back (found by the step 14 second review: with a nested reference placed where its inner argument starts, the calls of one level shared one place, one edge, and one row after a sync).",
+  "truth": {
+    "edges": [
+      "lib/caller.m caller -calls-> f @ lib/f.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/f.m": null
+      },
+      "truth": {
+        "rows": [
+          "lib/caller.m:2 calls:f",
+          "lib/caller.m:3 calls:f"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/f.m": "function f(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> f @ lib/f.m"
+        ]
+      }
+    }
+  ]
+}

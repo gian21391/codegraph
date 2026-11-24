@@ -3,13 +3,13 @@
     "edges": [],
     "rows": [],
     "dormant": [
-      "lib1/beeper.m:2 calls:sound"
+      "lib1/buzzer.m:2 calls:sound"
     ]
   },
   "steps": [
     {
       "edges": [
-        "lib1/beeper.m beeper -calls-> sound @ extra/sound.m"
+        "lib1/buzzer.m buzzer -calls-> sound @ extra/sound.m"
       ],
       "rows": [],
       "dormant": []
@@ -18,7 +18,7 @@
       "edges": [],
       "rows": [],
       "dormant": [
-        "lib1/beeper.m:2 calls:sound"
+        "lib1/buzzer.m:2 calls:sound"
       ]
     }
   ]

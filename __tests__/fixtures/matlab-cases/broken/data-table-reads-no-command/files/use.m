@@ -1,3 +1,3 @@
 function use()
-y = START(1);
+y = BEGIN(1);
 end

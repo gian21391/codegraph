@@ -4,7 +4,7 @@ import type { MatlabArgItem, MatlabArgValue } from './matlab-ref-facts';
 
 /**
  * What a MATLAB expression can hold, as far as the names a program spells out
- * at runtime go: `feval(m, …)` after `m = 'DriftPass'` or `m = 'QuadPass'`,
+ * at runtime go: `feval(m, …)` after `m = 'GlideStep'` or `m = 'CurveStep'`,
  * `eval([mfilename '(''sel'')'])`, `fh(x)` after `fh = @solve`. A value is a
  * bounded set of possibilities plus whether anything else is possible too:
  *
@@ -15,10 +15,10 @@ import type { MatlabArgItem, MatlabArgValue } from './matlab-ref-facts';
  *     row built where it is read (`{'a', 'b'}`), each element in its place;
  *   - a struct: a value per field any element has, and, for one built where
  *     it is read (`s = struct(…)`, `s(2).f = …`), each element's;
- *   - what the function's caller passed: a parameter (`regr`), a field of
- *     one (`cfg.winfunc`, two levels at most), `varargin{2}` — a symbolic
+ *   - what the function's caller passed: a parameter (`basisf`), a field of
+ *     one (`cfg.taperfn`, two levels at most), `varargin{2}` — a symbolic
  *     value (see Sym), which only the call sites know. In a text it is a
- *     MARK-delimited part (`['ft_' method]` is `ft_⁁1⁁`): a template the
+ *     MARK-delimited part (`['tk_' method]` is `tk_⁁1⁁`): a template the
  *     caller's value completes;
  *   - `open`: other values are possible (what a call returns).
  *
@@ -58,7 +58,7 @@ export interface FnVal {
 
 /**
  * A value the function's caller passed (see the top of this file), by path:
- *   - `k` — the k-th parameter (0-based), as passed: `regr`, `varargin{2}`
+ *   - `k` — the k-th parameter (0-based), as passed: `basisf`, `varargin{2}`
  *     (a variadic argument counts on from the positional ones);
  *   - `k.f`, `k.f.g` — a field of it, read before any code could change it;
  *   - `vk` — the `varargin` cell, whose first element is parameter k;
@@ -286,7 +286,7 @@ export function hasHole(s: string): boolean {
   return s.includes(HOLE) || s.includes(MARK);
 }
 
-/** A template: text around ONE parameter's value (`ft_` + `1` + ``), every other part known. */
+/** A template: text around ONE parameter's value (`tk_` + `1` + ``), every other part known. */
 export interface Template {
   readonly prefix: string;
   readonly path: string;
@@ -731,9 +731,9 @@ export function withCellPart(v: Val | undefined, fresh: boolean, k: number | nul
  * Names the parser cut out of a word. Where the grammar's error recovery meets
  * text it cannot read, it skips a character or two and reads the rest of a
  * word as an identifier: `figure(1);` after a run of bare PV names is an
- * `ERROR` "f" and a call of `igure`, `arread(…)` an `ERROR` "ar" and a call of
- * `read`, and in a readme saved as `.m`, `621mon2` is the number 621 and the
- * name `mon2`. In MATLAB a name never touches another word character (a
+ * `ERROR` "f" and a call of `igure`, `logread(…)` an `ERROR` "ar" and a call of
+ * `read`, and in a readme saved as `.m`, `734kex9` is the number 621 and the
+ * name `kex9`. In MATLAB a name never touches another word character (a
  * number such as `1e5`, `3i` or `0x1F` is one token), so an identifier or a
  * command's name with a character of `[A-Za-z0-9_]` right before or right
  * after it is a piece of a word, and no name: nothing is read from it.

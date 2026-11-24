@@ -228,7 +228,12 @@ export interface Edge {
   /** Line number where relationship occurs (e.g., call site) */
   line?: number;
 
-  /** Column number where relationship occurs */
+  /**
+   * Column number where relationship occurs. Stored as it is: a MATLAB column
+   * of 1e9 or more is an anchored place (`MATLAB_ANCHORED_BASE` in
+   * extraction/languages/matlab-places), not a column of the line, and every
+   * output shows `matlabShownColumn(column)` for it, the anchor's column.
+   */
   column?: number;
 
   /** How this edge was created */

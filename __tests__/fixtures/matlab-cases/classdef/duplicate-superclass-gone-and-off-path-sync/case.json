@@ -1,0 +1,31 @@
+{
+  "why": "`classdef Gadget < Base & Base` lists `Base` twice. MATLAB rejects a class listed twice among its superclasses, so MATLAB states nothing here, and the truth holds only what project rules say: each written superclass reference is kept at its own place (its name's column, step 14); a reference no resolution pass answers is kept as a failed row, which a later sync retries (#1240; the row lifecycle in src/db/schema.sql); an empty `.m` file is a script, so no class (step 11); and a sync ends where a fresh index ends, counts included. So when `lib/Base.m` empties and when a path config leaves `lib` off the path, a fresh index keeps a failed `extends:Base` row for each reference, and so must a sync (found by the step 14 fuzz runs, seeds 1405 and 1521; the shape of fuzz/two-refs-on-one-line-merge-sync, reached by other edits). Whether the references link while `lib/Base.m` is a class is no rule's: the truth leaves it to the sync check.",
+  "truth": {},
+  "steps": [
+    {
+      "edit": {
+        "lib/Base.m": ""
+      },
+      "truth": {
+        "rows": [
+          "Gadget.m:1 extends:Base"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Base.m": "classdef Base < handle\nend\n"
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\n  \"matlab\": {\n    \"startup\": [\n      \"addpath(fullfile(pwd, 'tools'));\"\n    ]\n  }\n}\n"
+      },
+      "truth": {
+        "rows": [
+          "Gadget.m:1 extends:Base"
+        ]
+      }
+    }
+  ]
+}

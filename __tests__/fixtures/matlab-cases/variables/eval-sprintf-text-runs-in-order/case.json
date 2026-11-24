@@ -1,0 +1,48 @@
+{
+  "why": "`eval` runs its code where it is, in the workspace around it, once its argument is evaluated: after the code before it and before the code after it (MATLAB doc 'eval'), and a script runs in its caller's workspace, so what it assigns is a variable there once it has run (MATLAB doc 'Scripts vs. Functions'; the project's script-workspace rule, src/resolution/matlab-script-workspace.ts: a bare name's failed call that a script run strictly before it makes is kept dormant). Code `sprintf` builds is no text written where `eval` is, and still runs there, after `sprintf` has built it: in `runner.m` and `runner5.m` the script it runs makes `XV` before `XV(2)` reads it (dormant), in `runner3.m` `XV(2)` is read before the statement runs it (failed); and the run in `runner5.m` is a call of its own beside the call of `sprintf` (found by the step 14 second review).",
+  "truth": {
+    "edges": [
+      "runner.m runner -calls-> mkvars.m @ mkvars.m",
+      "runner3.m runner3 -calls-> mkvars.m @ mkvars.m",
+      "runner5.m runner5 -calls-> mkvars.m @ mkvars.m"
+    ],
+    "dormant": [
+      "runner.m:2 calls:XV",
+      "runner5.m:2 calls:XV"
+    ],
+    "rows": [
+      "runner3.m:2 calls:XV"
+    ],
+    "noDormant": [
+      "runner3.m:2 calls:XV"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "mkvars.m": null
+      },
+      "truth": {
+        "rows": [
+          "runner.m:2 calls:XV",
+          "runner3.m:2 calls:XV",
+          "runner5.m:2 calls:XV"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "mkvars.m": "XV = [1 2 3];\n"
+      },
+      "truth": {
+        "dormant": [
+          "runner.m:2 calls:XV",
+          "runner5.m:2 calls:XV"
+        ],
+        "noDormant": [
+          "runner3.m:2 calls:XV"
+        ]
+      }
+    }
+  ]
+}

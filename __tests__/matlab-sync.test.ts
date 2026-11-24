@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
+import { createRequire } from 'module';
 import * as path from 'path';
 import { CodeGraph, DatabaseConnection, getDatabasePath } from '../src';
 import { ExtractionOrchestrator } from '../src/extraction';
@@ -288,18 +289,18 @@ describe('MATLAB lookup order through a sync', () => {
 });
 
 describe('MATLAB files of Octave or binary text carry no built-in\'s name', () => {
-  // physbase keeps Octave's `datestr.m` off the path and MATLAB Compiler's
+  // A project may keep Octave's `datestr.m` off the path and MATLAB Compiler's
   // encrypted `pause.m` in a deployed tree. Neither answers a call, so the
   // built-in calls of their names keep no row; the help text of a MEX
   // function (`input.m`, comments only) and a script (`now.m`) still do:
   // with no path, either may be what MATLAB runs first.
-  const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\nfunction s = datestr(t)\n  s = t;\nendfunction\n';
+  const OCTAVE = '## Copyright (C) 2031 A. Author\nfunction s = datestr(t)\n  s = t;\nendfunction\n';
   const MATLAB = 'function s = datestr(t)\n  s = sprintf(\'%d\', t);\nend\n';
-  const BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000\u0087 pause(1) encrypted\n';
+  const BLOB = 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000\u0087 pause(1) encrypted\n';
   const USER = "function user()\n  s = datestr(1);\n  pause(1);\n  x = input('go');\n  t = now();\nend\n";
   const FILES = {
     'user.m': USER,
-    'EPICS/datestr.m': OCTAVE,
+    'vendorlib/datestr.m': OCTAVE,
     'deploy/pause.m': BLOB,
     'help/input.m': '% INPUT  help for a MEX function of that name\n',
     'scripts/now.m': 't = clock;\n',
@@ -321,7 +322,7 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
 
   it('a sync ends where a fresh index ends: Octave to MATLAB and back, a binary added and removed, a script and a stub turned and deleted', async () => {
     const sequences: Array<Array<Record<string, string | null>>> = [
-      [{ 'EPICS/datestr.m': MATLAB }, { 'EPICS/datestr.m': OCTAVE }],
+      [{ 'vendorlib/datestr.m': MATLAB }, { 'vendorlib/datestr.m': OCTAVE }],
       [{ 'deploy/pause.m': null }, { 'deploy/pause.m': BLOB }],
       [{ 'scripts/now.m': '# Octave\nt = clock;\n' }, { 'scripts/now.m': 't = clock;\n' }, { 'scripts/now.m': null }],
       [{ 'help/input.m': null }, { 'help/input.m': BLOB }, { 'help/input.m': '% INPUT  help again\n' }],
@@ -338,21 +339,21 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     }
     // The rule bites: MATLAB's datestr.m answers the call, Octave's does not.
     const [matlab, octave] = runs[0]!;
-    expect(matlab!.synced).toContain('user.m user -calls-> datestr @ EPICS/datestr.m');
+    expect(matlab!.synced).toContain('user.m user -calls-> datestr @ vendorlib/datestr.m');
     expect(names(octave!.syncedRows)).toEqual(['input', 'now']);
   }, 180_000);
 
   // A bare read (`c = color;`) and a call dispatched under a built-in's name
-  // (`datestr(d, …)` on what `EPICS2MatlabTime` returns, `T::datestr`) keep a
+  // (`datestr(d, …)` on what `Tick2Serial` returns, `T::datestr`) keep a
   // row only while a symbol carries the name: a file whose text turns to
   // MATLAB code or from it gives the name its only carrier, or takes it, as
   // adding or deleting it does, and the files a sync leaves alone follow.
   const CARRIED = {
-    'EPICS2MatlabTime.m': 'function t = EPICS2MatlabTime(x)\n  t = x;\nend\n',
-    'user.m': 'function user()\n  d = EPICS2MatlabTime(1);\n  s = datestr(d, "yyyy");\n  c = color;\nend\n',
+    'Tick2Serial.m': 'function t = Tick2Serial(x)\n  t = x;\nend\n',
+    'user.m': 'function user()\n  d = Tick2Serial(1);\n  s = datestr(d, "yyyy");\n  c = color;\nend\n',
   };
   const COLOR = 'function c = color()\n  c = [1 0 0];\nend\n';
-  const COLOR_BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000K\u00ca^\n\u00c6}R';
+  const COLOR_BLOB = 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000K\u00ca^\n\u00c6}R';
   const expectEachStepFresh = (run: Awaited<ReturnType<typeof syncedAndFreshEachStep>>, steps: Array<Record<string, string | null>>): void => {
     run.forEach((step, i) => {
       expect(step.synced, `step ${i} ${JSON.stringify(Object.keys(steps[i]!))} edges`).toEqual(step.fresh);
@@ -365,12 +366,12 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     const steps: Array<Record<string, string | null>> = [
       { 'blob/color.m': COLOR },
       { 'blob/color.m': COLOR_BLOB },
-      { 'EPICS/datestr.m': MATLAB },
-      { 'EPICS/datestr.m': OCTAVE },
+      { 'vendorlib/datestr.m': MATLAB },
+      { 'vendorlib/datestr.m': OCTAVE },
       { 'blob/color.m': null },
       { 'blob/color.m': COLOR_BLOB },
     ];
-    const run = await syncedAndFreshEachStep({ ...CARRIED, 'EPICS/datestr.m': OCTAVE, 'blob/color.m': COLOR_BLOB }, ...steps);
+    const run = await syncedAndFreshEachStep({ ...CARRIED, 'vendorlib/datestr.m': OCTAVE, 'blob/color.m': COLOR_BLOB }, ...steps);
     expectEachStepFresh(run, steps);
     // The rule bites: the function links the untouched caller's bare read,
     // and the Octave file keeps no row of the dispatched call.
@@ -383,7 +384,7 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     const steps: Array<Record<string, string | null>> = [
       { 'lib/shade.m': COLOR_BLOB },
       { 'lib/shade.m': SHADE },
-      { 'lib/shade.m': '## Copyright (C) 2000 Paul Kienzle\n## SHADE\n1;\n' },
+      { 'lib/shade.m': '## Copyright (C) 2031 A. Author\n## SHADE\n1;\n' },
       { 'lib/shade.m': SHADE },
     ];
     const run = await syncedAndFreshEachStep({ 'user.m': 'function user()\n  shade\n  x = 2;\nend\n', 'lib/shade.m': SHADE }, ...steps);
@@ -401,8 +402,8 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     const steps: Array<Record<string, string | null>> = [
       { 'blob/color.m': COLOR },
       { 'blob/color.m': null },
-      { 'EPICS/datestr.m': MATLAB },
-      { 'EPICS/datestr.m': null },
+      { 'vendorlib/datestr.m': MATLAB },
+      { 'vendorlib/datestr.m': null },
     ];
     const run = await syncedAndFreshEachStep(CARRIED, ...steps);
     expectEachStepFresh(run, steps);
@@ -410,11 +411,11 @@ describe('MATLAB files of Octave or binary text carry no built-in\'s name', () =
     // sleeps again when it goes; the dispatched call wakes while the `.m`
     // file carries its name, and sleeps again when it goes.
     expect(run[0]!.synced).toContain('user.m user -calls-> color @ blob/color.m');
-    expect(run[1]!.syncedDormant).toEqual(['user.m:3 calls:EPICS2MatlabTime::datestr', 'user.m:4 calls:color']);
-    expect(run[2]!.synced).toContain('user.m user -calls-> datestr @ EPICS/datestr.m');
+    expect(run[1]!.syncedDormant).toEqual(['user.m:3 calls:Tick2Serial::datestr', 'user.m:4 calls:color']);
+    expect(run[2]!.synced).toContain('user.m user -calls-> datestr @ vendorlib/datestr.m');
     expect(run[2]!.syncedDormant).toEqual(['user.m:4 calls:color']);
     expect(run[3]!.syncedRows).toEqual([]);
-    expect(run[3]!.syncedDormant).toContain('user.m:3 calls:EPICS2MatlabTime::datestr');
+    expect(run[3]!.syncedDormant).toContain('user.m:3 calls:Tick2Serial::datestr');
   }, 180_000);
 });
 
@@ -424,7 +425,7 @@ describe('MATLAB sync converges on a fresh index for stubs, the help text of a M
   // rows a fresh index of the same files has.
   const HELP = '% MEXF  help for a MEX function\n%   v = mexf(pv)\n';
   const FUNCTION = 'function v = mexf(pv)\nv = pv;\nend\n';
-  const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\n## MEXF\n1;\n';
+  const OCTAVE = '## Copyright (C) 2031 A. Author\n## MEXF\n1;\n';
   const expectEachStepFresh = (run: Awaited<ReturnType<typeof syncedAndFreshEachStep>>, steps: Array<Record<string, string | null>>): void => {
     run.forEach((step, i) => {
       const what = `step ${i} ${JSON.stringify(steps[i])}`;
@@ -853,4 +854,289 @@ describe('MATLAB sync follows a change in what a file defines, though its names 
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('MATLAB sync across class hierarchies and the facts a row carries', () => {
+  /** Every unresolved row of `dir`'s index, with its facts as stored (their order too) and its status. */
+  const rawRows = (dir: string): string[] => {
+    const db = DatabaseConnection.open(getDatabasePath(dir));
+    try {
+      return (db.getDb().prepare('SELECT file_path AS f, line, col, reference_kind AS k, reference_name AS n, status AS s, candidates AS c FROM unresolved_refs').all() as
+        Array<{ f: string; line: number; col: number; k: string; n: string; s: string; c: string | null }>)
+        .map((r) => `${r.f}:${r.line}:${r.col} ${r.k}:${r.n} ${r.s} ${r.c ?? ''}`).sort();
+    } finally {
+      db.close();
+    }
+  };
+
+  /** Index `initial`, then each step with a sync, and each step's synced and fresh rows as rawRows reads them, with the edges. */
+  async function rowsEachStep(initial: Record<string, string>, ...steps: Array<Record<string, string | null>>): Promise<Array<{ synced: string[]; fresh: string[]; syncedEdges: string[]; freshEdges: string[] }>> {
+    const root = tempDir('cg-matlab-facts-');
+    const files: Record<string, string | null> = { ...initial };
+    writeTree(root, initial);
+    const cg = await CodeGraph.init(root, { index: true });
+    const out: Array<{ synced: string[]; fresh: string[]; syncedEdges: string[]; freshEdges: string[] }> = [];
+    try {
+      for (const step of steps) {
+        writeTree(root, step);
+        Object.assign(files, step);
+        await cg.sync();
+        const freshRoot = tempDir('cg-matlab-facts-fresh-');
+        try {
+          writeTree(freshRoot, Object.fromEntries(Object.entries(files).filter(([, c]) => c !== null)));
+          const fresh = await CodeGraph.init(freshRoot, { index: true });
+          const freshEdges = allEdges(fresh);
+          fresh.close();
+          out.push({ synced: rawRows(root), fresh: rawRows(freshRoot), syncedEdges: allEdges(cg), freshEdges });
+        } finally {
+          fs.rmSync(freshRoot, { recursive: true, force: true });
+        }
+      }
+      return out;
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('a call in a callback\'s text written with arguments keeps its facts, in their order, when its target is deleted and the sync turns its edge back into a row', async () => {
+    // Code given as text adds `runtime` to what its calls carry (a callback's
+    // text runs in another workspace: matlab-ref-facts.ts), and `args`
+    // rides in its own key on the edge: the row put back must list the facts
+    // as a fresh index's row does.
+    const run = await rowsEachStep({
+      'app/gui.m': "function gui()\nuicontrol('Callback', 'arm_state(''a'',''x'');');\nend\n",
+      'lib/arm_state.m': 'function arm_state(varargin)\nend\n',
+    }, { 'lib/arm_state.m': null });
+    expect(run[0]!.synced).toEqual(run[0]!.fresh);
+    expect(run[0]!.fresh).toEqual([`app/gui.m:2:23 function_ref:arm_state dormant ["runtime","args:{\\"0\\":\\"'a\\",\\"1\\":\\"'x\\"}"]`]);
+  }, 60_000);
+
+  it('two calls of one name in one text, told apart by their arguments, are two rows at their own places with their own facts when their target is deleted, and two edges when it returns', async () => {
+    // Every reference the extraction writes has its own place, since two at
+    // one place would be one edge, which a sync turns back into one row. A
+    // reference of code given as one literal is where its name is written in
+    // it (a quote doubled in it counts as two characters): 23 and 46 below;
+    // one of code given in literal pieces, where its piece writes it: 7 and
+    // 27; one of code a variable holds, which no text written there spells,
+    // at the end of the argument (column 8 of `eval(cmd)`), each at its own
+    // column past every line, in the order the code writes them (see
+    // placeTextRefs in matlab.ts).
+    const ARM_STATE = 'function arm_state(varargin)\nend\n';
+    const run = await rowsEachStep({
+      'app/gui.m': "function gui()\nuicontrol('Callback', 'arm_state(''a'',''x''); arm_state(''b'',''y'');');\nend\n",
+      'app/apply_all.m': "function apply_all()\neval(['arm_state(''c''); ' 'arm_state(''d'');']);\nend\n",
+      'app/apply_var.m': "function apply_var()\ncmd = 'arm_state(''e''); arm_state(''f'');';\neval(cmd);\nend\n",
+      'lib/arm_state.m': ARM_STATE,
+    }, { 'lib/arm_state.m': null }, { 'lib/arm_state.m': ARM_STATE });
+    run.forEach((step, i) => {
+      expect(step.synced, `step ${i} rows`).toEqual(step.fresh);
+      expect(step.syncedEdges, `step ${i} edges`).toEqual(step.freshEdges);
+    });
+    expect(run[0]!.fresh).toEqual([
+      `app/apply_all.m:2:28 calls:arm_state failed ["args:{\\"0\\":\\"'d\\"}"]`,
+      `app/apply_all.m:2:7 calls:arm_state failed ["args:{\\"0\\":\\"'c\\"}"]`,
+      `app/apply_var.m:3:1008000000 calls:arm_state failed ["args:{\\"0\\":\\"'e\\"}"]`,
+      `app/apply_var.m:3:1008000001 calls:arm_state failed ["args:{\\"0\\":\\"'f\\"}"]`,
+      `app/gui.m:2:23 function_ref:arm_state dormant ["runtime","args:{\\"0\\":\\"'a\\",\\"1\\":\\"'x\\"}"]`,
+      `app/gui.m:2:47 function_ref:arm_state dormant ["runtime","args:{\\"0\\":\\"'b\\",\\"1\\":\\"'y\\"}"]`,
+    ]);
+    expect(run[1]!.synced).toEqual([]);
+    expect(run[1]!.syncedEdges.filter((e) => e.endsWith(' arm_state @ lib/arm_state.m')).length).toBe(6);
+  }, 60_000);
+
+  it('when a file named for a built-in is added, the calls of the name in other files are written as a fresh index writes them, without extracting those files again, and go when it is removed', async () => {
+    // A call of a built-in's name nothing in the project could answer keeps
+    // no row (the built-in discard, step 8); a `.m` file of the name makes
+    // every such call one the project may answer. The calls come back as
+    // rows of the files that hold them, which the sync leaves as they are.
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) gen[`app/u${i}.m`] = `function u${i}()\nplot(1);\nh = @plot;\nuicontrol('Callback', 'plot(2); plot(3);');\nv = helper(1);\nend\n`;
+    const PLOT = 'function plot(x)\nend\n';
+    const root = tempDir('cg-matlab-builtin-rows-');
+    const freshRoot = tempDir('cg-matlab-builtin-rows-fresh-');
+    const files: Record<string, string | null> = { ...gen, 'lib/helper.m': 'function y = helper(x)\ny = x;\nend\n' };
+    writeTree(root, files as Record<string, string>);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      const changed: string[][] = [];
+      for (const step of [{ 'tools/plot.m': PLOT }, { 'tools/plot.m': null }, { 'tools/plot.m': PLOT }]) {
+        writeTree(root, step);
+        Object.assign(files, step);
+        const result = await cg.sync();
+        changed.push([...(result.changedFilePaths ?? [])].sort());
+        writeTree(freshRoot, Object.fromEntries(Object.entries(files).filter(([, c]) => c !== null)) as Record<string, string>);
+        if (step['tools/plot.m'] === null) fs.rmSync(path.join(freshRoot, 'tools/plot.m'), { force: true });
+        const fresh = await CodeGraph.init(freshRoot, { index: true });
+        try {
+          expect(allEdges(cg)).toEqual(allEdges(fresh));
+          expect(unresolvedRows(root)).toEqual(unresolvedRows(freshRoot));
+          expect(dormantRows(root)).toEqual(dormantRows(freshRoot));
+        } finally {
+          fresh.close();
+          fs.rmSync(path.join(freshRoot, '.codegraph'), { recursive: true, force: true });
+        }
+      }
+      // Per file: `plot(1)`, `@plot`, and the callback text's two calls, each at its own place (four edges).
+      expect(allEdges(cg).filter((e) => e.endsWith('plot @ tools/plot.m')).length).toBe(48);
+      expect(changed).toEqual([['tools/plot.m'], [], ['tools/plot.m']]);
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(freshRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('when the middle class of a chain more than 500 calls inherit a method through drops its superclass, and takes it back, every call fails and links again', async () => {
+    // `w.go(1)` on a `Widget < Mid`, `Mid < Base`, reaches Base's `go` (MATLAB
+    // doc 'Method Invocation'): 30 files of 20 calls, past the rebind's
+    // per-name ceiling of 500. `Mid < handle` leaves `go` to no class of the
+    // chain, and every call fails; `Mid < Base` again links every one.
+    const gen: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) gen[`app/u${i}.m`] = `function u${i}()\nw = Widget();\n${'w.go(1);\n'.repeat(20)}end\n`;
+    const steps = [{ 'Mid.m': 'classdef Mid < handle\nend\n' }, { 'Mid.m': 'classdef Mid < Base\nend\n' }];
+    const run = await syncedAndFreshEachStep({
+      ...gen,
+      'Base.m': 'classdef Base < handle\n    methods\n        function r = go(obj, x)\n            r = x;\n        end\n    end\nend\n',
+      'Mid.m': 'classdef Mid < Base\nend\n',
+      'Widget.m': 'classdef Widget < Mid\nend\n',
+    }, ...steps);
+    run.forEach((step, i) => {
+      expect(step.synced, `step ${i} edges`).toEqual(step.fresh);
+      expect(step.syncedRows, `step ${i} rows`).toEqual(step.freshRows);
+      expect(step.syncedDormant, `step ${i} dormant rows`).toEqual(step.freshDormant);
+    });
+    expect(run.map((step) => step.synced.filter((e) => e.endsWith(' -calls-> Base::go @ Base.m')).length)).toEqual([0, 600]);
+    expect(run.map((step) => step.syncedRows.filter((r) => r.endsWith(' calls:Widget::go')).length)).toEqual([600, 0]);
+  }, 180_000);
+});
+
+describe('MATLAB sync paths a unit-sized project does not take', () => {
+  it('writes the calls of a built-in\'s name in 32 or more files on the parse pool when the name gains or loses its reach, as a fresh index writes them', async () => {
+    // From 32 files the carrier step parses the files whose calls of a gained
+    // name it writes again on a parse pool (runMatlabCarrierStep). The pool
+    // needs the compiled worker, so this test drives the built engine, which
+    // the suite builds first (global-setup-dist.ts). 40 generated files call
+    // `plot`; beside them a file that imports (extracted again in full), a
+    // file defining its own `plot`, a script, a class folder's `plot` method
+    // and a package's `plot`. Each step must end where a fresh index ends.
+    const requireBuilt = createRequire(__filename);
+    const built = requireBuilt(path.resolve(__dirname, '../dist/index.js')) as { CodeGraph: typeof CodeGraph };
+    const pool = requireBuilt(path.resolve(__dirname, '../dist/extraction/parse-pool.js')) as { ParseWorkerPool: { prototype: { requestParse: (...args: unknown[]) => unknown } } };
+    const PLOT = 'function plot(varargin)\nend\n';
+    const files: Record<string, string | null> = {
+      'd.m': 'plot(6)\nx = plot;\n',
+      'lib/a.m': "function a()\nplot(1);\neval('plot(2); plot(3);');\nh = @plot;\nset(0, 'Callback', 'plot(4); plot(5)');\nend\n",
+      'lib/b.m': 'function b()\nimport pkg.*\nplot(4);\nend\n',
+      'lib/c.m': 'function c()\nplot(5);\nend\nfunction plot(x)\nend\n',
+      '@Gadget/Gadget.m': 'classdef Gadget\nend\n',
+      '@Gadget/plot.m': 'function plot(obj)\nend\n',
+      '+pkg/plot.m': 'function plot(x)\nend\n',
+    };
+    for (let i = 1; i <= 40; i++) {
+      const n = String(i).padStart(2, '0');
+      files[`lib/gen/g${n}.m`] = `function g${n}()\nplot(${n});\nif true, plot(${n}, 2); end\nend\n`;
+    }
+    const steps: Array<Record<string, string | null>> = [
+      { 'tools/plot.m': PLOT },
+      { 'tools/plot.m': null },
+      { 'tools/plot.m': 'a = 1;\n' },
+      { 'lib/a.m': files['lib/a.m'] + '% edited\n', 'tools/plot.m': null },
+      { 'tools/plot.m': PLOT, 'lib/e.m': 'function e()\nplot(9);\nend\n', 'lib/gen/g01.m': 'function g01()\nplot(1, 1, 1);\nend\n' },
+      { '@Gadget/plot.m': null, 'tools/plot.m': null },
+      { '@Gadget/plot.m': 'function plot(obj)\nend\n' },
+      { 'tools/plot.m': PLOT },
+    ];
+    const root = tempDir('cg-matlab-builtin-pool-');
+    const freshRoot = tempDir('cg-matlab-builtin-pool-fresh-');
+    const parses = vi.spyOn(pool.ParseWorkerPool.prototype, 'requestParse');
+    writeTree(root, files as Record<string, string>);
+    const cg = await built.CodeGraph.init(root, { index: true });
+    try {
+      const pooled: number[] = [];
+      const extractedAgain: string[][] = [];
+      for (const [i, step] of steps.entries()) {
+        writeTree(root, step);
+        Object.assign(files, step);
+        parses.mockClear();
+        const result = await cg.sync();
+        pooled.push(parses.mock.calls.length);
+        extractedAgain.push([...(result.changedFilePaths ?? [])].filter((f) => f.startsWith('lib/gen/') && !(f in step)).sort());
+        fs.rmSync(freshRoot, { recursive: true, force: true });
+        fs.mkdirSync(freshRoot);
+        writeTree(freshRoot, Object.fromEntries(Object.entries(files).filter(([, c]) => c !== null)) as Record<string, string>);
+        const fresh = await built.CodeGraph.init(freshRoot, { index: true });
+        try {
+          expect(allEdges(cg), `step ${i + 1} edges`).toEqual(allEdges(fresh));
+          expect(unresolvedRows(root), `step ${i + 1} rows`).toEqual(unresolvedRows(freshRoot));
+          expect(dormantRows(root), `step ${i + 1} dormant rows`).toEqual(dormantRows(freshRoot));
+        } finally {
+          fresh.close();
+        }
+      }
+      // The pool parsed every generated file when `plot` gained a reach (steps 1, 3 and 8, and 5 with one
+      // generated file edited, which the sync extracts itself), and none of them was extracted again.
+      expect(pooled[0]).toBeGreaterThanOrEqual(40);
+      expect(pooled[7]).toBeGreaterThanOrEqual(40);
+      expect(extractedAgain).toEqual(steps.map(() => []));
+      // Two calls in each generated file, one in `g01.m` since step 5.
+      expect(allEdges(cg).filter((e) => e.startsWith('lib/gen/') && e.endsWith(' -calls-> plot @ tools/plot.m')).length).toBe(79);
+    } finally {
+      parses.mockRestore();
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(freshRoot, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  /** Whether the file system of the temp dir ignores case in names (macOS's APFS and Windows' NTFS do, Linux's do not). */
+  const caseInsensitive = ((): boolean => {
+    const dir = tempDir('cg-case-probe-');
+    try {
+      fs.writeFileSync(path.join(dir, 'probe.txt'), '');
+      return fs.existsSync(path.join(dir, 'PROBE.txt'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  })();
+
+  it.runIf(caseInsensitive)('a sync of the paths a watcher reports for a case-only rename keeps the new name alone, as a fresh index does', async () => {
+    // `mv lib/shift.m lib/Shift.m` on a case-insensitive file system: a
+    // watcher reports both spellings, and the old one still "exists" there.
+    // The index must keep `lib/Shift.m` alone, and no edge into the old path:
+    // a fresh index lists the new name, and the call of `shift` in its folder
+    // fails (a file whose name differs only by case vetoes it: matlab-lookup.ts).
+    const files = {
+      'shift.m': 'function y = shift(x)\ny = x;\nend\n',
+      'helper.m': 'function y = helper(x)\ny = x;\nend\n',
+      'lib/shift.m': 'a = 1;\n',
+      'lib/use.m': 'function use()\nv = shift(1);\nshift\nend\n',
+      'lib/k.m': 'function k()\nz = helper(2);\nend\n',
+    };
+    const root = tempDir('cg-matlab-scoped-case-');
+    const freshRoot = tempDir('cg-matlab-scoped-case-fresh-');
+    writeTree(root, files);
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(allEdges(cg)).toContain('lib/use.m use -calls-> lib/shift.m @ lib/shift.m');
+      fs.renameSync(path.join(root, 'lib/shift.m'), path.join(root, 'lib/s.tmp'));
+      fs.renameSync(path.join(root, 'lib/s.tmp'), path.join(root, 'lib/Shift.m'));
+      await cg.sync({ paths: ['lib/shift.m', 'lib/Shift.m'] });
+      writeTree(freshRoot, { ...files, 'lib/shift.m': null, 'lib/Shift.m': files['lib/shift.m'] });
+      const fresh = await CodeGraph.init(freshRoot, { index: true });
+      try {
+        expect(cg.getFiles().map((f) => f.path).sort()).toEqual(fresh.getFiles().map((f) => f.path).sort());
+        expect(cg.getFiles().map((f) => f.path)).not.toContain('lib/shift.m');
+        expect(allEdges(cg)).toEqual(allEdges(fresh));
+        expect(unresolvedRows(root)).toEqual(unresolvedRows(freshRoot));
+        expect(dormantRows(root)).toEqual(dormantRows(freshRoot));
+      } finally {
+        fresh.close();
+      }
+    } finally {
+      cg.close();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(freshRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

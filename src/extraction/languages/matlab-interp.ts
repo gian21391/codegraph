@@ -44,9 +44,9 @@ import {
  * what each variable can hold (see matlab-values.ts), so that what a call
  * built from text names is known where it is made:
  *
- *   m = 'DriftPass'; if x, m = 'QuadPass'; end
- *   r = feval(m, elem, r);          % DriftPass or QuadPass
- *   m = 'IdentityPass';             % … not this one
+ *   m = 'GlideStep'; if x, m = 'CurveStep'; end
+ *   r = feval(m, elem, r);          % GlideStep or CurveStep
+ *   m = 'NullStep';             % … not this one
  *
  * Branches are followed from a fork of the workspace each and joined after;
  * a branch that leaves (`return`, `error(…)`, `break`, `continue`) joins
@@ -69,7 +69,7 @@ import {
  * this workspace (`assignin('caller', …)`) is not followed.
  *
  * A function's parameters hold what its caller passed (see Sym in
- * matlab-values.ts): `feval(regr, S)` reads parameter `regr`, which only the
+ * matlab-values.ts): `feval(basisf, S)` reads parameter `basisf`, which only the
  * call sites know, and a call of the project's passing a value records it
  * (see Recorder.call), so that each side of a call can be read against the
  * other (../../resolution/matlab-argument-synthesizer.ts). What the caller

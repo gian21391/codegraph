@@ -1,0 +1,75 @@
+{
+  "why": "A method call on an object reaches a method its class inherits through its superclass list (MATLAB doc 'Method Invocation', 'Subclass Syntax'): once `Widget.m` says `Widget < handle`, or is deleted, `w.step(1)` and `step(w)` in `use.m` reach no method `step` (handle has none, and no function `step` exists), and MATLAB errors: no edge, a live row; the list put back, or the file, they are what a fresh index makes of them again. Each step must end where a fresh index ends (project rule; found by the step 11 fuzzer, s401-c46 and s1311-c75 for the list, s401-c70 and s1302-c50 for the class file, step 14).",
+  "truth": {
+    "edges": [
+      "Widget.m Widget -extends-> Mid @ Mid.m",
+      "use.m use.m -instantiates-> Widget @ Widget.m"
+    ]
+  },
+  "known": [
+    {
+      "what": "While `Widget < Mid`, both calls link to `lib/Mid.m`'s `Mid::step`, though `Widget < Mid` names the root `Mid.m`, which has no `step`.",
+      "why": "The resolver takes a superclass's method from any copy of its qualified name (methodOnHierarchy in matlab-lookup.ts), where MATLAB uses the one copy the list resolves to: the wrong copy of a superclass (N1), a resolution rule for step 15. It is why the case needs the second copy: a sync has to reopen the calls an ancestor's other copy answers."
+    }
+  ],
+  "steps": [
+    {
+      "edit": {
+        "Widget.m": "classdef Widget < handle\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "use.m:2 calls:Widget::step",
+          "use.m:3 calls:Widget::step"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "step"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Widget.m": "classdef Widget < Mid\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Widget.m Widget -extends-> Mid @ Mid.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Widget.m": null
+      },
+      "truth": {
+        "rows": [
+          "use.m:1 calls:Widget"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "step"
+          },
+          {
+            "from": "use.m",
+            "to": "Widget"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Widget.m": "classdef Widget < Mid\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Widget.m Widget -extends-> Mid @ Mid.m",
+          "use.m use.m -instantiates-> Widget @ Widget.m"
+        ]
+      }
+    }
+  ]
+}

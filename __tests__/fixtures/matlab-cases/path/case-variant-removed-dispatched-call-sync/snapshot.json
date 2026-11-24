@@ -1,0 +1,30 @@
+{
+  "index": {
+    "edges": [
+      "lib/user.m user -instantiates-> Gadget @ Gadget.m"
+    ],
+    "rows": [
+      "lib/user.m:3 calls:Gadget::tidy"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/user.m user -calls-> tidy @ tidy.m",
+        "lib/user.m user -instantiates-> Gadget @ Gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/user.m user -instantiates-> Gadget @ Gadget.m"
+      ],
+      "rows": [
+        "lib/user.m:3 calls:Gadget::tidy"
+      ],
+      "dormant": []
+    }
+  ]
+}

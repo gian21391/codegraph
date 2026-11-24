@@ -452,7 +452,7 @@ function resolveImportPathUncached(
   // otherwise be misclassified as npm). What still looks like a package
   // may name a file through the importing app's own config.
   if (isExternalImport(importPath, language, context, { fromFile })) {
-    return resolveFromOwnConfig(importPath, fromFile, language, context);
+    return asIndexedFile(resolveFromOwnConfig(importPath, fromFile, language, context), context);
   }
 
   // Python names modules, not paths: one resolver answers relative and
@@ -466,21 +466,37 @@ function resolveImportPathUncached(
 
   // Handle relative imports
   if (importPath.startsWith('.')) {
-    return resolveRelativeImport(importPath, fromDir, language, context);
+    return asIndexedFile(resolveRelativeImport(importPath, fromDir, language, context), context);
   }
 
   // Handle absolute/aliased imports (like @/ or src/)
   const aliased = resolveAliasedImport(importPath, projectRoot, language, context, fromFile);
-  if (aliased) return aliased;
+  if (aliased) return asIndexedFile(aliased, context);
 
   // C/C++ include directory search: when neither relative nor aliased
   // resolution found a match, search -I directories from
   // compile_commands.json or heuristic probing.
   if (language === 'c' || language === 'cpp') {
-    return resolveCppIncludePath(importPath, language, context);
+    return asIndexedFile(resolveCppIncludePath(importPath, language, context), context);
   }
 
   return null;
+}
+
+/**
+ * A path the resolver found, as the index keys the file. Each candidate path is
+ * looked up as written (`context.fileExists`), which on a file system that
+ * ignores case also answers for a spelling the disk does not hold: the disk has
+ * `src/a.ts`, the index keys it so, and `./Src/a` still opens it for Node, a
+ * bundler or a C compiler. Such a path, no file of the index, is the one
+ * indexed file it names (ResolutionContext.indexedCaseVariant), and stays as
+ * it is (unresolved) when none or several are. Where case counts, nothing
+ * changes. Python (whose loader checks case, PEP 235), COBOL's copybooks and
+ * MATLAB's own lookup do not come here.
+ */
+function asIndexedFile(resolved: string | null, context: ResolutionContext): string | null {
+  if (resolved === null || !context.indexedCaseVariant || context.isIndexedFile?.(resolved) !== false) return resolved;
+  return context.indexedCaseVariant(resolved) ?? resolved;
 }
 
 /**

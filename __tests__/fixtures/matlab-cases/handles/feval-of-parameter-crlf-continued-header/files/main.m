@@ -1,3 +1,3 @@
 function main()
-[a, b] = dfit(1, 'regA');
+[a, b] = krvfit(1, 'regA');
 end

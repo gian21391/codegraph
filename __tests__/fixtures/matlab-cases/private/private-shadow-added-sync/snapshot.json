@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "lib/useP.m useP -calls-> tool @ tool.m",
+      "lib/useK.m useK -calls-> tool @ tool.m",
       "useTop.m useTop -calls-> tool @ tool.m"
     ],
     "rows": [],
@@ -10,7 +10,7 @@
   "steps": [
     {
       "edges": [
-        "lib/useP.m useP -calls-> tool @ lib/private/tool.m",
+        "lib/useK.m useK -calls-> tool @ lib/private/tool.m",
         "useTop.m useTop -calls-> tool @ tool.m"
       ],
       "rows": [],
@@ -18,7 +18,7 @@
     },
     {
       "edges": [
-        "lib/useP.m useP -calls-> tool @ tool.m",
+        "lib/useK.m useK -calls-> tool @ tool.m",
         "useTop.m useTop -calls-> tool @ tool.m"
       ],
       "rows": [],

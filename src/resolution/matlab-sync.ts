@@ -30,6 +30,23 @@ const NAMESAKE_KINDS: ReadonlySet<string> = new Set(['function', 'class', 'enum'
 
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
 
+/** Whether `names` holds a name that equals `name` only when case is ignored. */
+function hasCaseVariant(names: ReadonlySet<string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  for (const n of names) if (n !== name && n.toLowerCase() === lower) return true;
+  return false;
+}
+
+/**
+ * The name a reference calls as a function: its last segment for a call on an
+ * object of a class recorded as `Cls::m` (`m(obj)`, which MATLAB looks up as a
+ * function first, as any `m(…)`), the name itself otherwise.
+ */
+function calledName(referenceName: string): string {
+  const cut = referenceName.lastIndexOf('::');
+  return cut < 0 ? referenceName : referenceName.slice(cut + 2);
+}
+
 /**
  * The files among a sync's `changedFilePaths` whose script verdict
  * reopenMatlabScriptRuns has to settle: the MATLAB files, and an Objective-C
@@ -121,7 +138,7 @@ export function reopenMatlabScriptRuns(
       // changed (a stub comes after them all, and takes nothing from them).
       // Only a statement can move (a script takes no argument), and every one
       // is read through the namesakes themselves, so no name is too common
-      // for it (`getam`, thousands of calls of its functions).
+      // for it (`getlvl`, thousands of calls of its functions).
       if (script) {
         for (const namesake of queries.getNodesByName(stem)) {
           if (namesake.language !== 'matlab' || !NAMESAKE_KINDS.has(namesake.kind)) continue;
@@ -221,8 +238,10 @@ export function reopenMatlabNamesakes(
       // The rebind's, unless a definition's own file (it may hold more calls than the rebind takes of one name).
       // Nor a symbol named like a file the delta holds alone (`foo` for `foo.m` gone or come): a stub comes after
       // it, an Octave or encrypted file blocks nothing, and a new script's (an empty file's too) statements are
-      // reopened with the script runs.
-      if ((delta.has(node.name) || (node.kind !== 'file' && stems.has(node.name))) && !exactFiles.has(node.name)) continue;
+      // reopened with the script runs. Neither when the delta also holds a case variant of it (`Foo.m` come,
+      // `foo.m` gone: a case-only rename), which vetoes or stops vetoing a call of any form, however many.
+      if ((delta.has(node.name) || (node.kind !== 'file' && stems.has(node.name))) && !exactFiles.has(node.name) &&
+        !(called !== null && hasCaseVariant(stems, called))) continue;
       for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(node.id, node.filePath, 'matlab')) {
         if (fresh.has(edge.sourceFilePath) || seenEdges.has(edge.edgeId)) continue;
         seenEdges.add(edge.edgeId);
@@ -236,22 +255,48 @@ export function reopenMatlabNamesakes(
   if (edgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs);
   // No per-name ceiling: the veto of every row of these names just changed, however many there are.
   const rowIds = variants.size === 0 ? [] : queries.getRetryableFailedReferences([...variants], Number.MAX_SAFE_INTEGER).flatMap((ref) =>
-    ref.language === 'matlab' && variants.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
+    ref.language === 'matlab' && variants.has(calledName(ref.referenceName)) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
   const woken = variants.size === 0 ? 0 : wakeMatlabBuiltinRows(queries, variants, fresh);
   return refs.length + queries.reopenFailedReferences(rowIds) + woken;
 }
 
+/**
+ * Put back in the pending set the failed MATLAB calls on an object of a class
+ * (`Widget::update`, `pkg::Base::run`) under a method name a changed class
+ * hierarchy reaches (see MatlabSuperclassChange), in files the sync left
+ * alone, however many: the chain may answer them now. The rebind's retry
+ * takes the name's failures under its ceiling. Returns the number put back.
+ */
+export function reopenMatlabInheritedFailures(queries: QueryBuilder, names: readonly string[], changedFilePaths: readonly string[]): number {
+  if (names.length === 0) return 0;
+  const fresh = new Set(changedFilePaths);
+  const wanted = new Set(names);
+  const rowIds = queries.getRetryableFailedReferences([...wanted], Number.MAX_SAFE_INTEGER).flatMap((ref) => {
+    if (ref.language !== 'matlab' || ref.rowId === undefined || fresh.has(ref.filePath ?? '')) return [];
+    return ref.referenceName.includes('::') && wanted.has(calledName(ref.referenceName)) ? [ref.rowId] : [];
+  });
+  return queries.reopenFailedReferences(rowIds);
+}
+
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];
+
+/** A class as a sync compares it: its superclass list as written, and whether it is a classdef (not an old-style class). */
+interface ClassShape {
+  bases: string[];
+  filePath: string;
+  classdef: boolean;
+}
 
 /**
  * A file's MATLAB classes, by qualified name, each with its superclass list as
- * written. Reads only the file's MATLAB class and enum rows, so an Objective-C
- * `.m`, or a MATLAB file of functions, costs one empty index seek.
+ * written and its standing as a classdef. Reads only the file's MATLAB class
+ * and enum rows, so an Objective-C `.m`, or a MATLAB file of functions, costs
+ * one empty index seek.
  */
-function classesIn(queries: QueryBuilder, file: string): Map<string, { bases: string[]; filePath: string }> {
-  const out = new Map<string, { bases: string[]; filePath: string }>();
+function classesIn(queries: QueryBuilder, file: string): Map<string, ClassShape> {
+  const out = new Map<string, ClassShape>();
   for (const n of queries.getNodesByFileOfKinds(file, CLASS_KINDS, 'matlab')) {
-    out.set(n.qualifiedName, { bases: matlabSuperclassNames(n), filePath: n.filePath });
+    out.set(n.qualifiedName, { bases: matlabSuperclassNames(n), filePath: n.filePath, classdef: (n.signature ?? '').startsWith('classdef') });
   }
   return out;
 }
@@ -263,14 +308,22 @@ function classesIn(queries: QueryBuilder, file: string): Map<string, { bases: st
  * reference when the list loses it, and one that failed must be retried when
  * the list gains it. Both wait under the method's name, so the names of the
  * methods of every class the old and the new lists reach, with their
- * ancestors, are what the sync's rebind re-opens (edges into a method of the
+ * ancestors, are what the sync's rebind re-opens (edges into a node of the
  * name, failures under it), as if a definition of that name had come or gone.
+ * A class's methods are those of every copy of its qualified name, as the
+ * resolver's methodOnHierarchy takes them (./matlab-lookup): a call on a
+ * `Widget < Mid` may answer from another copy of `Mid` than the one the list
+ * resolves to.
  * A class that comes or goes counts as a list changed from or to nothing, and
  * re-opens every name its ancestors' methods have, edges included, not only
  * the names it defines (the definition delta has those): it can be the link
  * another class's chain was missing (`Sub < Mid`, `Mid.m` new) or a nearer
  * copy of a class, and either changes what an inherited call or a `v.m`
- * common root already answers. So it re-opens, too, the names of the
+ * common root already answers. So does a class that turns from a classdef
+ * into an old-style class, or back (`@widget/widget.m` made `obj =
+ * class(s, 'widget')`): its objects stop or start being classdef objects,
+ * whose member written without parentheses calls a method (see
+ * isOldStyleClass in ./matlab-lookup). So it re-opens, too, the names of the
  * methods its class folder holds (a call of one may hang on the class
  * standing: see classMethodGuess in ./matlab-lookup; its classdef's own are
  * the delta's), and the lists of the other copies of its qualified name
@@ -280,12 +333,17 @@ function classesIn(queries: QueryBuilder, file: string): Map<string, { bases: st
  * `app/Mid.m < Node`), or goes, moves every class written `< Mid` from one
  * copy's chain to the other's, with no list changed that reaches either.
  *
+ * The names go into the definition delta, under its per-name ceiling, and
+ * the sync's rebind also takes, past the ceiling, every edge into a MATLAB
+ * node of them whose reference names a class (`Widget::update`, however
+ * many): a call on an object, which is what a chain answers.
+ *
  * `before` is told each file the sync is about to change or remove, while its
  * rows are there to read (as the parameter-flow pass is); `changedNames` is
  * asked once the sync has stored what it re-extracted.
  */
 export class MatlabSuperclassChange {
-  private readonly classesBefore = new Map<string, Map<string, { bases: string[]; filePath: string }>>();
+  private readonly classesBefore = new Map<string, Map<string, ClassShape>>();
 
   constructor(private readonly queries: QueryBuilder) {}
 
@@ -297,7 +355,7 @@ export class MatlabSuperclassChange {
   changedNames(context: ResolutionContext): string[] {
     const reached: { bases: string[]; filePath: string }[] = [];
     const names = new Set<string>();
-    /** The qualified names that gained or lost a copy. */
+    /** The qualified names that gained or lost a copy, or a copy's standing as a classdef. */
     const moved = new Set<string>();
     let matlabFiles: string[] | undefined;
     for (const [file, before] of this.classesBefore) {
@@ -305,9 +363,10 @@ export class MatlabSuperclassChange {
       for (const qn of new Set([...before.keys(), ...after.keys()])) {
         const was = before.get(qn);
         const now = after.get(qn);
-        if (was && now && was.bases.join('&') === now.bases.join('&')) continue;
+        const sameStanding = was !== undefined && now !== undefined && was.classdef === now.classdef;
+        if (sameStanding && was.bases.join('&') === now.bases.join('&')) continue;
         for (const c of [was, now]) if (c !== undefined && c.bases.length > 0) reached.push(c);
-        if (was && now) continue;
+        if (sameStanding) continue;
         moved.add(qn);
         // A class folder's methods, which the folder's files are named after: its `contains` edges come later, from synthesis.
         if (/(?:^|\/)@[^/]+\/[^/]+$/.test(file)) {
@@ -335,13 +394,13 @@ export class MatlabSuperclassChange {
     return [...names];
   }
 
-  /** The names of a class's methods: in its classdef file, and those the class folder's pass made it contain. */
+  /**
+   * The names of a class's methods: those of every copy of its qualified name
+   * (`Mid::step` in `lib/Mid.m` for an `app/Mid.m`, its class folder's
+   * files), and those the class folder's pass made it contain.
+   */
   private methodsOf(cls: Node): Set<string> {
-    const names = new Set<string>();
-    const prefix = `${cls.qualifiedName}::`;
-    for (const n of this.queries.getNodesByFileOfKinds(cls.filePath, ['method'], 'matlab')) {
-      if (n.qualifiedName.startsWith(prefix)) names.add(n.name);
-    }
+    const names = new Set(this.queries.getMatlabMethodNamesOfClass(cls.qualifiedName));
     const contained = this.queries.getOutgoingEdges(cls.id, ['contains']).map((e) => e.target);
     for (const n of this.queries.getNodesByIds(contained).values()) if (n.kind === 'method') names.add(n.name);
     return names;

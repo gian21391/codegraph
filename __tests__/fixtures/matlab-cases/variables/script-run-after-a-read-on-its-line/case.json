@@ -1,0 +1,101 @@
+{
+  "why": "A script runs in its caller's workspace, so what it assigns is a variable there once it has run, and code given as text runs where `eval`, `evalc` or `run` is called, once its argument is evaluated: after the code before the call on its line and before the code after it (MATLAB doc 'Scripts vs. Functions', 'eval', 'run'; the project's script-workspace rule, src/resolution/matlab-script-workspace.ts: a bare name's failed call that a script run strictly before it makes is kept dormant). So `XV(2)` read before `run(s)` or `eval([...])` on the same line (`r2.m`, `r4.m`, the first read of `r6.m`, and `r13.m`, whose text reads `XV` before it runs the script) is a call of nothing: failed; every read after the run is dormant, whichever form the text takes (a variable, literal pieces, an argument continued onto the next line, `evalc`, the catch text of `eval`, an `eval` inside `if`, a cell element, a text built with a variable). Found by the step 14 third review (its mutant MA2 read an anchored place as the start of its line, and every case before this one put the run first on its line).",
+  "truth": {
+    "rows": [
+      "r2.m:3 calls:XV",
+      "r4.m:2 calls:XV",
+      "r6.m:3 calls:XV",
+      "r13.m:3 calls:XV"
+    ],
+    "noDormant": [
+      "r2.m:3 calls:XV",
+      "r4.m:2 calls:XV",
+      "r6.m:3 calls:XV",
+      "r13.m:3 calls:XV"
+    ],
+    "dormant": [
+      "r1.m:3 calls:XV",
+      "r3.m:2 calls:XV",
+      "r5.m:4 calls:XV",
+      "r6.m:4 calls:XV",
+      "r7.m:3 calls:XV",
+      "r8.m:3 calls:XV",
+      "r9.m:3 calls:XV",
+      "r10.m:3 calls:XV",
+      "r11.m:3 calls:XV",
+      "r12.m:3 calls:XV"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "mkvars.m": null
+      },
+      "truth": {
+        "rows": [
+          "r1.m:3 calls:XV",
+          "r2.m:3 calls:XV",
+          "r3.m:2 calls:XV",
+          "r4.m:2 calls:XV",
+          "r5.m:4 calls:XV",
+          "r6.m:3 calls:XV",
+          "r6.m:4 calls:XV",
+          "r7.m:3 calls:XV",
+          "r8.m:3 calls:XV",
+          "r9.m:3 calls:XV",
+          "r10.m:3 calls:XV",
+          "r11.m:3 calls:XV",
+          "r12.m:3 calls:XV",
+          "r13.m:3 calls:XV"
+        ],
+        "noDormant": [
+          "r1.m:3 calls:XV",
+          "r2.m:3 calls:XV",
+          "r3.m:2 calls:XV",
+          "r4.m:2 calls:XV",
+          "r5.m:4 calls:XV",
+          "r6.m:3 calls:XV",
+          "r6.m:4 calls:XV",
+          "r7.m:3 calls:XV",
+          "r8.m:3 calls:XV",
+          "r9.m:3 calls:XV",
+          "r10.m:3 calls:XV",
+          "r11.m:3 calls:XV",
+          "r12.m:3 calls:XV",
+          "r13.m:3 calls:XV"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "mkvars.m": "XV = [1 2 3];\n"
+      },
+      "truth": {
+        "rows": [
+          "r2.m:3 calls:XV",
+          "r4.m:2 calls:XV",
+          "r6.m:3 calls:XV",
+          "r13.m:3 calls:XV"
+        ],
+        "noDormant": [
+          "r2.m:3 calls:XV",
+          "r4.m:2 calls:XV",
+          "r6.m:3 calls:XV",
+          "r13.m:3 calls:XV"
+        ],
+        "dormant": [
+          "r1.m:3 calls:XV",
+          "r3.m:2 calls:XV",
+          "r5.m:4 calls:XV",
+          "r6.m:4 calls:XV",
+          "r7.m:3 calls:XV",
+          "r8.m:3 calls:XV",
+          "r9.m:3 calls:XV",
+          "r10.m:3 calls:XV",
+          "r11.m:3 calls:XV",
+          "r12.m:3 calls:XV"
+        ]
+      }
+    }
+  ]
+}

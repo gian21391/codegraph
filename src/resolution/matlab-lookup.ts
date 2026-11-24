@@ -23,8 +23,8 @@
  *      so does a callback given as text that is one (`'Callback',
  *      'refresh_plots'`), a reference to the script it runs.
  *   8. Last, when nothing above answers: a stub, the help text of a MEX
- *      function of the name (`lcaGet.m`, `%` help text only, beside the
- *      `lcaGet.mexa64` the index never reads; see ../graph/matlab-scripts),
+ *      function of the name (`chanGet.m`, `%` help text only, beside the
+ *      `chanGet.mexa64` the index never reads; see ../graph/matlab-scripts),
  *      for a call of any form: its file node, the help being what the call
  *      reaches. One in a `private/` folder in reach first, then by the path
  *      rules of step 7, a script of the name competing (a stub behind a
@@ -70,10 +70,10 @@
  * A member written without parentheses on such a variable is a struct's
  * field, never a method. A local function of ANOTHER file is never
  * reachable — that is what made the generic name matcher unsafe here: every
- * MATLAB project has a dozen local `parseInputs` / `helper`s.
+ * MATLAB project has a dozen local `readOpts` / `helper`s.
  *
- * A class-folder method declared in its classdef (`d = norm2(obj)`) and
- * written in its own file (`@Pt/norm2.m`) is two nodes of one qualified name:
+ * A class-folder method declared in its classdef (`d = magsq(obj)`) and
+ * written in its own file (`@Pt/magsq.m`) is two nodes of one qualified name:
  * the method file's, which has the body, is the one linked. (The declaration's
  * `Static` / `Access` attributes are not carried to the method file's node;
  * lookups read them from the declaration.)
@@ -131,7 +131,7 @@ function isPackageMember(n: Node): boolean {
   return ownerOf(n) !== '' && (TYPE_KINDS.has(n.kind) || (n.kind === 'function' && n.isExported === true));
 }
 
-/** A class-folder method in its own file (`@Pt/norm2.m` → `Pt::norm2`): the one with the body. */
+/** A class-folder method in its own file (`@Pt/magsq.m` → `Pt::magsq`): the one with the body. */
 function isMethodFile(n: Node): boolean {
   return n.kind === 'method' && inClassFolder(n) && matlabFileStem(n.filePath) === n.name;
 }
@@ -322,9 +322,9 @@ function firstOnPath(searchPath: MatlabSearchPath, candidates: Node[], callerFil
  * `builtin`: MATLAB defines the name itself (MATLAB_BUILTINS), and with a
  * search path its own function runs unless a copy comes first: one in the
  * folder the caller runs from, or on the path ahead of MATLAB's own folders.
- * A copy put after them (`addpath(…, '-end')`, physbase's
- * `matlab/chris/commands/sound.m`), and for a caller off the path a copy in
- * some other folder off it (`downloads/minpack/override/optimset.m`), is
+ * A copy put after them (`addpath(…, '-end')`, as
+ * `matlab/user1/commands/sound.m`), and for a caller off the path a copy in
+ * some other folder off it (`vendor/fitpack/override/optimset.m`), is
  * never reached: none.
  */
 function choose(candidates: Node[], callerFile: string, context: ResolutionContext, builtin = false): Node | undefined {
@@ -636,9 +636,9 @@ function stubTarget(name: string, from: string, context: ResolutionContext): Nod
 /**
  * Whether a file of the path that matches `name` only when case is ignored
  * lies strictly nearer the caller than `target`, the nearest exact match: a
- * function file (`FindCells.m` for `findcells`), a class, a script, the help
- * text of a MEX function (`RingPass.m` beside `RingPass.c` for `ringpass`), or
- * a class folder's constructor-shaped file (`@tps/TPS.m` for `TPS` or `tps`).
+ * function file (`FindSlots.m` for `findslots`), a class, a script, the help
+ * text of a MEX function (`LoopStep.m` beside `LoopStep.c` for `loopstep`), or
+ * a class folder's constructor-shaped file (`@gmap/GMAP.m` for `GMAP` or `gmap`).
  * MATLAB matches a name with its case, and errors when it finds no exact match
  * ("Cannot find an exact (case-sensitive) match"), so the call is not to the
  * far file: the code was written against the near one, which runs only on an
@@ -663,7 +663,7 @@ function nearerInexactMatch(name: string, target: Node, callerFile: string, cont
   return matlab(variants).some((n) => {
     if (!beats(n) || !privateInReach(n, callerFile)) return false;
     const owner = ownerOf(n);
-    // `@tps/TPS.m`: a constructor's file, its folder's name in another case or its own.
+    // `@gmap/GMAP.m`: a constructor's file, its folder's name in another case or its own.
     if (n.kind === 'method') return isMethodFile(n) && !owner.includes('::') && owner.toLowerCase() === lower && (owner !== name || n.name !== name);
     if (n.name === name || (n.kind === 'file' && matlabFileStem(n.name) === name)) return false;
     if (n.kind === 'file') {
@@ -707,7 +707,7 @@ export function isMatlabPathStub(filePath: string, context: ResolutionContext): 
  * and nothing in the project has a property of that name — `opts.tol(1)` on a
  * struct, or `robot.links(1)` on a property, reads exactly the same. When
  * several classes define it and one of them is a superclass of all the others
- * (`Problem.CalGrad(x)` on a PROBLEM, whose subclasses override `CalGrad`),
+ * (`Problem.SlopeAll(x)` on a PROBLEM, whose subclasses override `SlopeAll`),
  * `v` holds that class or one of its subclasses: the call is that class's
  * method, overridden or not.
  */
@@ -759,7 +759,7 @@ const NO_VARIABLE_METHODS: VariableMethods = { method: null, roots: [] };
 function variableMethod(member: string, callerFile: string, context: ResolutionContext): VariableMethods {
   const named = matlab(context.getNodesByName(member));
   if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return NO_VARIABLE_METHODS;
-  // A constructor (`Astar::Astar`) is called through its class, never on an object.
+  // A constructor (`PathA::PathA`) is called through its class, never on an object.
   const all = named.filter((n) => n.kind === 'method' && !isConstructor(n));
   // A class-folder method's `Static` is on its classdef's declaration.
   const statics = new Set(all.filter((n) => n.isStatic).map((n) => n.qualifiedName));
@@ -814,8 +814,8 @@ function hierarchyRoots(chosen: ReadonlyMap<string, Node>, context: ResolutionCo
  * `objectArg` fact, see ../extraction/languages/matlab-ref-facts): the
  * method of the caller's own copy of `C` (see homeMethod) that a call on an
  * object of it runs, taken for the call: the class's code calls its own
- * methods on its objects in function syntax (`ConcatenateTPSbyVPS(q(i), p,
- * 1)` in `@tps/BCH99.m`, `children(tree, uid)` in `@xmltree/editor.m`). A
+ * methods on its objects in function syntax (`JoinGmapByStep(q(i), p,
+ * 1)` in `@gmap/BKZ07.m`, `children(tree, uid)` in `@doctree/editor.m`). A
  * guess — the argument's class is not stated —, which the edge says it is
  * (`via: 'caller-class'`).
  *
@@ -828,7 +828,7 @@ function hierarchyRoots(chosen: ReadonlyMap<string, Node>, context: ResolutionCo
  *   - a name a class outside the caller's copy's hierarchy defines a method
  *     of (otherClassDefines: `friction` of a `Link` beside
  *     `@Robot/friction.m`), whose object the argument may as well be;
- *   - a method named after its class in another case (`@tps/TPS.m`, which a
+ *   - a method named after its class in another case (`@gmap/GMAP.m`, which a
  *     case-blind file system once took for the constructor).
  * Every input is a definition of `m` (its definition delta), a file `m.m`
  * in the caller's folder (reopenMatlabScriptRuns in ./matlab-sync), a
@@ -867,8 +867,8 @@ function homeClass(cls: string, callerFile: string, context: ResolutionContext):
  * The method `name` that a call on an object of the caller's own copy of
  * `cls` runs: the one its class folder holds (a method file `@C/m.m`, or
  * the classdef's own), else the one the copy `home` inherits through its
- * superclass list. Never a method of another copy of `cls` (robotics'
- * `Octave/@SerialLink/rne.m` is Octave code, and `@SerialLink/rne.m` is
+ * superclass list. Never a method of another copy of `cls` (a toolbox's
+ * `Octave/@ChainLink/rne.m` is Octave code, and `@ChainLink/rne.m` is
  * another implementation's): none when the caller's folder has a file
  * `m.m` with no method in it, which is what runs.
  */
@@ -894,7 +894,7 @@ function homeMethod(cls: string, name: string, caller: Caller, home: Node | unde
  * `home` or be one of its ancestors, every superclass resolved as MATLAB
  * would (superclassesOf); a method no copy holds, or any method at all when
  * there is no `home`, blocks. A class whose name is `cls`'s in any case does
- * not count (pb's `@tps` beside a copy `@TPS`, another copy of `cls`): it
+ * not count (`@gmap` beside a copy `@GMAP`, another copy of `cls`): it
  * stops no guess, and homeMethod never links to it.
  */
 function otherClassDefines(named: readonly Node[], cls: string, home: Node | undefined, context: ResolutionContext): boolean {
@@ -1012,7 +1012,7 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
   if (!name.includes('::')) {
     if (name.includes('.')) {
       // A member written without an argument list on a variable of no stated
-      // class is a struct's field (`data.fsample`): the extractor emits none,
+      // class is a struct's field (`data.smprate`): the extractor emits none,
       // and none is linked.
       if (facts.form === 'bare') return null;
       return foundByVariable(resolveVariableMethod(name, ref.filePath, context, facts.param === true), name);

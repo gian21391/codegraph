@@ -1,0 +1,38 @@
+{
+  "why": "`Tally(3)` in the root `count.m` is called with an argument, so the empty root `Tally.m`, an empty MATLAB script (the user's ruling, step 11), does not answer it, and the nearest function, `off/Tally.m`, does (a script answers only a statement: matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'). When the sync that deletes `Tally.m` adds a root `tally.m`, that is a nearer case variant of the call: MATLAB errors when it finds no exact match ('Cannot find an exact (case-sensitive) match'), and the call reaches no file (the case-variant veto, nearerInexactMatch in matlab-lookup.ts): no edge, a live row. Each step must end where a fresh index ends (project rule; the shape of fuzz/case-variant-added-with-delete-no-veto, a call written in the code rather than in a callback's text; step 14).",
+  "truth": {
+    "edges": [
+      "count.m count.m -calls-> Tally @ off/Tally.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Tally.m": null,
+        "tally.m": "y = 2;\n"
+      },
+      "truth": {
+        "rows": [
+          "count.m:1 calls:Tally"
+        ],
+        "noEdges": [
+          {
+            "from": "count.m",
+            "to": "Tally"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "tally.m": null,
+        "Tally.m": ""
+      },
+      "truth": {
+        "edges": [
+          "count.m count.m -calls-> Tally @ off/Tally.m"
+        ]
+      }
+    }
+  ]
+}

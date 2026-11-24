@@ -1,0 +1,47 @@
+{
+  "index": {
+    "edges": [
+      "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
+    ],
+    "rows": [
+      "lib/caller.m:2 calls:f"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/caller.m caller -calls-> f @ lib/f.m",
+        "lib/caller.m caller -calls-> f @ lib/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "lib/caller.m:2 calls:f"
+      ],
+      "dormant": [
+        "lib/caller.m:2 calls:f"
+      ]
+    },
+    {
+      "edges": [
+        "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
+      ],
+      "rows": [
+        "lib/caller.m:2 calls:f"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/caller.m caller -calls-> f @ lib/f.m",
+        "lib/caller.m caller -calls-> f @ lib/f.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

@@ -1,13 +1,13 @@
 {
   "index": {
     "edges": [
-      "use.m use -calls-> sig1 @ sig1.m"
+      "use.m use -calls-> qvk1 @ qvk1.m"
     ],
     "rows": [
-      "readme.m:2 calls:sigdata"
+      "readme.m:2 calls:qvkdata"
     ],
     "dormant": [
-      "readme.m:1 calls:see"
+      "readme.m:1 calls:notes"
     ]
   }
 }

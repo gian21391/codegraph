@@ -1,0 +1,77 @@
+{
+  "why": "A statement naming a script runs it; a call with arguments takes only a function (a script takes none: MATLAB doc 'Scripts vs. Functions', 'eval'; the case functions/script-vs-function-with-args). The statement takes the nearest file of the name, script or function, and a call with arguments the nearest function (project rule, the case functions/script-vs-function-with-args). The text `f; f(2); f(3);` holds three references of `f`, each placed where its name is written in the literal (project rule, step 14). So with a farther function `f.m` added the calls go to it and the statement stays on the script; with the script gone the statement goes to the function too; with the script back the statement runs it again: a real call, which a sync must not hide; and each step must end where a fresh index ends, counts included (project rule). Until step 14 the three were written where the text starts, and a sync lost the statement's reference once its edge met another's (found by the step 14 review).",
+  "truth": {
+    "edges": [
+      "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
+    ],
+    "rows": [
+      "lib/caller.m:2 calls:f"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "f.m": "function f(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m",
+          "lib/caller.m caller -calls-> f @ f.m"
+        ],
+        "noRows": [
+          {
+            "file": "lib/caller.m",
+            "name": "f"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/f.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> f @ f.m"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/caller.m",
+            "to": "lib/f.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/f.m": "a = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m",
+          "lib/caller.m caller -calls-> f @ f.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "f.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
+        ],
+        "rows": [
+          "lib/caller.m:2 calls:f"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/caller.m",
+            "to": "f",
+            "at": "f.m"
+          }
+        ]
+      }
+    }
+  ]
+}

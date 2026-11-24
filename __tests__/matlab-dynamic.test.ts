@@ -44,16 +44,16 @@ describe('MATLAB feval', () => {
   it('calls each function the first argument can name where the call is, and nothing it cannot', async () => {
     const edges = await edgesOfProject({
       'tracker.m': `function tracker(elem, r, x, p)
-feval('IdentityPass', elem, r);
-m = 'DriftPass';
+feval('NullStep', elem, r);
+m = 'GlideStep';
 if x
-    m = 'QuadPass';
+    m = 'CurveStep';
 end
 r = feval(m, elem, r);
 m = 'LaterPass';
 feval(p, r);
-E.PassMethod = 'EPass';
-feval(E.PassMethod, E, r);
+E.StepFn = 'EPass';
+feval(E.StepFn, E, r);
 for c = {'CellA', 'CellB'}
     feval(c{1}, r);
 end
@@ -62,17 +62,17 @@ feval(fh, r);
 feval('pkg.scale', r);
 end
 `,
-      ...Object.fromEntries(['IdentityPass', 'DriftPass', 'QuadPass', 'LaterPass', 'EPass', 'CellA', 'CellB', 'solve'].map((n) => [`${n}.m`, fn(n)])),
+      ...Object.fromEntries(['NullStep', 'GlideStep', 'CurveStep', 'LaterPass', 'EPass', 'CellA', 'CellB', 'solve'].map((n) => [`${n}.m`, fn(n)])),
       '+pkg/scale.m': fn('scale'),
     });
     expect(from(edges, 'tracker.m')).toEqual([
       // A literal name; either branch's; a struct field's; each element a loop over a cell hands out.
       'tracker.m tracker -calls-> CellA @ CellA.m',
       'tracker.m tracker -calls-> CellB @ CellB.m',
-      'tracker.m tracker -calls-> DriftPass @ DriftPass.m',
+      'tracker.m tracker -calls-> CurveStep @ CurveStep.m',
       'tracker.m tracker -calls-> EPass @ EPass.m',
-      'tracker.m tracker -calls-> IdentityPass @ IdentityPass.m',
-      'tracker.m tracker -calls-> QuadPass @ QuadPass.m',
+      'tracker.m tracker -calls-> GlideStep @ GlideStep.m',
+      'tracker.m tracker -calls-> NullStep @ NullStep.m',
       // A dotted name is a package function's.
       'tracker.m tracker -calls-> pkg::scale @ +pkg/scale.m',
       // A handle: called by feval, and referenced where `@solve` is written.
@@ -159,17 +159,17 @@ h = str2func('myfun');
 cellfun('myfun2', c);
 cellfun('isempty', c);
 cellfun('size', c);
-fzero('froot', x0);
+fzero('fbase', x0);
 end
 `,
       'myfun.m': fn('myfun'),
       'myfun2.m': fn('myfun2'),
-      'froot.m': fn('froot'),
+      'fbase.m': fn('fbase'),
       'size.m': fn('size'),
     });
     // `cellfun('size', c)` is cellfun's own fast path, not the project's size.m.
     expect(from(edges, 'texts.m')).toEqual([
-      'texts.m texts -references-> froot @ froot.m',
+      'texts.m texts -references-> fbase @ fbase.m',
       'texts.m texts -references-> myfun @ myfun.m',
       'texts.m texts -references-> myfun2 @ myfun2.m',
     ]);
@@ -183,17 +183,17 @@ describe('MATLAB code run by eval', () => {
 if sel
     eval('helper(1)');
 end
-eval('s05_01');
+eval('q07_3');
 eval([mfilename '(''sel'')']);
 eval(['load ', fn]);
-eval([op '(''set_proc'')']);
+eval([op '(''arm_job'')']);
 eval('broken(', 'onerr(1)');
 eval('eval(''inner(1)'')');
 x = evalc('quiet(2)');
 end
 `,
-      ...Object.fromEntries(['helper', 'onerr', 'inner', 'quiet', 'broken', 'set_proc'].map((n) => [`${n}.m`, fn(n)])),
-      's05_01.m': 'disp(1);\n',
+      ...Object.fromEntries(['helper', 'onerr', 'inner', 'quiet', 'broken', 'arm_job'].map((n) => [`${n}.m`, fn(n)])),
+      'q07_3.m': 'disp(1);\n',
     });
     expect(from(edges, 'evals.m')).toEqual([
       // `[mfilename '(''sel'')']`: this file's own function.
@@ -202,16 +202,16 @@ end
       'evals.m evals -calls-> inner @ inner.m',
       // The catch code runs when the code fails (here it does not parse).
       'evals.m evals -calls-> onerr @ onerr.m',
-      'evals.m evals -calls-> quiet @ quiet.m',
       // A statement naming a script runs it.
-      'evals.m evals -calls-> s05_01.m @ s05_01.m',
-      // Not broken (no code), not set_proc (`op` unknown), nothing of `load <file>`.
+      'evals.m evals -calls-> q07_3.m @ q07_3.m',
+      'evals.m evals -calls-> quiet @ quiet.m',
+      // Not broken (no code), not arm_job (`op` unknown), nothing of `load <file>`.
     ]);
   });
 
-  it('places every reference of the code on the line of the argument that gives it', () => {
-    // The code is given over two lines, from line 3.
-    expect(refs('f.m', "function f()\nx = 1;\neval(['a = helper(1);', ...\n      'b = other(a);']);\nend\n")).toEqual(['3 calls:helper', '3 calls:other']);
+  it('places every reference of code given in literal pieces on the line its name is written on', () => {
+    // The code is given over two lines, from line 3: each name is where a piece writes it.
+    expect(refs('f.m', "function f()\nx = 1;\neval(['a = helper(1);', ...\n      'b = other(a);']);\nend\n")).toEqual(['3 calls:helper', '4 calls:other']);
   });
 
   it('reads the code a variable holds there; a name the code assigns is still a call, made at runtime', () => {
@@ -229,28 +229,28 @@ end
   });
 
   it('keeps the call of a function a conditional eval may shadow, and leaves no row for one nothing answers', async () => {
-    // fieldtrip's test_bug1306: the eval runs only when ft_read_header is missing.
+    // The eval runs only when tk_peek_hdr is missing.
     const { edges, unresolved } = await indexOfProject({
-      'test_bug1306.m': `function test_bug1306(cfg)
-if ~exist('ft_read_header') && exist('read_header')
-  eval('ft_read_header = @read_header;');
+      'check_case77.m': `function check_case77(cfg)
+if ~exist('tk_peek_hdr') && exist('peek_hdr')
+  eval('tk_peek_hdr = @peek_hdr;');
 end
-hdr = ft_read_header(cfg.dataset);
+hdr = tk_peek_hdr(cfg.dataset);
 eval('tmp = 3;');
 v = tmp(2);
 load(cfg.file, 'lat');
 g = lat(1);
 end
 `,
-      'ft_read_header.m': fn('ft_read_header'),
-      'read_header.m': fn('read_header'),
+      'tk_peek_hdr.m': fn('tk_peek_hdr'),
+      'peek_hdr.m': fn('peek_hdr'),
     });
-    expect(from(edges, 'test_bug1306.m')).toEqual([
-      'test_bug1306.m test_bug1306 -calls-> ft_read_header @ ft_read_header.m',
-      'test_bug1306.m test_bug1306 -references-> read_header @ read_header.m',
+    expect(from(edges, 'check_case77.m')).toEqual([
+      'check_case77.m check_case77 -calls-> tk_peek_hdr @ tk_peek_hdr.m',
+      'check_case77.m check_case77 -references-> peek_hdr @ peek_hdr.m',
     ]);
     // tmp (eval'd) and lat (loaded) answer to nothing: no row is left for them.
-    expect(unresolved.filter((r) => r.startsWith('test_bug1306.m'))).toEqual([]);
+    expect(unresolved.filter((r) => r.startsWith('check_case77.m'))).toEqual([]);
   });
 
   it('places a name code given as text calls by the way it is evaluated: for a value, no script runs', async () => {
@@ -308,7 +308,7 @@ describe('MATLAB names a load that does not list them may make', () => {
       "eval(['load ' fname])", "eval(['load ', d, fname, ' -mat'])", "evalc(['load ' fname])",
     ];
     for (const form of forms) {
-      expect(inF(`${form}\nx = BPMnum(3);\nplot(t0)`), form).toEqual(['3 calls:BPMnum runtime', '4 calls:t0 runtime']);
+      expect(inF(`${form}\nx = DEVnum(3);\nplot(t0)`), form).toEqual(['3 calls:DEVnum runtime', '4 calls:t0 runtime']);
     }
   });
 
@@ -362,7 +362,7 @@ end
 
   it('a load on one branch of an if, a switch or a try marks no read on a branch that excludes it; one after the statement, or in a loop holding both, it marks', () => {
     expect(inF('if v\n  load(fname)\nelse\n  a = makedefaults(1);\nend\nb = After(1);')).toEqual(['5 calls:makedefaults', '7 calls:After runtime']);
-    expect(inF('if v\n  load(fname)\n  a = Same(1);\nelseif d\n  b = InElseif(1);\nelseif InCond(2)\nelse\n  c = InElse(1);\nend')).toEqual(['4 calls:Same runtime', '6 calls:InElseif', '7 calls:InCond', '9 calls:InElse']);
+    expect(inF('if v\n  load(fname)\n  a = Same(1);\nelseif d\n  b = InElseif(1);\nelseif InTest(2)\nelse\n  c = InElse(1);\nend')).toEqual(['4 calls:Same runtime', '6 calls:InElseif', '7 calls:InTest', '9 calls:InElse']);
     expect(inF('if v\n  if d\n    load(fname)\n  end\nelse\n  a = OuterElse(1);\nend')).toEqual(['7 calls:OuterElse']);
     expect(inF('switch v\n  case 1\n    load(fname)\n  case 2\n    c = fallbackcfg(3);\n  otherwise\n    o = InOtherwise(1);\nend\nz = AfterSwitch(1);')).toEqual(['6 calls:fallbackcfg', '8 calls:InOtherwise', '10 calls:AfterSwitch runtime']);
     expect(inF('try\n  load(fname)\n  a = InTry(1);\ncatch\n  b = report_failure(2);\nend\nc = AfterTry(1);')).toEqual(['4 calls:InTry runtime', '6 calls:report_failure', '8 calls:AfterTry runtime']);
@@ -422,13 +422,13 @@ end
     expect(inF("load(fname, 'a');\na(2)\nz = Q7(1);")).toEqual(['3 calls:a runtime', '4 calls:Q7']);
   });
 
-  it('a call passing a text or a handle stays a call: siglab(\'DataAbort\'), g(@h)', () => {
-    expect(inF("load gd\nsiglab('DataAbort')\ng(@h)\nk = Data(2);")).toEqual(['3 calls:siglab', '4 calls:g', '4 function_ref:h', '5 calls:Data runtime']);
+  it('a call passing a text or a handle stays a call: sigtag(\'HaltFeed\'), g(@h)', () => {
+    expect(inF("load gd\nsigtag('HaltFeed')\ng(@h)\nk = Data(2);")).toEqual(['3 calls:sigtag', '4 calls:g', '4 function_ref:h', '5 calls:Data runtime']);
   });
 
   it('so does one no index can be: passing any text, a function, a cell, a struct the code built; several outputs; a statement of its own with arguments, whatever ends it', () => {
-    const body = "load gd\nok = FcUtil('|_?', 3);\nh(@(x) x, 1)\nc({1})\ncfg = [];\ncfg.output = 'cov';\nft_analysis(cfg, 2)\n[a, b] = two(3);\nfloor92(50, 1);\nhor_line(3, 4)\nk = Data(3);";
-    expect(inF(body)).toEqual(['3 calls:FcUtil', '4 calls:h', '5 calls:c', '8 calls:ft_analysis', '9 calls:two', '10 calls:floor92', '11 calls:hor_line', '12 calls:Data runtime']);
+    const body = "load gd\nok = FcUtil('|_?', 3);\nh(@(x) x, 1)\nc({1})\ncfg = [];\ncfg.output = 'sum';\ntk_analysis(cfg, 2)\n[a, b] = two(3);\nslab37(50, 1);\nhz_mark(3, 4)\nk = Data(3);";
+    expect(inF(body)).toEqual(['3 calls:FcUtil', '4 calls:h', '5 calls:c', '8 calls:tk_analysis', '9 calls:two', '10 calls:slab37', '11 calls:hz_mark', '12 calls:Data runtime']);
   });
 
   it('a statement of its own is not marked: it may run a script, in this workspace', () => {
@@ -450,25 +450,25 @@ describe('MATLAB callbacks given as text', () => {
   it('references what the code calls, in the base workspace: its own variables are none, the function\'s are not its', async () => {
     const edges = await edgesOfProject({
       'gui.m': `function gui(h, panel)
-uicontrol('Style', 'pushbutton', 'Callback', 'corgui(''ShowResp'')');
+uicontrol('Style', 'pushbutton', 'Callback', 'dialpane(''ViewGain'')');
 uicontrol('ButtonDownFcn', [mfilename '(''sel'')']);
 h.Callback = 'go';
 set(h, 'KeyPressFcn', 'onkey');
 uimenu('Callback', 'refresh_plots');
-uicontrol('Callback', 'v = get(gcbo,''Value''); setv(v)');
+uicontrol('Callback', 'v = get(gcbo,''Value''); storev(v)');
 uicontrol('Callback', 'show(panel)');
 s = strrep(h, 'Callback', 'notacallback');
 evalin('base', 'refresh_all');
 params = evalin('base', 'SimParams');
 end
 `,
-      ...Object.fromEntries(['corgui', 'go', 'onkey', 'setv', 'v', 'show', 'panel', 'refresh_all', 'notacallback', 'SimParams'].map((n) => [`${n}.m`, fn(n)])),
+      ...Object.fromEntries(['dialpane', 'go', 'onkey', 'storev', 'v', 'show', 'panel', 'refresh_all', 'notacallback', 'SimParams'].map((n) => [`${n}.m`, fn(n)])),
       'refresh_plots.m': 'plot(1);\n',
     });
     expect(from(edges, 'gui.m')).toEqual([
       // evalin runs the code now, in the base workspace.
       'gui.m gui -calls-> refresh_all @ refresh_all.m',
-      'gui.m gui -references-> corgui @ corgui.m',
+      'gui.m gui -references-> dialpane @ dialpane.m',
       'gui.m gui -references-> go @ go.m',
       'gui.m gui -references-> gui @ gui.m',
       'gui.m gui -references-> onkey @ onkey.m',
@@ -476,8 +476,8 @@ end
       'gui.m gui -references-> panel @ panel.m',
       // A callback naming a script runs it on the event.
       'gui.m gui -references-> refresh_plots.m @ refresh_plots.m',
-      'gui.m gui -references-> setv @ setv.m',
       'gui.m gui -references-> show @ show.m',
+      'gui.m gui -references-> storev @ storev.m',
       // Not v, the callback's own variable; not what strrep is given as text;
       // not SimParams, whose value evalin reads: most often a variable there.
     ]);
@@ -555,18 +555,18 @@ describe('MATLAB fields of objects', () => {
   it('forgets what an object field holds across a call that may change it, an alias, or a property method', () => {
     const code = `classdef Elem < handle
   properties
-    PassMethod = 'DriftPass'
+    StepFn = 'GlideStep'
     Mode
   end
   methods
     function track(self)
-      self.PassMethod = 'fn_identity';
+      self.StepFn = 'fn_identity';
       self.update();
-      feval(self.PassMethod);
+      feval(self.StepFn);
     end
     function direct(self)
-      self.PassMethod = 'fn_direct';
-      feval(self.PassMethod);
+      self.StepFn = 'fn_direct';
+      feval(self.StepFn);
     end
     function moded(self)
       self.Mode = 'fn_mode';
@@ -576,13 +576,13 @@ describe('MATLAB fields of objects', () => {
       self.Mode = upper(v);
     end
     function update(self)
-      self.PassMethod = 'fn_quad';
+      self.StepFn = 'fn_quad';
     end
   end
 end
 `;
-    // `self.PassMethod` / `self.Mode` read without parentheses are bare members, which the resolver drops as property reads.
-    expect(called(code, 'Elem.m')).toEqual(['Elem::Mode', 'Elem::PassMethod', 'Elem::update', 'fn_direct']);
+    // `self.StepFn` / `self.Mode` read without parentheses are bare members, which the resolver drops as property reads.
+    expect(called(code, 'Elem.m')).toEqual(['Elem::Mode', 'Elem::StepFn', 'Elem::update', 'fn_direct']);
   });
 
   it('keeps a struct the function built across calls, and an object field only up to the next call', () => {
@@ -592,9 +592,9 @@ s.method = 'fn_alpha';
 t = s;
 t.method = 'fn_beta';
 feval(s.method);
-E.PassMethod = 'fn_epass';
+E.StepFn = 'fn_epass';
 consume(E);
-feval(E.PassMethod, E);
+feval(E.StepFn, E);
 x.fn = 'fn_param';
 feval(x.fn);
 x.fn = 'fn_param2';
@@ -804,9 +804,9 @@ t = struct('Callback', 'go_three');
 cb = 'go_lower';
 set(h, 'callback', cb);
 myfun('Callback', 'go_not');
-q = quad('QF', 0.34, 1.8157, 'QuadLinearPass');
-cback = ['rload(''GenFig'', COR(1).name, COR(1).status);'];
-uimenu(h, 'Callback', cback);
+q = quad('QZ', 0.21, 2.5, 'BendLinStep');
+cbtext = ['rtfetch(''DrawPane'', RUNS(1).name, RUNS(1).status);'];
+uimenu(h, 'Callback', cbtext);
 uicontrol('Callback', ['go_hole(' num2str(k) ')']);
 uicontrol('Callback', [fn '(1)']);
 h(2).Callback = 'go_indexed';
@@ -819,14 +819,14 @@ uicontrol('Parent', h, ...
 end
 `,
       ...Object.fromEntries(
-        ['go_menu', 'go_two', 'go_three', 'go_lower', 'go_not', 'go_lost', 'go_text', 'go_cont', 'myfun', 'quad', 'QF', 'QuadLinearPass', 'rload', 'go_hole', 'go_indexed', 'base_fn', 'base_catch'].map((n) => [`${n}.m`, fn(n)]),
+        ['go_menu', 'go_two', 'go_three', 'go_lower', 'go_not', 'go_lost', 'go_text', 'go_cont', 'myfun', 'quad', 'QZ', 'BendLinStep', 'rtfetch', 'go_hole', 'go_indexed', 'base_fn', 'base_catch'].map((n) => [`${n}.m`, fn(n)]),
       ),
     });
     expect(from(edges, 'gui2.m')).toEqual([
       // evalin's code and its catch code run now, in the base workspace.
       'gui2.m gui2 -calls-> base_catch @ base_catch.m',
       'gui2.m gui2 -calls-> base_fn @ base_fn.m',
-      // An accelerator lattice's own quad, not MATLAB's integrator: 'QF' names a magnet.
+      // A project's own quad, not MATLAB's integrator: 'QZ' names a part of the model.
       'gui2.m gui2 -calls-> myfun @ myfun.m',
       'gui2.m gui2 -calls-> quad @ quad.m',
       // Pairs and text continued over lines (`...`).
@@ -838,11 +838,11 @@ end
       // text's own string spells 'Callback': the pairs start after it.
       'gui2.m gui2 -references-> go_text @ go_text.m',
       'gui2.m gui2 -references-> go_three @ go_three.m',
-      'gui2.m gui2 -references-> rload @ rload.m',
-      // Not go_two (a value), go_not (myfun takes text), QF, go_lost ('Callback' may be the value of
+      'gui2.m gui2 -references-> rtfetch @ rtfetch.m',
+      // Not go_two (a value), go_not (myfun takes text), QZ, go_lost ('Callback' may be the value of
       // the property fn names).
     ]);
-    // COR is a base-workspace variable the callback reads: no row.
+    // RUNS is a base-workspace variable the callback reads: no row.
     expect(unresolved.filter((r) => r.startsWith('gui2.m'))).toEqual([]);
   });
 });

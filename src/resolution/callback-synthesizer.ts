@@ -5470,7 +5470,7 @@ export const SYNTH_PASSES: SynthPassDef[] = [
   { name: 'matlabClassFolderEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabClassFolderContainsEdges(q, y) },
   // `ALGORITHM::main` onto each subclass's override; a self call of a method only subclasses define onto theirs.
   { name: 'matlabOverrideEdges', gate: (has) => has('matlab'), run: (q, _c, y) => matlabOverrideEdges(q, y) },
-  // `feval(regr, S)` onto each function a call of dacefit passes as `regr` (`'regpoly0'`, `@regpoly1`).
+  // `feval(basisf, S)` onto each function a call of fitmodel passes as `basisf` (`'basis0'`, `@basis1`).
   { name: 'matlabArgumentEdges', gate: (has) => has('matlab'), run: (q, c, y) => matlabArgumentEdges(q, c, y, MAX_CALLBACKS_PER_CHANNEL) },
 ];
 

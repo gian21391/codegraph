@@ -1,10 +1,10 @@
 /**
  * MATLAB class-folder methods → their class, as `contains` edges.
  *
- * A MATLAB class kept in a class folder (`@SerialLink/`) declares itself in
- * `@SerialLink/SerialLink.m` (`classdef SerialLink …`), and each other file in
- * that folder holds one of its methods (`@SerialLink/fdyn.m` → the method
- * `SerialLink::fdyn`). Extraction sees one file at a time, so it can link a
+ * A MATLAB class kept in a class folder (`@ChainLink/`) declares itself in
+ * `@ChainLink/ChainLink.m` (`classdef ChainLink …`), and each other file in
+ * that folder holds one of its methods (`@ChainLink/fsim.m` → the method
+ * `ChainLink::fsim`). Extraction sees one file at a time, so it can link a
  * method only to its own file, and the class node never contains the methods
  * kept beside it — `codegraph_node`'s member outline, the viewer, dead-code
  * and anything that walks a class's members saw only the classdef file's.

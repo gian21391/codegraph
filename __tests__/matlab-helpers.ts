@@ -172,13 +172,42 @@ export interface ProjectState {
 
 /**
  * What the catalog checks of a state beside its edges and rows (never part of
- * its snapshot): `nodes`, every node as `file qualified-name`, and
+ * its snapshot): `nodes`, every node as `file qualified-name`;
  * `exceptions`, every stored extraction error that comes from an exception
- * the product caught while extracting a file, as `file: message`.
+ * the product caught while extracting a file, as `file: message`; and
+ * `sharedPlaces`, every place two or more MATLAB rows and edges share (see
+ * sharedMatlabPlaces).
  */
 export interface StateFacts {
   nodes: string[];
   exceptions: string[];
+  sharedPlaces: string[];
+}
+
+/**
+ * The places of a MATLAB index that two or more of its stored references
+ * share, each as `file:line:column kind: what is there | …`: its live,
+ * failed and dormant rows and its edges (none a synthesis made, which writes
+ * an edge per value at one site on purpose), by source, kind, line and
+ * column, a row's kind with the edge kinds it resolves to (`calls` with
+ * `instantiates`, `function_ref` with `references`). The store keeps one edge
+ * per source, target, kind, line and column, so references of one place
+ * resolving to one target are one edge, and a sync, which turns an edge back
+ * into one row, ends with fewer than a fresh index: every reference the
+ * extraction writes has its own place (step 14).
+ */
+export function sharedMatlabPlaces(d: ReturnType<DatabaseConnection['getDb']>): string[] {
+  const family = (k: string) => (k === 'instantiates' ? 'calls' : k === 'references' ? 'function_ref' : k);
+  const at = new Map<string, string[]>();
+  const add = (key: string, what: string) => (at.get(key) ?? at.set(key, []).get(key)!).push(what);
+  for (const r of d.prepare(`SELECT file_path AS f, from_node_id AS s, reference_kind AS k, line AS l, col AS c, reference_name AS n, status AS st FROM unresolved_refs WHERE language = 'matlab'`).all() as Array<{ f: string; s: string; k: string; l: number; c: number; n: string; st: string }>) {
+    add(`${r.f}:${r.l}:${r.c} ${family(r.k)}\0${r.s}`, `row ${r.k}:${r.n} ${r.st}`);
+  }
+  for (const e of d.prepare(`SELECT s.file_path AS f, e.source AS s, e.kind AS k, e.line AS l, e.col AS c, t.qualified_name AS t, e.metadata AS m FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target WHERE e.kind <> 'contains' AND s.language = 'matlab'`).all() as Array<{ f: string; s: string; k: string; l: number | null; c: number | null; t: string; m: string | null }>) {
+    if (e.m && (JSON.parse(e.m) as { synthesizedBy?: unknown }).synthesizedBy !== undefined) continue;
+    add(`${e.f}:${e.l}:${e.c} ${family(e.k)}\0${e.s}`, `edge ${e.k} ${e.t}`);
+  }
+  return [...at].filter(([, v]) => v.length > 1).map(([k, v]) => `${k.split('\0')[0]}: ${v.sort().join(' | ')}`).sort();
 }
 
 /**
@@ -210,7 +239,7 @@ export function stateFacts(root: string): StateFacts {
       try { list = JSON.parse(f.e); } catch { list = [{ code: 'parse_error', message: String(f.e) }]; }
       for (const e of Array.isArray(list) ? list : [list]) if (isExtractionException(e)) exceptions.push(`${f.p}: ${String((e as { message?: unknown }).message ?? '')}`);
     }
-    return { nodes, exceptions: exceptions.sort() };
+    return { nodes, exceptions: exceptions.sort(), sharedPlaces: sharedMatlabPlaces(d) };
   } finally {
     db.close();
   }

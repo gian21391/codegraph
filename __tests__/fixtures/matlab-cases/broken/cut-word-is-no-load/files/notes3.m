@@ -1,4 +1,4 @@
 *****
 *****
-aload data.mat x
+qload data.mat x
 x(1)

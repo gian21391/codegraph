@@ -127,12 +127,12 @@ describe('scanDynamicDispatch', () => {
 describe('scanDynamicDispatch — MATLAB', () => {
   it('reads no dispatch in comments, strings or continuation tails', () => {
     const body = [
-      'function veh = Bicycle(varargin)',
-      "% 'steermax',M    Maximu steer angle [rad] (default 0.5)",
+      'function car = Wagon(varargin)',
+      "% 'lanesel',K    which lane [index] (default 2)",
       '%{',
       '  tbl[k](x)',
       '%}',
-      "  opt.color = 'tile[r g b](0.5)';  % default [0.5 1 0.5] (light green)",
+      "  opt.paint = 'shade[c m y](0.7)';  % initial [0.2 0.7 0.2] (pale blue)",
       '  y = f(a, ...  speed [m/s] (default 1)',
       '         b);',
       '!echo x[1](2)',

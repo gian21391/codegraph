@@ -1,5 +1,5 @@
 {
-  "why": "Class names are case-sensitive: WAVE(1) beside @wave/ (whose WAVE.m is a method of wave) links nothing, and a nearer case variant vetoes the farther @WAVE class; beside @WAVE/ it instantiates WAVE (project rule; harvested from matlab-resolution.test.ts 'MATLAB names matched with their case', @tps vs @TPS).",
+  "why": "Class names are case-sensitive: WAVE(1) beside @wave/ (whose WAVE.m is a method of wave) links nothing, and a nearer case variant vetoes the farther @WAVE class; beside @WAVE/ it instantiates WAVE (project rule; harvested from matlab-resolution.test.ts 'MATLAB names matched with their case', @gmap vs @GMAP).",
   "truth": {
     "edges": [
       "p2/near.m near -instantiates-> WAVE @ p2/@WAVE/WAVE.m"

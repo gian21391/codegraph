@@ -6,11 +6,11 @@
  * `global` it declares is then one of the caller's. Code that starts with a
  * script of globals and indexes them is common:
  *
- *     function analorb(SectorList)
- *     alsglobe                      % a script: `global ... IDXgolden ...`
- *     Xerr = x - IDXgolden(IDBPMelem);
+ *     function report(rows)
+ *     setup_globals                 % a script: `global ... REFTABLE ...`
+ *     d = x - REFTABLE(k);
  *
- * Nothing in the project carries `IDXgolden`, and it is written with
+ * Nothing in the project carries `REFTABLE`, and it is written with
  * arguments, so a resolution pass parks it as failed, a call leaving the
  * index (see ./matlab-failures). It is the script's variable. This pass keeps
  * such a row dormant instead, which no reader counts, by this rule:
@@ -20,9 +20,11 @@
  *     resolution decides, untouched here;
  *   - its scope (the node the row is from: a function, a method, `file:<p>`
  *     for a script's top level) has a call into a script's file node
- *     (isMatlabScriptFile) strictly before it, by line and then column. Text
- *     order is what counts: a run later in a loop does not, and the row
- *     stays failed. A nested function does not inherit its parent's runs;
+ *     (isMatlabScriptFile) strictly before it, by line and then column, a
+ *     reference anchored where code given as text runs read at its anchor
+ *     (matlabPlaceOrder). Text order is what counts: a run later in a loop
+ *     does not, and the row stays failed. A nested function does not
+ *     inherit its parent's runs;
  *   - and that script makes the name: it is in its top level's variables
  *     (matlabScriptMadeNames: assignments of any form, `for` and `catch`
  *     variables, `global`, a `load f a b` list; none a `clear` removes, and
@@ -62,6 +64,7 @@ import { DORMANT_REF_STATUS, type QueryBuilder } from '../db/queries';
 import type { MaybeYield } from './cooperative-yield';
 import { getParser, loadGrammarsForLanguages } from '../extraction/grammars';
 import { matlabScriptMadeNames } from '../extraction/languages/matlab';
+import { matlabPlaceOrder } from '../extraction/languages/matlab-places';
 import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { matlabParseText } from '../extraction/languages/matlab-syntax';
 import { indexedMatlabScriptLookup, isMatlabScriptFile } from '../graph/matlab-scripts';
@@ -81,7 +84,7 @@ export const MATLAB_SCRIPT_RUN_DEPTH = 8;
  * The largest script, in bytes, whose names are read: a larger one makes
  * none (its callers' rows stay failed), which bounds the one stretch the pass
  * cannot yield in, a script's parse and scan. About three times the largest
- * script physbase runs (41 KB).
+ * script a large project of 17k files runs (41 KB).
  */
 export const MATLAB_SCRIPT_MAX_BYTES = 128 * 1024;
 
@@ -162,9 +165,16 @@ interface Run {
   col: number;
 }
 
-/** Whether (line, col) a is strictly before b. */
+/** a's place against b's in the order code runs (matlabPlaceOrder): negative when a is before b. */
+function comparePlaces(a: { line: number; col: number }, b: { line: number; col: number }): number {
+  const x = matlabPlaceOrder(a.line, a.col);
+  const y = matlabPlaceOrder(b.line, b.col);
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
+
+/** Whether run a is strictly before row b in the order code runs. */
 const before = (a: { line: number; col: number }, b: { line: number; column: number }): boolean =>
-  a.line < b.line || (a.line === b.line && a.col < b.column);
+  comparePlaces(a, { line: b.line, col: b.column }) < 0;
 
 /**
  * The pass (see the top of this file). A project with no MATLAB file costs
@@ -199,7 +209,7 @@ export async function settleMatlabScriptWorkspaces(
   const carried = matlabCarriedKeys(shaped.flatMap((r) => matlabNameKeys(r.referenceName)), null, queries);
   const rows = shaped.filter((r) => !matlabNameKeys(r.referenceName).some(carried));
   stats.rows = rows.length;
-  for (const list of runsBy.values()) list.sort((a, b) => a.line - b.line || a.col - b.col);
+  for (const list of runsBy.values()) list.sort(comparePlaces);
 
   const lookup = indexedMatlabScriptLookup({ getNodesInFile: (filePath) => queries.getNodesByFile(filePath) }, projectRoot);
   let parser: ReturnType<typeof getParser> | undefined;

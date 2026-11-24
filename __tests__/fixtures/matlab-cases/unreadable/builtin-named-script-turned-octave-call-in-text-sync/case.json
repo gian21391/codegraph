@@ -1,0 +1,39 @@
+{
+  "why": "A script on the path named like a built-in runs before it (MATLAB doc 'Function Precedence Order'), so the statement `plot` that `evalin` runs reaches `tools/plot.m` (step 4: code run in another workspace keeps its calls). Once that file is Octave it answers no call (step 4; Octave is not read), the class's method `plot` is reached only through an object of `Gadget` (MATLAB doc 'Methods That Modify Default Behavior'), and the call is the built-in's, which nothing in the project could answer: no row (step 8, the built-in discard). Turned back to MATLAB code, the script answers it again. Each step must end where a fresh index ends (project rule; found by the step 13 fuzzer, s1332-c101, step 14).",
+  "truth": {
+    "edges": [
+      "lib/helper.m lib/helper.m -calls-> tools/plot.m @ tools/plot.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "tools/plot.m": "## Octave\na = 1;\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "lib/helper.m",
+            "to": "plot"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "lib/helper.m",
+            "name": "plot"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "tools/plot.m": "a = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/helper.m lib/helper.m -calls-> tools/plot.m @ tools/plot.m"
+        ]
+      }
+    }
+  ]
+}

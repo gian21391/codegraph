@@ -1,5 +1,5 @@
 {
-  "why": "The string callback `'F(1)'` calls `F` with an argument, so an empty root `F.m`, an empty MATLAB script (the user's ruling (step 11)), does not answer it, and the nearest function, `off/F.m`, does (a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live')). Once `F.m` is deleted in the same sync that adds a root `f.m`, `f.m` is a nearer case variant of the call, and the project's case-variant veto keeps it from linking to `off/F.m`, as a fresh index has it; the sync keeps the callback linked (project rule, the veto of matlab-lookup's nearerInexactMatch; with no path config every folder is in reach; project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer).",
+  "why": "The string callback `'F(1)'` calls `F` with an argument, so an empty root `F.m`, an empty MATLAB script (the user's ruling (step 11)), does not answer it, and the nearest function, `off/F.m`, does (a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live')). Once `F.m` is deleted in the same sync that adds a root `f.m`, `f.m` is a nearer case variant of the call, and the project's case-variant veto keeps it from linking to `off/F.m`, as a fresh index has it; a sync kept the callback linked until step 14 (project rule, the veto of matlab-lookup's nearerInexactMatch; with no path config every folder is in reach; project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer).",
   "truth": {
     "edges": [
       "helper.m helper.m -references-> F @ off/F.m"
@@ -30,13 +30,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S11-fuzz-5",
-    "fails": [
-      "step 2 (synced): unwanted edge helper.m helper.m -references-> F @ off/F.m (matches {\"from\":\"helper.m\",\"to\":\"F\"})",
-      "step 2 (F.m, f.m): edges differ; only synced: [\"helper.m helper.m -references-> F @ off/F.m\"]; only fresh: []",
-      "step 2 (F.m, f.m): rows differ; only synced: []; only fresh: [\"helper.m:1 function_ref:F\"]"
-    ]
-  }
+  ]
 }

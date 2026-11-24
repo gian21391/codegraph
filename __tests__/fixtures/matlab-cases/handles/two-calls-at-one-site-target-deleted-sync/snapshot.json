@@ -1,8 +1,10 @@
 {
   "index": {
     "edges": [
-      "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
-      "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+      "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+      "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+      "app/gui.m gui -references-> arm_state @ lib/arm_state.m",
+      "app/gui.m gui -references-> arm_state @ lib/arm_state.m"
     ],
     "rows": [],
     "dormant": []
@@ -11,16 +13,20 @@
     {
       "edges": [],
       "rows": [
-        "app/apply_all.m:2 calls:set_mode"
+        "app/apply_all.m:2 calls:arm_state",
+        "app/apply_all.m:2 calls:arm_state"
       ],
       "dormant": [
-        "app/gui.m:2 function_ref:set_mode"
+        "app/gui.m:2 function_ref:arm_state",
+        "app/gui.m:2 function_ref:arm_state"
       ]
     },
     {
       "edges": [
-        "app/apply_all.m apply_all -calls-> set_mode @ lib/set_mode.m",
-        "app/gui.m gui -references-> set_mode @ lib/set_mode.m"
+        "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+        "app/apply_all.m apply_all -calls-> arm_state @ lib/arm_state.m",
+        "app/gui.m gui -references-> arm_state @ lib/arm_state.m",
+        "app/gui.m gui -references-> arm_state @ lib/arm_state.m"
       ],
       "rows": [],
       "dormant": []

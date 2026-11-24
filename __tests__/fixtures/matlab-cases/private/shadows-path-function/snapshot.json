@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "lib/useP.m useP -calls-> tool @ lib/private/tool.m",
+      "lib/useK.m useK -calls-> tool @ lib/private/tool.m",
       "useTop.m useTop -calls-> tool @ tool.m"
     ],
     "rows": [],

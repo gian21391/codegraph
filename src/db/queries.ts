@@ -5780,6 +5780,23 @@ export class QueryBuilder {
   }
 
   /**
+   * The names of the MATLAB methods whose qualified name is `qualifiedName`
+   * and one more segment (`Mid::step` for `Mid`), in any file: every copy of
+   * the class, its classdef files and class folders alike. One range of
+   * idx_nodes_qualified_name (`Mid::` up to `Mid:;`, ';' follows ':').
+   */
+  getMatlabMethodNamesOfClass(qualifiedName: string): string[] {
+    const prefix = `${qualifiedName}::`;
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT name, qualified_name FROM nodes
+          WHERE qualified_name >= ? AND qualified_name < ? AND kind = 'method' AND language = 'matlab'`
+      )
+      .all(prefix, `${qualifiedName}:;`) as Array<{ name: string; qualified_name: string }>;
+    return rows.filter((r) => r.qualified_name === prefix + r.name).map((r) => r.name);
+  }
+
+  /**
    * Every resolution edge into a MATLAB node named one of `names`, with no
    * per-name ceiling, in the shape of {@link getResolutionEdgesByTargetName}:
    * what a sync rebinds for a name whose MATLAB definitions it changed

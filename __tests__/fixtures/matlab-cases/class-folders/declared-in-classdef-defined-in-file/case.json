@@ -3,14 +3,14 @@
   "truth": {
     "edges": [
       "+geo/@Pt/origin.m geo::Pt::origin -instantiates-> geo::Pt @ +geo/@Pt/Pt.m",
-      "user.m user -calls-> geo::Pt::norm2 @ +geo/@Pt/norm2.m",
+      "user.m user -calls-> geo::Pt::magsq @ +geo/@Pt/magsq.m",
       "user.m user -calls-> geo::Pt::origin @ +geo/@Pt/origin.m",
       "user.m user -instantiates-> geo::Pt @ +geo/@Pt/Pt.m"
     ],
     "noEdges": [
       {
         "at": "+geo/@Pt/Pt.m",
-        "to": "norm2"
+        "to": "magsq"
       }
     ]
   }

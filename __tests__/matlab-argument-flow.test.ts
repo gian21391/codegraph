@@ -1,7 +1,7 @@
 /**
  * MATLAB argument flow: a function that calls what its caller passes
- * (`feval(regr, S)`, `feval(varargin{:})`, `str2func(varargin{1})`,
- * `feval(cfg.winfunc, n)`, `fh(x)`, `eval(code)`) is linked to each function
+ * (`feval(basisf, S)`, `feval(varargin{:})`, `str2func(varargin{1})`,
+ * `feval(cfg.taperfn, n)`, `fh(x)`, `eval(code)`) is linked to each function
  * a call of it passes there — a name looked up where the sink is, a handle
  * where it was written, code read as code run there — followed back through
  * callers that pass their own parameter on, three calls deep. Each case has
@@ -97,9 +97,9 @@ describe('MATLAB argument records', () => {
   it('records what a call passes where the code says, up to the first argument that may stand for several', () => {
     expect(argsFacts('caller.m', `function caller(a, b, varargin)
 run2(a, b.c, varargin{:});
-m = 'regpoly0';
-if a, m = 'regpoly1'; end
-cfg.winfunc = 'gausswin';
+m = 'basis0';
+if a, m = 'basis1'; end
+cfg.taperfn = 'bellwin';
 cfg.n = 3;
 run1(m, @solve, cfg, 'helper(3)', 'not a name');
 run3(varargin{:}, 'x');
@@ -113,7 +113,7 @@ end
 `)).toEqual({
       // `b.c` of a parameter may be a struct array's field, which passes several arguments: nothing from there on.
       '2 run2': { 0: 0 },
-      '7 run1': { 0: ["'regpoly1", "'regpoly0"], 1: '@solve', 2: { o: { winfunc: "'gausswin" } }, 3: "'helper(3)" },
+      '7 run1': { 0: ["'basis1", "'basis0"], 1: '@solve', 2: { o: { taperfn: "'bellwin" } }, 3: "'helper(3)" },
       '10 run5': { 0: "'x" },
       // After calls of the project's, `a` may be an object they changed: a field of it says nothing.
       '13 run6': { 0: { p: 0, s: 1 } },
@@ -140,38 +140,38 @@ end
 });
 
 describe('MATLAB argument flow', () => {
-  const DACEFIT = `function dmodel = dacefit(S, Y, regr, corr)
-F = feval(regr, S);
+  const FITMODEL = `function fmodel = fitmodel(S, Y, basisf, kernf)
+F = feval(basisf, S);
 end
 `;
 
   it('links a feval of a parameter to each function the callers pass, a name looked up where the sink is, a handle where it was written', async () => {
     const { edges, unresolved } = await project({
-      'dacefit.m': DACEFIT,
-      'regpoly0.m': fn('regpoly0'),
-      'regpoly1.m': fn('regpoly1'),
-      'use1.m': `function use1(S, Y)\nd = dacefit(S, Y, 'regpoly0', 'corrgauss');\nend\n`,
-      // `@regpoly1` here names this file's own local function, not regpoly1.m.
-      'use2.m': `function use2(S, Y)\nd = dacefit(S, Y, @regpoly1, 'corrgauss');\nend\nfunction f = regpoly1(S)\nf = 0;\nend\n`,
+      'fitmodel.m': FITMODEL,
+      'basis0.m': fn('basis0'),
+      'basis1.m': fn('basis1'),
+      'use1.m': `function use1(S, Y)\nd = fitmodel(S, Y, 'basis0', 'kernexp');\nend\n`,
+      // `@basis1` here names this file's own local function, not basis1.m.
+      'use2.m': `function use2(S, Y)\nd = fitmodel(S, Y, @basis1, 'kernexp');\nend\nfunction f = basis1(S)\nf = 0;\nend\n`,
       // A value the caller cannot know adds nothing.
-      'use3.m': `function use3(S, Y)\nr = pick();\nd = dacefit(S, Y, r, 'corrgauss');\nend\n`,
-      'test/dacefit_test.m': `function dacefit_test()\ndacefit(1, 2, 'regpoly0');\nend\n`,
+      'use3.m': `function use3(S, Y)\nr = pick();\nd = fitmodel(S, Y, r, 'kernexp');\nend\n`,
+      'test/dacefit_test.m': `function dacefit_test()\nfitmodel(1, 2, 'basis0');\nend\n`,
     });
     expect(edges).toEqual([
-      "dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]",
-      'dacefit -calls-> regpoly1 @ use2.m [regr feval @regpoly1 use2.m:2]',
+      "fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]",
+      'fitmodel -calls-> basis1 @ use2.m [basisf feval @basis1 use2.m:2]',
     ]);
     expect(unresolved).toEqual(['use3.m:2 calls:pick']);
   });
 
   it('prefers a production site to a test for where a value is passed', async () => {
     const { edges } = await project({
-      'dacefit.m': DACEFIT,
-      'regpoly0.m': fn('regpoly0'),
-      'a_test.m': `function a_test()\ndacefit(1, 2, 'regpoly0');\nend\n`,
-      'z.m': `function z()\ndacefit(1, 2, 'regpoly0');\nend\n`,
+      'fitmodel.m': FITMODEL,
+      'basis0.m': fn('basis0'),
+      'a_test.m': `function a_test()\nfitmodel(1, 2, 'basis0');\nend\n`,
+      'z.m': `function z()\nfitmodel(1, 2, 'basis0');\nend\n`,
     });
-    expect(edges).toEqual(["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' z.m:2]"]);
+    expect(edges).toEqual(["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' z.m:2]"]);
   });
 
   it('follows a value back through callers that pass their own parameter on, three calls deep', async () => {
@@ -192,43 +192,43 @@ end
   it('follows a field of a struct the caller built, and not one read after code that may change it', async () => {
     const { edges } = await project({
       // `struct(…)` builds a value and runs nothing: the field is still the caller's.
-      'ft_spikedensity.m': `function ft_spikedensity(cfg, spike)
+      'tk_density.m': `function tk_density(cfg, spike)
 opts = struct('n', 10);
-win = feval(cfg.winfunc, opts.n);
+win = feval(cfg.taperfn, opts.n);
 end
 `,
-      'ft_late.m': `function ft_late(cfg)
+      'zz_late.m': `function zz_late(cfg)
 prepare(cfg);
-win = feval(cfg.winfunc, 10);
+win = feval(cfg.taperfn, 10);
 end
 `,
       'prepare.m': fn('prepare'),
-      'gausswin.m': fn('gausswin'),
+      'bellwin.m': fn('bellwin'),
       'hanning.m': fn('hanning'),
       'caller.m': `function caller(spike)
 cfg = [];
-cfg.winfunc = 'gausswin';
-ft_spikedensity(cfg, spike);
-cfg.winfunc = 'hanning';
-ft_late(cfg);
+cfg.taperfn = 'bellwin';
+tk_density(cfg, spike);
+cfg.taperfn = 'hanning';
+zz_late(cfg);
 end
 `,
     });
-    expect(edges).toEqual(["ft_spikedensity -calls-> gausswin @ gausswin.m [cfg.winfunc feval 'gausswin' caller.m:4]"]);
+    expect(edges).toEqual(["tk_density -calls-> bellwin @ bellwin.m [cfg.taperfn feval 'bellwin' caller.m:4]"]);
   });
 
   it('links a switchyard to the local function a caller names, not a same-named one elsewhere', async () => {
     const { edges } = await project({
-      'intlat.m': `function varargout = intlat(varargin)
+      'intgrid.m': `function varargout = intgrid(varargin)
 [varargout{1:nargout}] = feval(varargin{:});
 end
 function LoadLattice(h)
 end
 `,
       'LoadLattice.m': fn('LoadLattice'),
-      'gui.m': `function gui(h)\nintlat('LoadLattice', h);\nend\n`,
+      'gui.m': `function gui(h)\nintgrid('LoadLattice', h);\nend\n`,
     });
-    expect(edges).toEqual(["intlat -calls-> LoadLattice @ intlat.m [varargin{1} feval 'LoadLattice' gui.m:2]"]);
+    expect(edges).toEqual(["intgrid -calls-> LoadLattice @ intgrid.m [varargin{1} feval 'LoadLattice' gui.m:2]"]);
   });
 
   it('links a GUIDE str2func of the first argument to the local callback a callback text names', async () => {
@@ -251,16 +251,16 @@ end
 
   it('completes a template of text around a parameter, and not one around two', async () => {
     const { edges } = await project({
-      'ft_run.m': `function ft_run(method, toolbox, data)
-feval(['ft_' method], data);
+      'tk_run.m': `function tk_run(method, toolbox, data)
+feval(['tk_' method], data);
 feval([toolbox '_' method], data);
 end
 `,
-      'ft_foo.m': fn('ft_foo'),
+      'tk_foo.m': fn('tk_foo'),
       'tb_foo.m': fn('tb_foo'),
-      'caller.m': `function caller(d)\nft_run('foo', 'tb', d);\nend\n`,
+      'caller.m': `function caller(d)\ntk_run('foo', 'tb', d);\nend\n`,
     });
-    expect(edges).toEqual(["ft_run -calls-> ft_foo @ ft_foo.m [method feval 'foo' caller.m:2]"]);
+    expect(edges).toEqual(["tk_run -calls-> tk_foo @ tk_foo.m [method feval 'foo' caller.m:2]"]);
   });
 
   it('calls a handle a parameter holds, and indexes nothing for a text there', async () => {
@@ -333,28 +333,28 @@ end
     const root = tempDir('cg-matlab-args-sync-');
     try {
       writeTree(root, {
-        'dacefit.m': DACEFIT,
-        'regpoly0.m': fn('regpoly0'),
-        'regpoly1.m': fn('regpoly1'),
-        'use1.m': `function use1(S, Y)\nd = dacefit(S, Y, 'regpoly0');\nend\n`,
+        'fitmodel.m': FITMODEL,
+        'basis0.m': fn('basis0'),
+        'basis1.m': fn('basis1'),
+        'use1.m': `function use1(S, Y)\nd = fitmodel(S, Y, 'basis0');\nend\n`,
       });
       const cg = await CodeGraph.init(root, { index: true });
       try {
-        expect(argumentEdges(cg)).toEqual(["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]"]);
-        writeTree(root, { 'use1.m': `function use1(S, Y)\nd = dacefit(S, Y, 'regpoly1');\nend\n` });
+        expect(argumentEdges(cg)).toEqual(["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]"]);
+        writeTree(root, { 'use1.m': `function use1(S, Y)\nd = fitmodel(S, Y, 'basis1');\nend\n` });
         await cg.sync();
-        expect(argumentEdges(cg)).toEqual(["dacefit -calls-> regpoly1 @ regpoly1.m [regr feval 'regpoly1' use1.m:2]"]);
+        expect(argumentEdges(cg)).toEqual(["fitmodel -calls-> basis1 @ basis1.m [basisf feval 'basis1' use1.m:2]"]);
         writeTree(root, { 'use1.m': null });
         await cg.sync();
         expect(argumentEdges(cg)).toEqual([]);
-        writeTree(root, { 'use1.m': `function use1(S, Y)\nd = dacefit(S, Y, 'regpoly0');\nend\n` });
+        writeTree(root, { 'use1.m': `function use1(S, Y)\nd = fitmodel(S, Y, 'basis0');\nend\n` });
         await cg.sync();
-        expect(argumentEdges(cg)).toEqual(["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]"]);
+        expect(argumentEdges(cg)).toEqual(["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]"]);
         // The callee edited: its target's id may change, the callers' records come back with their edges.
-        writeTree(root, { 'dacefit.m': `% help\n${DACEFIT}` });
+        writeTree(root, { 'fitmodel.m': `% help\n${FITMODEL}` });
         await cg.sync();
-        expect(argumentEdges(cg)).toEqual(["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]"]);
-        writeTree(root, { 'dacefit.m': 'function dmodel = dacefit(S, Y, regr, corr)\nF = regr;\nend\n' });
+        expect(argumentEdges(cg)).toEqual(["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]"]);
+        writeTree(root, { 'fitmodel.m': 'function fmodel = fitmodel(S, Y, basisf, kernf)\nF = basisf;\nend\n' });
         await cg.sync();
         expect(argumentEdges(cg)).toEqual([]);
       } finally {
@@ -420,46 +420,46 @@ end
   it('links nothing for a sink that reads one of two parameters by how many the caller passed, and keeps a default', async () => {
     const { edges } = await project({
       'f9.m': 'function f9(a, b)\nif nargin < 2\n    b = a;\nend\nfeval(b);\nend\n',
-      'fitter.m': "function fitter(S, regr)\nif nargin < 2, regr = 'regpoly0'; end\nfeval(regr, S);\nend\n",
+      'fitter.m': "function fitter(S, basisf)\nif nargin < 2, basisf = 'basis0'; end\nfeval(basisf, S);\nend\n",
       'xx.m': fn('xx'),
       'yy.m': fn('yy'),
-      'regpoly0.m': fn('regpoly0'),
-      'regpoly1.m': fn('regpoly1'),
-      'top.m': "function top()\nf9('xx', 'yy');\nfitter(1, 'regpoly1');\nend\n",
+      'basis0.m': fn('basis0'),
+      'basis1.m': fn('basis1'),
+      'top.m': "function top()\nf9('xx', 'yy');\nfitter(1, 'basis1');\nend\n",
     });
-    expect(edges).toEqual(["fitter -calls-> regpoly1 @ regpoly1.m [regr feval 'regpoly1' top.m:3]"]);
+    expect(edges).toEqual(["fitter -calls-> basis1 @ basis1.m [basisf feval 'basis1' top.m:3]"]);
   });
 
   it('links nothing for a sink under a branch another parameter decides, and keeps one a test of its own value picks', async () => {
     const { edges } = await project({
-      // Only callers passing 'TurnPage' reach the eval; the join would take every caller's second argument.
+      // Only callers passing 'FlipSheet' reach the eval; the join would take every caller's second argument.
       'fig.m': `function varargout = fig(varargin)
-if nargin == 0, Action = 'Create'; else, Action = varargin{1}; end
-switch lower(Action)
-case 'turnpage'
+if nargin < 1, Verb = 'start'; else, Verb = varargin{1}; end
+switch lower(Verb)
+case 'flipsheet'
     move = varargin{2};
     eval(move);
-case 'findwin'
+case 'seekpane'
 end
 end
 `,
-      'atelem.m': `function E = atelem(ELEM, varargin)
+      'tkelem.m': `function E = tkelem(ELEM, varargin)
 switch lower(ELEM(1:4))
-case 'drif'
+case 'tilt'
     E = feval(ELEM, varargin{:});
 end
 end
 `,
       // The same choice made by an `if` that compares the other parameter with a text.
-      'fig2.m': "function fig2(action, move)\nif strcmp(action, 'turnpage')\n    eval(move);\nend\nend\n",
+      'pane2.m': "function pane2(action, move)\nif strcmp(action, 'flipsheet')\n    eval(move);\nend\nend\n",
       // A test of what another parameter is decides too: only callers passing a non-empty `subs` get there.
-      'asgn.m': 'function obj = asgn(obj, fun, subs)\nif ~isempty(subs)\n    obj = feval(fun, obj);\nend\nend\n',
+      'assignx.m': 'function obj = assignx(obj, fun, subs)\nif ~isempty(subs)\n    obj = feval(fun, obj);\nend\nend\n',
       'helper.m': fn('helper'),
-      'drift.m': fn('drift'),
+      'tilter.m': fn('tilter'),
       'dim.m': fn('dim'),
-      'top.m': "function top()\nfig('FindWin', 'helper');\nfig('TurnPage', 'helper(1)');\natelem('drift', 1);\nfig2('findwin', 'helper');\nasgn(1, @dim, 2);\nend\n",
+      'top.m': "function top()\nfig('SeekPane', 'helper');\nfig('FlipSheet', 'helper(1)');\ntkelem('tilter', 1);\npane2('seekpane', 'helper');\nassignx(1, @dim, 2);\nend\n",
     });
-    expect(edges).toEqual(["atelem -calls-> drift @ drift.m [ELEM feval 'drift' top.m:4]"]);
+    expect(edges).toEqual(["tkelem -calls-> tilter @ tilter.m [ELEM feval 'tilter' top.m:4]"]);
   });
 
   /** Each function `f` is called by `top` twice: once with values that reach its sink, once with values that do not. */
@@ -498,20 +498,20 @@ end
     const { edges } = await project({
       // A case-specific sink on the switch's own subject.
       'pick.m': "function pick(action)\nswitch action\n  case {'aaa', 'ccc'}\n    feval(action);\n  otherwise\n    disp(1);\nend\nend\n",
-      // Whatever no case takes, as atelem calls a function it does not know.
-      'elem.m': "function E = elem(ELEM)\nswitch lower(ELEM(1:4))\n  case 'drif'\n    E = 1;\n  case {'quad', 'bend'}\n    E = 2;\n  otherwise\n    E = feval(ELEM);\nend\nend\n",
+      // Whatever no case takes, as tkelem calls a function it does not know.
+      'elem.m': "function E = elem(ELEM)\nswitch lower(ELEM(1:4))\n  case 'tilt'\n    E = 1;\n  case {'quad', 'bend'}\n    E = 2;\n  otherwise\n    E = feval(ELEM);\nend\nend\n",
       // An early exit on a test of the same value, through a copy, and combined tests.
       'run1.m': "function run1(varargin)\nname = varargin{1};\nif ~ismember(name, {'aaa', 'bbb'}), error('unknown'); end\nfeval(varargin{:});\nend\n",
       'run2.m': "function run2(m)\nif strcmpi(m, 'AAA') || strncmp(m, 'cc', 2)\n  feval(m);\nend\nend\n",
       // A handle is no text: strcmp is false for it, and a switch on it raises an error.
       'run3.m': "function run3(m)\nif ~strcmp(m, 'none')\n  feval(m);\nend\nend\n",
       // Errors that reject malformed input decide nothing between callers; the GUIDE test of varargin{1} admits a text.
-      'fitter.m': "function fitter(S, regr)\nif numel(S) ~= 2\n  error('two please');\nend\nif ~ischar(regr) && ~isa(regr, 'function_handle'), error('regr'); end\nfeval(regr, S);\nend\n",
-      // A switchyard (intlat's): a caller passing a text gets past the first test and into the second; it makes
+      'fitter.m': "function fitter(S, basisf)\nif numel(S) ~= 2\n  error('two please');\nend\nif ~ischar(basisf) && ~isa(basisf, 'function_handle'), error('basisf'); end\nfeval(basisf, S);\nend\n",
+      // A switchyard (as intgrid's above): a caller passing a text gets past the first test and into the second; it makes
       // the same call whether outputs are asked for or not, so nargout decides nothing.
       'yard.m': [
         'function varargout = yard(varargin)',
-        'if nargin < 1 | isnumeric(varargin{1})',
+        'if numel(varargin) < 1 || isnumeric(varargin{1})',
         '  x = 1;',
         'elseif ischar(varargin{1})',
         '  try',
@@ -534,13 +534,13 @@ end
       'aaa.m': fn('aaa'),
       'bbb.m': fn('bbb'),
       'ccc.m': fn('ccc'),
-      'drift.m': fn('drift'),
+      'tilter.m': fn('tilter'),
       'quadrupole.m': fn('quadrupole'),
       'mysolver.m': fn('mysolver'),
       'top.m': [
         'function top()',
         "pick('aaa');", "pick('bbb');",
-        "elem('drift');", "elem('quadrupole');", "elem('mysolver');",
+        "elem('tilter');", "elem('quadrupole');", "elem('mysolver');",
         "run1('aaa', 1);", "run1('ccc', 1);",
         "run2('aaa');", "run2('ccc');", "run2('bbb');",
         "run3('none');", 'run3(@bbb);',
@@ -553,8 +553,8 @@ end
     });
     expect(edges).toEqual([
       "elem -calls-> mysolver @ mysolver.m [ELEM feval 'mysolver' top.m:6]",
-      'fitter -calls-> aaa @ aaa.m [regr feval @aaa top.m:15]',
-      "fitter -calls-> ccc @ ccc.m [regr feval 'ccc' top.m:14]",
+      'fitter -calls-> aaa @ aaa.m [basisf feval @aaa top.m:15]',
+      "fitter -calls-> ccc @ ccc.m [basisf feval 'ccc' top.m:14]",
       "gui -references-> aaa_Callback @ gui.m [varargin{1} str2func 'aaa_Callback' top.m:16]",
       "pick -calls-> aaa @ aaa.m [action feval 'aaa' top.m:2]",
       "run1 -calls-> aaa @ aaa.m [varargin{1} feval 'aaa' top.m:7]",
@@ -617,7 +617,7 @@ describe('MATLAB argument flow: varargin, callbacks, function takers', () => {
   it('records nothing for a dot-syntax method call or a cell callback, whose places the receiver or MATLAB shifts', async () => {
     expect(argsFacts('c.m', `function c(r)
 r.go('xfun', 'yfun');
-uicontrol('Style', 'pushbutton', 'Callback', {@intlat, 'LoadLattice'});
+uicontrol('Style', 'pushbutton', 'Callback', {@intgrid, 'LoadLattice'});
 end
 `)).toEqual({});
     const { edges } = await project({
@@ -625,8 +625,8 @@ end
       'caller.m': "function caller()\nr = Runner();\nr.go('xfun', 'yfun');\nend\n",
       'xfun.m': fn('xfun'),
       'yfun.m': fn('yfun'),
-      'intlat.m': 'function varargout = intlat(varargin)\n[varargout{1:nargout}] = feval(varargin{:});\nend\nfunction LoadLattice(h)\nend\n',
-      'gui.m': "function gui()\nuicontrol('Style', 'pushbutton', 'Callback', {@intlat, 'LoadLattice'});\nend\n",
+      'intgrid.m': 'function varargout = intgrid(varargin)\n[varargout{1:nargout}] = feval(varargin{:});\nend\nfunction LoadLattice(h)\nend\n',
+      'gui.m': "function gui()\nuicontrol('Style', 'pushbutton', 'Callback', {@intgrid, 'LoadLattice'});\nend\n",
     });
     expect(edges).toEqual([]);
   });
@@ -634,13 +634,13 @@ end
   it('follows a parameter a statement copies to another variable before the sink, as the switchyard idiom does', async () => {
     const { edges } = await project({
       'sw.m': 'function varargout = sw(varargin)\naction = varargin{1};\n[varargout{1:nargout}] = feval(action, varargin{2:end});\nend\nfunction LoadLattice(h)\nend\n',
-      'sw2.m': 'function sw2(regr)\nr = regr;\nfeval(r);\nend\n',
-      'regpoly0.m': fn('regpoly0'),
-      'top.m': "function top(h)\nsw('LoadLattice', h);\nsw2('regpoly0');\nend\n",
+      'sw2.m': 'function sw2(basisf)\nr = basisf;\nfeval(r);\nend\n',
+      'basis0.m': fn('basis0'),
+      'top.m': "function top(h)\nsw('LoadLattice', h);\nsw2('basis0');\nend\n",
     });
     expect(edges).toEqual([
       "sw -calls-> LoadLattice @ sw.m [varargin{1} feval 'LoadLattice' top.m:2]",
-      "sw2 -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' top.m:3]",
+      "sw2 -calls-> basis0 @ basis0.m [basisf feval 'basis0' top.m:3]",
     ]);
   });
 
@@ -659,7 +659,7 @@ describe('MATLAB argument hops, as explore and node word them', () => {
     describeSynthesizedHop({ source: 'a', target: 'b', kind, provenance: 'heuristic', metadata: { synthesizedBy: 'matlab-argument', registeredAt: 'use1.m:2', ...metadata } })?.summary;
 
   it('says what the call goes through and the value given', () => {
-    expect(hop('calls', { sink: 'feval', param: 'regr', value: "'regpoly0'" })).toBe("calls through `feval(regr)` given `'regpoly0'`");
+    expect(hop('calls', { sink: 'feval', param: 'basisf', value: "'basis0'" })).toBe("calls through `feval(basisf)` given `'basis0'`");
     expect(hop('calls', { sink: 'fh', param: 'fh', value: '@g' })).toBe('calls `fh` given `@g`');
     expect(hop('references', { sink: 'str2func', param: 'varargin{1}', value: "'cb'" })).toBe("references through `str2func(varargin{1})` given `'cb'`");
   });
@@ -708,23 +708,23 @@ describe('MATLAB argument flow: a sync comes to what a full index does', () => {
 
   it('syncs one path at a time as the watcher does: a callee that gains a sink, then a caller edited at the same time', async () => {
     await steps({
-      'dacefit.m': 'function dacefit(S, regr)\ny = regr;\nend\n',
-      'hop.m': "function hop(x)\nz = x;\ndacefit(1, 'aaa');\nend\n",
+      'fitmodel.m': 'function fitmodel(S, basisf)\ny = basisf;\nend\n',
+      'hop.m': "function hop(x)\nz = x;\nfitmodel(1, 'aaa');\nend\n",
       'top.m': "function top()\nhop('bbb');\nend\n",
       'aaa.m': fn('aaa'),
       'bbb.m': fn('bbb'),
     }, [
       // Both edited on disk; the callee's sync comes first, the caller's after it.
       [{
-        'dacefit.m': 'function dacefit(S, regr)\nfeval(regr);\nend\n',
-        'hop.m': "function hop(x)\nfeval(x);\ndacefit(1, 'aaa');\nend\n",
-      }, null, ['dacefit.m']],
+        'fitmodel.m': 'function fitmodel(S, basisf)\nfeval(basisf);\nend\n',
+        'hop.m': "function hop(x)\nfeval(x);\nfitmodel(1, 'aaa');\nend\n",
+      }, null, ['fitmodel.m']],
       [{}, [
-        "dacefit -calls-> aaa @ aaa.m [regr feval 'aaa' hop.m:3]",
+        "fitmodel -calls-> aaa @ aaa.m [basisf feval 'aaa' hop.m:3]",
         "hop -calls-> bbb @ bbb.m [x feval 'bbb' top.m:2]",
       ], ['hop.m']],
       // The callee loses its sink, synced alone.
-      [{ 'dacefit.m': 'function dacefit(S, regr)\ny = regr;\nend\n' }, ["hop -calls-> bbb @ bbb.m [x feval 'bbb' top.m:2]"], ['dacefit.m']],
+      [{ 'fitmodel.m': 'function fitmodel(S, basisf)\ny = basisf;\nend\n' }, ["hop -calls-> bbb @ bbb.m [x feval 'bbb' top.m:2]"], ['fitmodel.m']],
       // The caller of hop goes, synced alone.
       [{ 'top.m': null }, [], ['top.m']],
     ]);
@@ -751,14 +751,14 @@ describe('MATLAB argument flow: a sync comes to what a full index does', () => {
 
   it('keeps the records a function that starts or stops passing a parameter on needs', async () => {
     await steps({
-      'dacefit.m': 'function dmodel = dacefit(S, Y, regr)\nF = feval(regr, S);\nend\n',
-      'regpoly0.m': fn('regpoly0'),
-      'use1.m': "function use1(S)\nhop(S, 'regpoly0');\nend\n",
-      'hop.m': 'function hop(S, r)\nq = r;\ndacefit(S, 1, 2);\nend\n',
+      'fitmodel.m': 'function fmodel = fitmodel(S, Y, basisf)\nF = feval(basisf, S);\nend\n',
+      'basis0.m': fn('basis0'),
+      'use1.m': "function use1(S)\nhop(S, 'basis0');\nend\n",
+      'hop.m': 'function hop(S, r)\nq = r;\nfitmodel(S, 1, 2);\nend\n',
     }, [
-      [{ 'hop.m': 'function hop(S, r)\ndacefit(S, 1, r);\nend\n' }, ["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]"]],
-      [{ 'hop.m': 'function hop(S, r)\nr = 3;\ndacefit(S, 1, r);\nend\n' }, []],
-      [{ 'hop.m': 'function hop(S, r)\ndacefit(S, 1, r);\nend\n' }, ["dacefit -calls-> regpoly0 @ regpoly0.m [regr feval 'regpoly0' use1.m:2]"]],
+      [{ 'hop.m': 'function hop(S, r)\nfitmodel(S, 1, r);\nend\n' }, ["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]"]],
+      [{ 'hop.m': 'function hop(S, r)\nr = 3;\nfitmodel(S, 1, r);\nend\n' }, []],
+      [{ 'hop.m': 'function hop(S, r)\nfitmodel(S, 1, r);\nend\n' }, ["fitmodel -calls-> basis0 @ basis0.m [basisf feval 'basis0' use1.m:2]"]],
     ]);
   });
 

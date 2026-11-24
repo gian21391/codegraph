@@ -78,6 +78,7 @@ import { isTestCode } from '../graph/test-code';
 import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { MATLAB_UNREAD_CODE } from '../extraction/languages/matlab-syntax';
+import { withShownColumn } from '../extraction/languages/matlab-places';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -2637,7 +2638,7 @@ for (const direction of ['callers', 'callees'] as const) {
               return {
                 ...cliDefinition(group),
                 [direction]: limited.map((node) => ({ id: node.id, ...row(node, edges, recursive.has(node.id)) })),
-                edges: edges.filter((edge) => shown.has(direction === 'callers' ? edge.source : edge.target)),
+                edges: edges.filter((edge) => shown.has(direction === 'callers' ? edge.source : edge.target)).map(withShownColumn),
                 total: nodes.length,
                 limit,
                 truncated: nodes.length > limit,
@@ -2764,7 +2765,7 @@ program
               edgeCount: edges.size,
               ...(truncated ? { truncated } : {}),
               affected: [...nodes.values()].map((node) => ({ id: node.id, ...cliNode(node) })),
-              edges: [...edges.values()],
+              edges: [...edges.values()].map(withShownColumn),
             };
           });
           console.log(JSON.stringify({

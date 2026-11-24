@@ -11,11 +11,11 @@
   "steps": [
     {
       "edges": [
-        "@widget/show.m widget::show -calls-> widget::level @ @widget/level.m",
         "app/user.m user -instantiates-> widget @ @widget/widget.m"
       ],
       "rows": [
-        "@widget/peek.m:2 calls:widget::widget"
+        "@widget/peek.m:2 calls:widget::widget",
+        "@widget/show.m:2 calls:widget::level"
       ],
       "dormant": []
     },

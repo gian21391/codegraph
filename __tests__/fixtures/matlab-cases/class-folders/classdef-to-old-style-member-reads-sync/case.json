@@ -1,5 +1,5 @@
 {
-  "why": "A classdef object's member written without parentheses calls its method (MATLAB doc 'Method Invocation'), so `obj.level` in a method file of `@widget` calls `@widget/level.m`; an old-style class's object is a struct, and the same `obj.level` reads its field (doc 'Class Folders', old-style classes; matlab-lookup.ts). When `@widget/widget.m` turns from a classdef with a constructor into an old-style constructor, and back, the class keeps every name it defines, and only the kind of object it makes changes: each step must end where a fresh index ends (project rule; step 13).",
+  "why": "A classdef object's member written without parentheses calls its method (MATLAB doc 'Method Invocation'), so `obj.level` in a method file of `@widget` calls `@widget/level.m`; an old-style class's object is a struct, and the same `obj.level` reads its field (doc 'Class Folders', old-style classes; matlab-lookup.ts). When `@widget/widget.m` turns from a classdef with a constructor into an old-style constructor, and back, the class keeps every name it defines, and only the kind of object it makes changes: each step must end where a fresh index ends (project rule; step 13). A sync kept `obj.level`'s edge after the turn until step 14, which counts a class whose standing as a classdef changes as one that comes and goes (MatlabSuperclassChange).",
   "truth": {
     "edges": [
       "@widget/show.m widget::show -calls-> widget::level @ @widget/level.m",
@@ -10,10 +10,6 @@
     {
       "what": "`obj.widget` in `peek.m` links to the constructor while the class is a classdef, and to nothing while it is old-style.",
       "why": "The resolver's answer for a member read named like the class (a resolution question, step 15); it sits in the case because its edge ends at `widget.m`'s own node, the one shape the classdef flag of step 13's definition delta re-opens by itself."
-    },
-    {
-      "what": "A sync keeps `obj.level`'s edge after the turn to an old-style constructor, where a fresh index leaves the read as a row.",
-      "why": "The definition delta takes `widget`, whose classdef flag changed, but the read waits under `level`, a method in another file of the folder: like a changed superclass list (MatlabSuperclassChange), a class whose objects stop being classdef objects would have to re-open its methods' names. Found while writing step 13's guards; a class sync bug, step 14's."
     }
   ],
   "steps": [
@@ -44,13 +40,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S14-old-style-flip-method-reads",
-    "fails": [
-      "step 1 (synced): unwanted edge @widget/show.m widget::show -calls-> widget::level @ @widget/level.m (matches {\"from\":\"@widget/show.m\",\"to\":\"level\"})",
-      "step 1 (@widget/widget.m): edges differ; only synced: [\"@widget/show.m widget::show -calls-> widget::level @ @widget/level.m\"]; only fresh: []",
-      "step 1 (@widget/widget.m): rows differ; only synced: []; only fresh: [\"@widget/show.m:2 calls:widget::level\"]"
-    ]
-  }
+  ]
 }

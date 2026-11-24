@@ -1,7 +1,7 @@
 {
   "index": {
     "edges": [
-      "texts.m texts -references-> froot @ froot.m",
+      "texts.m texts -references-> fbase @ fbase.m",
       "texts.m texts -references-> myfun @ myfun.m",
       "texts.m texts -references-> myfun2 @ myfun2.m"
     ],

@@ -78,8 +78,8 @@ async function expectSyncsFresh(initial: Record<string, string>, steps: Files[])
   return live;
 }
 
-const COLOR_BLOB = 'V1MCC4000MEC1000MCR1000x\u0001\u0000\u0000KÊ^\nÆ}R';
-const OCTAVE = '## Copyright (C) 2000 Paul Kienzle\n## -*- texinfo -*-\nfunction r = color()\n  r = 1;\nendfunction\n';
+const COLOR_BLOB = 'Z9QPK7731TRW2200QXV0011y\u0001\u0000\u0000KÊ^\nÆ}R';
+const OCTAVE = '## Copyright (C) 2031 A. Author\n## -*- texinfo -*-\nfunction r = color()\n  r = 1;\nendfunction\n';
 const cls = (name: string, body: string): string => `classdef ${name} < handle\n${body}end\n`;
 const methods = (...names: string[]): string => `    methods\n${names.map((n) => `        function r = ${n}(obj, varargin)\n            r = 1;\n        end\n`).join('')}    end\n`;
 const props = (...names: string[]): string => `    properties\n${names.map((n) => `        ${n}\n`).join('')}    end\n`;
@@ -179,7 +179,7 @@ describe('MATLAB dormant rows: a sync ends where a fresh index ends, for every c
       { 'setup_cfg.m': null },
       { 'setup_cfg.m': SCRIPT },
       { 'setup_cfg.m': null, 'setup_conf.m': SCRIPT },
-      { 'setup_conf.m': null, 'setup_cfg.m': '## Copyright (C) 2000 Paul Kienzle\n## SETUP_CFG\n1;\n' },
+      { 'setup_conf.m': null, 'setup_cfg.m': '## Copyright (C) 2031 A. Author\n## SETUP_CFG\n1;\n' },
       { 'setup_cfg.m': SCRIPT },
     ];
     const run = await expectSyncsFresh(BASE, steps);
@@ -259,16 +259,16 @@ describe('MATLAB dormant rows: a sync ends where a fresh index ends, for every c
 
   it('a carrier swapped between another language\'s symbol and a MATLAB function, for more failed rows than the retry takes (review P1)', async () => {
     // 510 reads: past the per-name ceiling (500) of the sync's retry of failed rows.
-    const body = Array.from({ length: 255 }, (_, i) => `  a${i} = getao;\n`).join('');
-    const GETAO = 'function ao = getao()\n ao = 1;\nend\n';
-    const initial = { 'getao.m': GETAO, 'u1.m': `function u1()\n${body}end\n`, 'u2.m': `function u2()\n${body}end\n` };
+    const body = Array.from({ length: 255 }, (_, i) => `  a${i} = getcfg;\n`).join('');
+    const GETCFG = 'function ao = getcfg()\n ao = 1;\nend\n';
+    const initial = { 'getcfg.m': GETCFG, 'u1.m': `function u1()\n${body}end\n`, 'u2.m': `function u2()\n${body}end\n` };
     const steps: Files[] = [
-      { 'getao.m': null, 'web/getao.js': 'export function getao() { return 2; }\n' }, // carried, unlinked: failed
-      { 'getao.m': GETAO, 'web/getao.js': null }, // linked again, every one
+      { 'getcfg.m': null, 'web/getcfg.js': 'export function getcfg() { return 2; }\n' }, // carried, unlinked: failed
+      { 'getcfg.m': GETCFG, 'web/getcfg.js': null }, // linked again, every one
     ];
     const run = await expectSyncsFresh(initial, steps);
     expect(run.map((s) => s.syncedRows.length)).toEqual([510, 0]);
-    expect(run[1]!.synced.filter((e) => e.endsWith('-calls-> getao @ getao.m')).length).toBe(510);
+    expect(run[1]!.synced.filter((e) => e.endsWith('-calls-> getcfg @ getcfg.m')).length).toBe(510);
   }, 600_000);
 
   it('a .m file turned from Objective-C to MATLAB code, Octave text, binary and back: no edge into it outlives its language (review P2)', async () => {
@@ -311,7 +311,7 @@ describe('MATLAB dormant rows: a sync ends where a fresh index ends, for every c
     // An Objective-C `beep.m` carries the name `beep.m`, as any language's
     // symbol carries its name, and reaches no call of `beep`.
     const OBJC = (n: string): string => `#import <Foundation/Foundation.h>\n@implementation ${n}\n- (void)go {\n}\n@end\n`;
-    const OCT = '## Copyright (C) 2000 Paul Kienzle\n## -*- texinfo -*-\n1;\n';
+    const OCT = '## Copyright (C) 2031 A. Author\n## -*- texinfo -*-\n1;\n';
     const initial = { 'main.m': 'function main()\nsetup_paths\nbeep\nx = beep;\nbeep(2);\nend\n', 'setup_paths.m': 'addpath(pwd);\n', 'beep.m': 'disp(1);\n' };
     const steps: Files[] = [
       { 'setup_paths.m': OBJC('Setup'), 'beep.m': OBJC('Beep') },
@@ -507,9 +507,9 @@ describe('MATLAB dormant rows: a sync killed after it stored its files, before i
       { kill: { 'tools/beep.m': 'function beep()\nend\n' } },
       { kill: { 'tools/beep.m': null } },
     ];
-    const run = await killedEachStep({ 'beeper.m': 'function beeper()\nbeep\nend\n' }, steps);
+    const run = await killedEachStep({ 'buzzer.m': 'function buzzer()\nbeep\nend\n' }, steps);
     expectEachStepFresh(run, steps.map((s) => s.kill));
-    expect(run[0]!.synced).toContain('beeper.m beeper -calls-> beep @ tools/beep.m');
+    expect(run[0]!.synced).toContain('buzzer.m buzzer -calls-> beep @ tools/beep.m');
   }, 300_000);
 
   it('a file changed after the kill is the next sync\'s to extract: the names it now defines are judged (review 2, H1)', async () => {
@@ -1226,9 +1226,9 @@ describe('MATLAB dormant rows: the names a load that does not list them may make
   const LOADER = [
     'function quadv(FileName)',
     "eval(['load ', FileName]);",
-    'x = BPMnum(3);', // read of the loaded data: dormant
+    'x = DEVnum(3);', // read of the loaded data: dormant
     'plot(t0)', // a bare read: dormant, as before
-    "siglab('DataAbort')", // passes a text: a call leaving the index
+    "sigtag('HaltFeed')", // passes a text: a call leaving the index
     'g(@h)', // passes a handle: a call leaving the index
     'y = helper(2);', // a carrier: linked
     'end',
@@ -1237,9 +1237,9 @@ describe('MATLAB dormant rows: the names a load that does not list them may make
 
   it('a read after the load is dormant; a call passing a text or a handle stays live; a carrier still links', async () => {
     const r = await indexOfProject({ 'quadv.m': LOADER, 'helper.m': HELPER, 'gd_user.m': 'load gd\ng = gains(1);\ngains(2)\n' });
-    expect(r.dormant).toEqual(['gd_user.m:2 calls:gains', 'quadv.m:3 calls:BPMnum', 'quadv.m:4 calls:t0']);
+    expect(r.dormant).toEqual(['gd_user.m:2 calls:gains', 'quadv.m:3 calls:DEVnum', 'quadv.m:4 calls:t0']);
     // `gains(2)`, a statement of its own with arguments, reads as a call.
-    expect(r.unresolved).toEqual(['gd_user.m:3 calls:gains', 'quadv.m:5 calls:siglab', 'quadv.m:6 calls:g', 'quadv.m:6 function_ref:h']);
+    expect(r.unresolved).toEqual(['gd_user.m:3 calls:gains', 'quadv.m:5 calls:sigtag', 'quadv.m:6 calls:g', 'quadv.m:6 function_ref:h']);
     expect(r.edges).toContain('quadv.m quadv -calls-> helper @ helper.m');
   });
 
@@ -1318,22 +1318,22 @@ describe('MATLAB dormant rows: the names a load that does not list them may make
   });
 
   it('a sync that adds the load, removes it, and adds then removes a carrier of the name ends where a fresh index ends', async () => {
-    const plain = 'function user2(f)\nx = BPMnum(3);\nend\n';
-    const loading = 'function user2(f)\nload(f)\nx = BPMnum(3);\nend\n';
-    const BPM = 'function y = BPMnum(i)\ny = i;\nend\n';
+    const plain = 'function user2(f)\nx = DEVnum(3);\nend\n';
+    const loading = 'function user2(f)\nload(f)\nx = DEVnum(3);\nend\n';
+    const BPM = 'function y = DEVnum(i)\ny = i;\nend\n';
     const steps: Files[] = [
       { 'user2.m': loading },
       { 'user2.m': plain },
       { 'user2.m': loading },
-      { 'BPMnum.m': BPM },
-      { 'BPMnum.m': null },
-      { 'BPMnum.m': BPM, 'user2.m': plain },
-      { 'BPMnum.m': null },
+      { 'DEVnum.m': BPM },
+      { 'DEVnum.m': null },
+      { 'DEVnum.m': BPM, 'user2.m': plain },
+      { 'DEVnum.m': null },
     ];
     const run = await expectSyncsFresh({ 'user2.m': plain }, steps);
-    expect(run.map((s) => s.syncedDormant.some((r) => r.endsWith('calls:BPMnum')))).toEqual([true, false, true, false, true, false, false]);
-    expect(run.map((s) => s.syncedRows.some((r) => r.endsWith('calls:BPMnum')))).toEqual([false, true, false, false, false, false, true]);
-    expect(run.map((s) => s.synced.some((e) => e.includes('-calls-> BPMnum @ BPMnum.m')))).toEqual([false, false, false, true, false, true, false]);
+    expect(run.map((s) => s.syncedDormant.some((r) => r.endsWith('calls:DEVnum')))).toEqual([true, false, true, false, true, false, false]);
+    expect(run.map((s) => s.syncedRows.some((r) => r.endsWith('calls:DEVnum')))).toEqual([false, true, false, false, false, false, true]);
+    expect(run.map((s) => s.synced.some((e) => e.includes('-calls-> DEVnum @ DEVnum.m')))).toEqual([false, false, false, true, false, true, false]);
   }, 600_000);
 });
 
@@ -1439,7 +1439,7 @@ describe('MATLAB dormant rows: a member call written with arguments is kept only
 });
 
 describe('MATLAB dormant rows: a built-in\'s call that only the path could give a project copy of', () => {
-  // physbase: aoinit.m adds matlab/chris/commands with addpath(…, '-end'), so
+  // A startup's cfginit.m adds matlab/user1/commands with addpath(…, '-end'), so
   // MATLAB's own `sound` runs ahead of the project's copy there: no edge, and
   // the row is kept for a sync that moves the copy, but not counted.
   const SOUND = 'function sound(y)\nend\n';
@@ -1529,18 +1529,18 @@ describe('MATLAB dormant rows: a built-in\'s call stays live where a project cop
   });
 
   it('a name MATLAB has only as a method, its only copy out of reach: no built-in, the row stays live', async () => {
-    // fieldtrip: ft_sensorrealign.m calls scale and translate on doubles; the copies are in private/ folders it cannot reach.
+    // tk_realign.m calls scale and translate on doubles; the copies are in private/ folders it cannot reach.
     const r = await indexOfProject({
-      'compat/obsolete/ft_sensorrealign.m': 'function ft_sensorrealign(s)\nT = translate([1 2 3]);\nS = scale([2 2 2]);\nend\n',
+      'compat/obsolete/tk_realign.m': 'function tk_realign(s)\nT = translate([1 2 3]);\nS = scale([2 2 2]);\nend\n',
       'utilities/private/scale.m': 'function S = scale(f)\nS = diag([f 1]);\nend\n',
       'private/translate.m': 'function T = translate(f)\nT = eye(4);\nend\n',
     });
-    expect([r.unresolved, r.dormant]).toEqual([['compat/obsolete/ft_sensorrealign.m:2 calls:translate', 'compat/obsolete/ft_sensorrealign.m:3 calls:scale'], []]);
+    expect([r.unresolved, r.dormant]).toEqual([['compat/obsolete/tk_realign.m:2 calls:translate', 'compat/obsolete/tk_realign.m:3 calls:scale'], []]);
   });
 });
 
 describe('MATLAB dormant rows: a name MATLAB has only as a method of one of its classes', () => {
-  // physbase's FirstTurnMonitoring.m: `p = inputParser; … parse(p, varargin{:})`; fieldtrip's jdatadecode.m: keys(m).
+  // `p = inputParser; … parse(p, varargin{:})`; `keys(m)` on a containers.Map.
   const USER = { 'u.m': 'function u(varargin)\np = inputParser;\nparse(p, varargin{:});\nk = keys(varargin{1});\nnosuch_fn(k);\nend\n' };
   const PARSE = 'function r = parse(p, varargin)\nr = p;\nend\n';
 
@@ -1556,7 +1556,7 @@ describe('MATLAB dormant rows: a name MATLAB has only as a method of one of its 
       'app/uk.m': 'function uk(m, d)\nk = keys(m);\nv = values(m);\nr = read(d, 3, \'uint8\');\nend\n',
       'lib/K.m': cls('K', props('keys')),
       'tools/Store.java': 'public class Store {\n  public int values() { return 0; }\n}\n',
-      'realtime/dev.cpp': 'class Dev {\npublic:\n  int read(int n) { return n; }\n};\n',
+      'hwlink/dev.cpp': 'class Dev {\npublic:\n  int read(int n) { return n; }\n};\n',
     };
     const r = await indexOfProject(files);
     expect([r.unresolved, r.dormant]).toEqual([[], ['app/uk.m:2 calls:keys', 'app/uk.m:3 calls:values', 'app/uk.m:4 calls:read']]);
@@ -1576,13 +1576,13 @@ describe('MATLAB dormant rows: a name MATLAB has only as a method of one of its 
 });
 
 describe('MATLAB dormant rows: only a MATLAB symbol that could answer a bare call keeps a built-in\'s call', () => {
-  // fieldtrip: a C++ method `error` (AmpServerClient.cpp) kept calls of
+  // A C++ method `error` (in a `.cpp` file) kept calls of
   // `error` live in files whose imports keep every bare call at extraction;
-  // the Robotics Toolbox: a property `grid` kept calls of `grid`. A MATLAB
+  // a toolbox's class: a property `grid` kept calls of `grid`. A MATLAB
   // call resolves to MATLAB alone, and a bare one never runs a property.
   const FILES = {
-    'realtime/Amp.cpp': 'class AmpServerClient {\npublic:\n  void error(const char* m) {}\n};\n',
-    'brain/progress.m': "function progress()\nimport org.brainstorm.icon.*;\nerror('x');\nend\n",
+    'hwlink/Amp.cpp': 'class StreamClient {\npublic:\n  void error(const char* m) {}\n};\n',
+    'brain/progress.m': "function progress()\nimport org.acme.icon.*;\nerror('x');\nend\n",
     'Plotter.m': cls('Plotter', props('grid') + '    methods\n        function draw(obj)\n            grid(\'on\');\n        end\n    end\n'),
     'useGrid.m': "function useGrid()\nimport org.foo.*;\ngrid('on');\nend\n",
   };

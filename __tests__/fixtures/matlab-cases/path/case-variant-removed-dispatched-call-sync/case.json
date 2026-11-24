@@ -1,0 +1,45 @@
+{
+  "why": "`tidy(g)` on a `Gadget`, which has no method `tidy`, is looked up as a function (MATLAB doc 'Function Precedence Order', 'Method Invocation'): `lib/Tidy.m` is a nearer case variant of it, and MATLAB errors when it finds no exact match ('Cannot find an exact (case-sensitive) match'), so the call reaches no file (the project's case-variant veto, nearerInexactMatch in matlab-lookup.ts): a live row. With `lib/Tidy.m` removed, the root `tidy.m` answers it; added back, it vetoes the call again. Each step must end where a fresh index ends (project rule; found by the step 13 fuzzer, s1312-c40, step 14).",
+  "truth": {
+    "edges": [
+      "lib/user.m user -instantiates-> Gadget @ Gadget.m"
+    ],
+    "rows": [
+      "lib/user.m:3 calls:Gadget::tidy"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/user.m",
+        "to": "tidy"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/Tidy.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/user.m user -calls-> tidy @ tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Tidy.m": "function y = Tidy(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "lib/user.m:3 calls:Gadget::tidy"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/user.m",
+            "to": "tidy"
+          }
+        ]
+      }
+    }
+  ]
+}

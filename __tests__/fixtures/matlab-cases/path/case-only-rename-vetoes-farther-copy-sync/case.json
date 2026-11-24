@@ -1,0 +1,38 @@
+{
+  "why": "With no path config, `shift(1)` in `lib/use.m` is called with an argument, so `lib/shift.m`, a script, does not answer it and the root function does (a script answers only a statement: matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'). Renamed `lib/Shift.m`, case only, that file is a nearer case variant of the call: MATLAB matches a name with its case and errors when it finds no exact match ('Cannot find an exact (case-sensitive) match'), and the code was written against the near file, so the call reaches neither (the project's case-variant veto, nearerInexactMatch in matlab-lookup.ts): no edge, a live row. Renamed back, the root function answers again. Each step must end where a fresh index ends (project rule; found by the step 11 fuzzer, s1331-c35, s612-c4, s403-c38, step 14).",
+  "truth": {
+    "edges": [
+      "lib/use.m use -calls-> shift @ shift.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/shift.m": null,
+        "lib/Shift.m": "a = 1;\n"
+      },
+      "truth": {
+        "rows": [
+          "lib/use.m:2 calls:shift"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/use.m",
+            "to": "shift"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Shift.m": null,
+        "lib/shift.m": "a = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/use.m use -calls-> shift @ shift.m"
+        ]
+      }
+    }
+  ]
+}

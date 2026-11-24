@@ -54,6 +54,7 @@ import { badRequest, intParam } from './respond';
 import { MAX_TRAIL_HOPS } from './trail-store';
 import { findIndexedFile, hasDriftedOnDisk, splitLines, toRequestPath } from './source';
 import { resolveProjectFile } from '../security';
+import { matlabShownColumn } from '../../extraction/languages/matlab-places';
 import {
   toNodeRef,
   toWireEdge,
@@ -502,7 +503,7 @@ async function toWireFlow(
     if (next !== undefined && !next.upward && next.edge?.line) {
       callRef = {
         line: next.edge.line,
-        col: typeof next.edge.column === 'number' ? next.edge.column : null,
+        col: typeof next.edge.column === 'number' ? matlabShownColumn(next.edge.column) : null,
         name: next.node.name,
         targetId: next.node.id,
         backwards: false,
@@ -510,7 +511,7 @@ async function toWireFlow(
     } else if (step.upward && previous !== undefined && step.edge?.line) {
       callRef = {
         line: step.edge.line,
-        col: typeof step.edge.column === 'number' ? step.edge.column : null,
+        col: typeof step.edge.column === 'number' ? matlabShownColumn(step.edge.column) : null,
         name: previous.node.name,
         targetId: previous.node.id,
         backwards: true,

@@ -255,6 +255,15 @@ export interface ResolutionContext {
    */
   isIndexedFile?(filePath: string): boolean;
   /**
+   * The one indexed file whose path differs from `filePath` only by case,
+   * where the project's file system ignores case (macOS's APFS, Windows'
+   * NTFS): there `./Src/a` opens `src/a.ts` for Node, a bundler or a C
+   * compiler, though the index keys the file by the name on disk. Null where
+   * case counts, when no indexed file or more than one matches, and for a
+   * file the index holds as written. Supplied by the coordinator.
+   */
+  indexedCaseVariant?(filePath: string): string | null;
+  /**
    * Project import-path aliases (tsconfig/jsconfig `paths`, and `baseUrl`).
    * Returns `null` when the project doesn't define any. Cached per resolver
    * instance — safe to call from any resolver code path. Optional so
