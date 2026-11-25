@@ -1,0 +1,14 @@
+{
+  "why": "The `eval` on line 1 runs before line 2 and makes `zq` a variable (MATLAB doc 'eval'), so `zq(2)` indexes it, though the script's own write of it comes after: no call of `zq.m` (project rule, step 15: a name code `eval` runs makes is a variable everywhere; text order otherwise, the user's ruling, step 11).",
+  "truth": {
+    "edges": [
+      "run1.m run1.m -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "run1.m",
+        "at": "zq.m"
+      }
+    ]
+  }
+}

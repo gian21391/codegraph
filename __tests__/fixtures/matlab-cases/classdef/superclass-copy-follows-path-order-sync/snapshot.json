@@ -1,0 +1,62 @@
+{
+  "index": {
+    "edges": [
+      "app/Widget.m Widget -extends-> Mid @ tools/Mid.m",
+      "app/use.m use -instantiates-> Mid @ tools/Mid.m",
+      "app/use.m use -instantiates-> Widget @ app/Widget.m"
+    ],
+    "rows": [
+      "app/use.m:3 calls:Widget::go",
+      "app/use.m:5 calls:Mid::go"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/Widget.m Widget -extends-> Mid @ lib/Mid.m",
+        "app/use.m use -calls-> Mid::go @ lib/Mid.m",
+        "app/use.m use -calls-> Mid::go @ lib/Mid.m",
+        "app/use.m use -instantiates-> Mid @ lib/Mid.m",
+        "app/use.m use -instantiates-> Widget @ app/Widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/Widget.m Widget -extends-> Mid @ tools/Mid.m",
+        "app/use.m use -instantiates-> Mid @ tools/Mid.m",
+        "app/use.m use -instantiates-> Widget @ app/Widget.m"
+      ],
+      "rows": [
+        "app/use.m:3 calls:Widget::go",
+        "app/use.m:5 calls:Mid::go"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/Widget.m Widget -extends-> Mid @ lib/Mid.m",
+        "app/use.m use -calls-> Mid::go @ lib/Mid.m",
+        "app/use.m use -calls-> Mid::go @ lib/Mid.m",
+        "app/use.m use -instantiates-> Mid @ lib/Mid.m",
+        "app/use.m use -instantiates-> Widget @ app/Widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/Widget.m Widget -extends-> Mid @ tools/Mid.m",
+        "app/use.m use -instantiates-> Mid @ tools/Mid.m",
+        "app/use.m use -instantiates-> Widget @ app/Widget.m"
+      ],
+      "rows": [
+        "app/use.m:3 calls:Widget::go",
+        "app/use.m:5 calls:Mid::go"
+      ],
+      "dormant": []
+    }
+  ]
+}

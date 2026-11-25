@@ -1,14 +1,9 @@
 {
-  "why": "A handle to a script's name runs no script, and neither does using the name as a value, while a statement naming the script runs it (MATLAB doc 'Scripts': a script takes no inputs and returns no outputs; harvested from matlab-resolution.test.ts 'links a statement naming a script … a handle runs no script').",
+  "why": "A handle to a script's name names the script: MATLAB R2026a makes `h = @setup_s` a handle to the script, and `h()` runs it (the step 15 fix, after the user's ruling, step 15). A statement naming the script runs it. (Harvested from matlab-resolution.test.ts 'links a statement naming a script'.)",
   "truth": {
     "edges": [
-      "main.m main -calls-> setup_s.m @ setup_s.m"
-    ],
-    "noEdges": [
-      {
-        "from": "main.m",
-        "kind": "references"
-      }
+      "main.m main -calls-> setup_s.m @ setup_s.m",
+      "main.m main -references-> setup_s.m @ setup_s.m"
     ]
   }
 }

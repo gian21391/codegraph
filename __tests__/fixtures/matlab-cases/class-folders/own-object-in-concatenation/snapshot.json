@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/poke.m Gizmo::poke -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/poke.m Gizmo::poke -calls-> zt @ zt.m",
+      "@Gizmo/poke.m Gizmo::poke -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "@Gizmo/prod2.m Gizmo::prod2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/prod2.m Gizmo::prod2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

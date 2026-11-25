@@ -1,0 +1,26 @@
+{
+  "why": "`[A, B]` is `horzcat(A, B)` (doc 'horzcat'). A concatenation with the object among its operands gives its class, or runs the class's own concatenation, or errors (MATLAB R2026a: `[k, 1]`, `horzcat(k, 1)`, `cat(2, k, 1)` and objects of two classes error): the call after it is reached with the object or not at all, so `tidy(k)` is `Gizmo::tidy` in every form (project rule, step 15 round 7).",
+  "truth": {
+    "edges": [
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use2.m use2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use4.m use4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use1.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use2.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use3.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

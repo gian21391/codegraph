@@ -33,6 +33,21 @@
  * or gone and of a file turned into a script or a stub (see ./matlab-sync).
  * Resolved again and failing, it is judged as a fresh index judges it.
  *
+ * A call on an object a lower-case callee made, under a built-in's name
+ * (`disp(g)` after `g = gadget();`, recorded `gadget::disp`: see
+ * matlabBuiltinDispatchKept in ./matlab-failures), is kept, dormant, while a
+ * class of its callee's name exists (any package, any case) or while a plain
+ * call of the built-in's name would be kept, and deleted otherwise. A sync
+ * that gives the name its first class writes these calls again in the files
+ * the index holds a call of a lower-case callee of the name from
+ * (MatlabCarrierChange.classGained, matlabFilesConstructing), parsed and
+ * written on their own as a gained built-in's are (addMatlabBuiltinRows in
+ * ../extraction); one that takes the
+ * last away, or the built-in's last carrier or reach, deletes the rows a
+ * fresh index would not keep (uncarriedMatlabRowIds); one that gives the
+ * built-in's name a carrier or a reach writes them again with its calls
+ * (addMatlabBuiltinRows in ../extraction).
+ *
  * Any other call whose row is kept only while a symbol carries its name — a
  * bare read (`c = color;`), a command (`setup_paths`), a name code run at
  * runtime makes, `T::datestr` dispatched under a built-in's name (see
@@ -91,9 +106,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DORMANT_REF_STATUS, type QueryBuilder } from '../db/queries';
-import { MATLAB_BUILTINS, addMatlabReachableNames } from '../extraction/languages/matlab-builtins';
+import { MATLAB_BUILTINS, addMatlabReachableNames, isMatlabLowerConstructorName } from '../extraction/languages/matlab-builtins';
 import { isJavaImport } from '../extraction/languages/matlab-java';
-import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, isMatlabBuiltinCall, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, isMatlabBuiltinCall, isMatlabBuiltinDispatchCall, matlabBuiltinDispatchKept, matlabDispatchClassKey, matlabNameKeys, unanswerableMatlabFailures } from './matlab-failures';
 
 /** What a sync changed of the project's symbols and files, as the extraction step of a sync knows it. */
 export interface MatlabCarrierInput {
@@ -171,9 +186,50 @@ export interface MatlabCarrierChange {
    * language's definition changes only whether a row sleeps.
    */
   relinked: string[];
+  /**
+   * The names, lowered, that a MATLAB class or enum now has and none had
+   * before (in any package, any case: `gadget` for a `@gadget` constructor or
+   * a `classdef Gadget` come): the calls on an object a lower-case callee of
+   * the name made under a built-in's name (`disp(g)` after `g = gadget();`,
+   * see matlabBuiltinDispatchKept in ./matlab-failures), which a fresh index
+   * keeps while such a class exists, are written again in the MATLAB files
+   * that hold a call of such a callee (matlabFilesConstructing), as their
+   * extraction does.
+   */
+  classGained: string[];
+  /** The names, lowered, that no MATLAB class or enum has any more: those calls of the files that keep them are judged again, and the ones a fresh index would not keep deleted. */
+  classLost: string[];
 }
 
-const noChange = (): MatlabCarrierChange => ({ gained: [], lost: [], unreached: [], judged: [], relinked: [] });
+const noChange = (): MatlabCarrierChange => ({ gained: [], lost: [], unreached: [], judged: [], relinked: [], classGained: [], classLost: [] });
+
+/** The lowered names of the classes and enums among `file\0name\0facts` pairs (see MatlabCarrierInput.matlabPairsBefore). */
+function classKeysOf(pairs: Iterable<string>, into: Set<string>): void {
+  for (const pair of pairs) {
+    const facts = pair.slice(pair.indexOf('\0', pair.indexOf('\0') + 1) + 1);
+    if (facts.split(';').some((f) => f.startsWith('class|') || f.startsWith('enum|'))) into.add(nameOf(pair).toLowerCase());
+  }
+}
+
+/**
+ * Which of the lowered names `keys` a sync gave a first class or took the
+ * last one from, into `change` (classGained, classLost): before, a class of
+ * the name stood in a file the sync left alone, or in one it changed, by
+ * that file's pairs (`before`); now, the index says. With no `before` (a
+ * replay from a record, which keeps no kinds), every name with a class now
+ * is called gained, and every other lost: more files written again and more
+ * rows judged than the killed sync would have, and never another answer.
+ */
+function classifyMatlabClassKeys(queries: QueryBuilder, keys: ReadonlySet<string>, changed: ReadonlySet<string>, before: ReadonlySet<string> | null, change: MatlabCarrierChange): void {
+  if (keys.size === 0) return;
+  const now = queries.getMatlabClassFilesByLowerName(keys);
+  for (const k of keys) {
+    const files = now.get(k);
+    const was = before === null ? files === undefined : before.has(k) || [...(files ?? [])].some((f) => !changed.has(f));
+    if (!was && files !== undefined) change.classGained.push(k);
+    else if (was && files === undefined) change.classLost.push(k);
+  }
+}
 
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*$/;
 
@@ -252,13 +308,18 @@ export function matlabCarrierChanges(queries: QueryBuilder, input: MatlabCarrier
   const reachedByChange = new Set<string>();
   addMatlabReachableNames([...input.addedPaths, ...input.removedPaths, ...turned].filter(mPath), reachedByChange);
   for (const name of reachedByChange) if (MATLAB_BUILTINS.has(name)) candidates.add(name);
-  if ((candidates.size === 0 && judged.size === 0) || !queries.hasFilesOfLanguage('matlab')) return noChange();
+  const classesBefore = new Set<string>();
+  classKeysOf(input.matlabPairsBefore, classesBefore);
+  const classKeys = new Set(classesBefore);
+  classKeysOf(input.matlabPairsAfter, classKeys);
+  if ((candidates.size === 0 && judged.size === 0 && classKeys.size === 0) || !queries.hasFilesOfLanguage('matlab')) return noChange();
 
   const change = noChange();
   change.judged = [...judged];
   change.relinked = [...relinked];
-  if (candidates.size === 0) return change;
   const changed = new Set([...input.extracted, ...input.removedPaths]);
+  classifyMatlabClassKeys(queries, classKeys, changed, classesBefore, change);
+  if (candidates.size === 0) return change;
   // The callable pairs were read with MATLAB_CALLABLE_NODES before the sync
   // changed the files: none of a file whose text was read as no MATLAB code.
   const carriedBefore = new Set<string>();
@@ -398,6 +459,10 @@ export function replayedMatlabCarrierChanges(queries: QueryBuilder, inputs: Matl
   const change = noChange();
   change.judged = [...judged];
   change.relinked = [...judged];
+  classifyMatlabClassKeys(queries, new Set([...names].flatMap((n) => {
+    const stem = stemOf(n);
+    return stem === null ? [] : [stem.toLowerCase()];
+  })), new Set(inputs.files), null, change);
   if (candidates.size === 0) return change;
   classifyMatlabBuiltins(queries, candidates, {
     changed: new Set(inputs.files), carriedBefore: new Set(inputs.callable), reachingBefore: inputs.reaching,
@@ -451,9 +516,46 @@ export function matlabFilesNaming(
   return out;
 }
 
-/** The built-ins' rows a fresh index would not keep (see MatlabCarrierChange), dormant ones too, by id. */
+/**
+ * The project's MATLAB files, but `skip`, that may hold a call on an object
+ * a lower-case callee of one of `keys` (lowered names) made, under a
+ * built-in's name (`disp(g)` after `g = gadget();`: see
+ * MatlabCarrierChange.classGained): the ones the index holds a call of such
+ * a callee from, a row of it of any status or an edge. The construction is
+ * a call itself, which the extraction stores wherever it reads the hint (see
+ * lowerConstructions in ../extraction/languages/matlab): written `gadget`,
+ * `gAdget` or `Cls::gadget` (`g = gadget(obj)`), in no case a built-in's
+ * name. No file is read.
+ */
+export function matlabFilesConstructing(queries: QueryBuilder, keys: readonly string[], skip: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  if (keys.length === 0) return out;
+  for (const { filePath, name } of queries.getMatlabCallsOfLowerNames(keys)) {
+    if (skip.has(filePath) || out.has(filePath)) continue;
+    const tail = name.includes('::') ? name.slice(name.lastIndexOf('::') + 2) : name;
+    if (isMatlabLowerConstructorName(/^(.+)\.[mM]$/.exec(tail)?.[1] ?? tail)) out.add(filePath);
+  }
+  return out;
+}
+
+/**
+ * The built-ins' rows a fresh index would not keep (see MatlabCarrierChange),
+ * dormant ones too, by id. With them, the failed and dormant calls on an
+ * object a lower-case callee made under a built-in's name (`gadget::disp`)
+ * whose callee's name lost its last class, or whose built-in's name lost its
+ * last carrier or reach, that a fresh index would not keep (see
+ * matlabBuiltinDispatchKept in ./matlab-failures).
+ */
 export function uncarriedMatlabRowIds(queries: QueryBuilder, change: MatlabCarrierChange): number[] {
   const ids: number[] = [];
+  const tails = new Set([...change.lost, ...change.unreached]);
+  const keys = new Set(change.classLost);
+  if (tails.size > 0 || keys.size > 0) {
+    const rows = queries.getMatlabArgClassDispatchRows().filter((ref) =>
+      isMatlabBuiltinDispatchCall(ref) && (keys.has(matlabDispatchClassKey(ref)) || tails.has(ref.referenceName.slice(ref.referenceName.lastIndexOf('::') + 2))));
+    const kept = matlabBuiltinDispatchKept(rows, queries);
+    for (const ref of rows) if (!kept.has(ref)) ids.push(ref.rowId);
+  }
   if (change.lost.length > 0) for (const row of queries.getMatlabCallRowsNamed(change.lost)) ids.push(row.id);
   if (change.unreached.length > 0) {
     const rows = queries.getMatlabCallRowsNamed(change.unreached);
@@ -509,10 +611,12 @@ export function matlabDormancyFlips(queries: QueryBuilder, change: MatlabCarrier
   const asleep = queries.getMatlabCallRefsByTail(change.judged.filter((t) => carried(t, named)), DORMANT_REF_STATUS);
   const failed = queries.getMatlabCallRefsByTail(change.judged.filter((t) => relinked.has(t) || !carried(t, callable)), 'failed');
   if (asleep.length === 0 && failed.length === 0) return { wake: [], sleep: [], reopen: [] };
-  const judgeable = failed.filter((ref) => !isMatlabBuiltinCall(ref) && !answersAll(ref.nameTail));
-  const { dormant } = unanswerableMatlabFailures([...asleep.filter((ref) => !isMatlabBuiltinCall(ref)), ...judgeable], undefined, null, queries);
+  // A call on an object under a built-in's name (`gadget::disp`) is judged as a built-in's call is: by resolving it.
+  const builtin = (ref: (typeof asleep)[number]): boolean => isMatlabBuiltinCall(ref) || isMatlabBuiltinDispatchCall(ref);
+  const judgeable = failed.filter((ref) => !builtin(ref) && !answersAll(ref.nameTail));
+  const { dormant } = unanswerableMatlabFailures([...asleep.filter((ref) => !builtin(ref)), ...judgeable], undefined, null, queries);
   return {
-    wake: asleep.filter((ref) => (isMatlabBuiltinCall(ref) ? relinked.has(ref.nameTail) : !dormant.has(ref))).map((ref) => ref.rowId),
+    wake: asleep.filter((ref) => (builtin(ref) ? relinked.has(ref.nameTail) : !dormant.has(ref))).map((ref) => ref.rowId),
     sleep: judgeable.filter((ref) => dormant.has(ref)).map((ref) => ref.rowId),
     reopen: failed.filter((ref) => relinked.has(ref.nameTail) && !dormant.has(ref)).map((ref) => ref.rowId),
   };
@@ -530,8 +634,9 @@ export function matlabDormancyFlips(queries: QueryBuilder, change: MatlabCarrier
 export function wakeMatlabBuiltinRows(queries: QueryBuilder, names: Iterable<string> | null, skip?: ReadonlySet<string>): number {
   const tails = names === null ? [...MATLAB_BUILTINS] : [...names].filter((n) => MATLAB_BUILTINS.has(n));
   if (tails.length === 0) return 0;
+  // A call on an object under a built-in's name (`Widget::plot`) too: its plain call's answer moves with these.
   const ids = queries.getMatlabCallRefsByTail(tails, DORMANT_REF_STATUS)
-    .filter((ref) => isMatlabBuiltinCall(ref) && !skip?.has(ref.filePath))
+    .filter((ref) => (isMatlabBuiltinCall(ref) || isMatlabBuiltinDispatchCall(ref)) && !skip?.has(ref.filePath))
     .map((ref) => ref.rowId);
   return ids.length > 0 ? queries.setMatlabDormancy(ids, []) : 0;
 }

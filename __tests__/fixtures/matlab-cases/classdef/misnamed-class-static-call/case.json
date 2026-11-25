@@ -1,0 +1,14 @@
+{
+  "why": "`classdef Gadget` in `gadget.m` is no class MATLAB knows (a classdef's name matches its file's: MATLAB doc 'Class Folders'), so `Gadget.go()` calls no method of it, not even found by its qualified name.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "gadget.m"
+      }
+    ]
+  }
+}

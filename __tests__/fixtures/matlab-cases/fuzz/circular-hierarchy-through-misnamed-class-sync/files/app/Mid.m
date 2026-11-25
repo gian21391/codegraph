@@ -1,0 +1,2 @@
+classdef Mid < Node
+end

@@ -1,0 +1,33 @@
+{
+  "why": "A package function called without parentheses is a call at any depth of packages: `b = kit.deep.fetch;` calls `kit.deep.fetch` (MATLAB doc 'Namespaces', 'Calling Functions': a function that takes no input can be called with no parentheses; project rule: a real call into the project is never hidden). With `+kit/+deep/fetch.m` deleted the call links nowhere, and with it back it links again. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> kit::deep::fetch @ +kit/+deep/fetch.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+kit/+deep/fetch.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "fetch"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "+kit/+deep/fetch.m": "function y = fetch()\ny = 2;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> kit::deep::fetch @ +kit/+deep/fetch.m"
+        ]
+      }
+    }
+  ]
+}

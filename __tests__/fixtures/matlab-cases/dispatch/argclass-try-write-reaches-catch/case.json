@@ -1,0 +1,15 @@
+{
+  "why": "`g = 5` in the `try` body runs before `error` (MATLAB doc 'try, catch': the `catch` clause runs after the statement that errs), so in the `catch` clause `g` is 5 and `tidy(g)` calls `tidy.m`.",
+  "truth": {
+    "edges": [
+      "tc.m tc -instantiates-> gadget @ @gadget/gadget.m",
+      "tc.m tc -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "tc.m",
+        "at": "@gadget/tidy.m"
+      }
+    ]
+  }
+}

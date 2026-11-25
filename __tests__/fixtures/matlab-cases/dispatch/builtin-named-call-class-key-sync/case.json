@@ -1,0 +1,72 @@
+{
+  "why": "Project rule (step 15 round 3): a call on an object a lower-case callee made under a built-in's name (`disp(g)` after `g = gadget();`) keeps its row, dormant, while a class of the callee's name exists in any package and any case, or while a plain call of the built-in's name would be kept (a project `disp.m` a bare call reaches somewhere, here one in another folder's `private/`, out of the caller's reach); else it is dropped. `+pkg/gadget.m` is such a class (MATLAB's own `disp` runs: `gadget()` reaches the root function, no class); `lib/GADGET.m` is one in another case, which `gaDGet()` names too. The steps take the class away, bring another case's, take it away and bring the private `disp.m`, then take that away; each must end where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m",
+      "use.m use -calls-> gadget @ gadget.m"
+    ],
+    "dormant": [
+      "use.m:3 calls:gadget::disp",
+      "use2.m:3 calls:gaDGet::disp"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "+pkg/gadget.m": null
+      },
+      "truth": {
+        "noDormant": [
+          "use.m:3 calls:gadget::disp",
+          "use2.m:3 calls:gaDGet::disp"
+        ],
+        "noRows": [
+          "use.m:3 calls:gadget::disp"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/GADGET.m": "classdef GADGET\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use.m:3 calls:gadget::disp",
+          "use2.m:3 calls:gaDGet::disp"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/GADGET.m": null,
+        "other/private/disp.m": "function disp(x)\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use.m:3 calls:gadget::disp",
+          "use2.m:3 calls:gaDGet::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "other/private/disp.m": null
+      },
+      "truth": {
+        "noDormant": [
+          "use.m:3 calls:gadget::disp",
+          "use2.m:3 calls:gaDGet::disp"
+        ],
+        "noRows": [
+          "use.m:3 calls:gadget::disp"
+        ]
+      }
+    }
+  ]
+}

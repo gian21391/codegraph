@@ -1,0 +1,159 @@
+{
+  "why": "Project rule (step 15 round 3): a call on an object a lower-case callee made under a built-in's name (`disp(g)` after `g = gadget(…)`) keeps its row, dormant, while a class of the callee's name exists in any package and any case; else it is dropped. The construction is written three ways here: on an object of another class (`g = gadget(o)`, recorded `Holder::gadget`, a failed row), through an import (`import qpk.*`, linked to `+qpk/gadget.m`), and, in a script, as `g = gadget(:)`, which the extraction reads as an index into an array (project rule: `x(:)` with no variable `x` is array evidence), no call and no object of any class. With a root `disp.m` the call is the plain one, linked to it (as `disp(g)` with no class is); with a `disp.m` in another folder's `private/`, out of the caller's reach, the row is kept dormant without a class too (the rule's second clause), and a class arriving then keeps that one row. A sync that brings a class `Gadget` and takes it away, with and without `disp.m`, must end where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "use3.m use3 -calls-> zt @ zt.m",
+      "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+    ],
+    "noRows": [
+      "use3.m:4 calls:gadget::disp",
+      "use5.m:4 calls:gadget::disp"
+    ],
+    "noDormant": [
+      "use3.m:4 calls:gadget::disp",
+      "use5.m:4 calls:gadget::disp",
+      {
+        "file": "use4.m",
+        "name": "gadget::disp"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/Gadget.m": "classdef Gadget\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noDormant": [
+          {
+            "file": "use4.m",
+            "name": "gadget::disp"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "use4.m",
+            "name": "gadget::disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": null
+      },
+      "truth": {
+        "noRows": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noDormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "disp.m": "function disp(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use3.m use3 -calls-> disp @ disp.m",
+          "use5.m use5 -calls-> disp @ disp.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": "classdef Gadget\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use3.m use3 -calls-> disp @ disp.m",
+          "use5.m use5 -calls-> disp @ disp.m"
+        ],
+        "noDormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": null,
+        "disp.m": null
+      },
+      "truth": {
+        "noRows": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noDormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use3.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "other/private/disp.m": "function disp(x)\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use3.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": "classdef Gadget\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use3.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": null,
+        "other/private/disp.m": null
+      },
+      "truth": {
+        "noRows": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ],
+        "noDormant": [
+          "use3.m:4 calls:gadget::disp",
+          "use5.m:4 calls:gadget::disp"
+        ]
+      }
+    }
+  ]
+}

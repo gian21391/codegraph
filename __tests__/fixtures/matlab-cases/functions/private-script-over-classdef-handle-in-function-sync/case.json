@@ -1,0 +1,66 @@
+{
+  "why": "Review 5 finding 1 (fuzz s3401-c52, generator v4, classes profile), shrunk. A file of the root's `private/` folder comes before a class constructor on the path for a file of the root (doc 'Function Precedence Order'), and a handle of a script runs the script (MATLAB R2026a), so while `private/widget.m` is there `hf = @widget` in the function file `step.m` names it, and the classdef's constructor otherwise. A sync that adds it (an empty script), removes it, adds it as a function, turns that into a script and removes it, touching neither the caller nor `widget.m`, must end each step where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "step.m step -references-> widget::widget @ widget.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "private/widget.m": ""
+      },
+      "truth": {
+        "edges": [
+          "step.m step -references-> private/widget.m @ private/widget.m"
+        ],
+        "noEdges": [
+          "step.m step -references-> widget::widget @ widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": null
+      },
+      "truth": {
+        "edges": [
+          "step.m step -references-> widget::widget @ widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": "function widget(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step -references-> widget @ private/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step -references-> private/widget.m @ private/widget.m"
+        ],
+        "noEdges": [
+          "step.m step -references-> widget::widget @ widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": null
+      },
+      "truth": {
+        "edges": [
+          "step.m step -references-> widget::widget @ widget.m"
+        ]
+      }
+    }
+  ]
+}

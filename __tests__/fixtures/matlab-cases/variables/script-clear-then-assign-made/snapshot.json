@@ -1,0 +1,21 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> s.m @ s.m",
+      "main.m main -calls-> zt @ zt.m",
+      "main2.m main2 -calls-> s2.m @ s2.m",
+      "main3.m main3 -calls-> s3.m @ s3.m",
+      "main4.m main4 -calls-> s4.m @ s4.m",
+      "main5.m main5 -calls-> s5.m @ s5.m"
+    ],
+    "rows": [
+      "main2.m:3 calls:xa2"
+    ],
+    "dormant": [
+      "main.m:3 calls:xa1",
+      "main3.m:3 calls:xb",
+      "main4.m:3 calls:xc",
+      "main5.m:3 calls:xd"
+    ]
+  }
+}

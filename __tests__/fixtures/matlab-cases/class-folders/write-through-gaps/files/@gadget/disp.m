@@ -1,0 +1,2 @@
+function disp(g)
+end

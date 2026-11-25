@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "ld.m ld -calls-> tidy @ tidy.m",
+      "ld.m ld -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "why": "`x = numel(x); tidy(x)` in a method of `@Cel` takes the class's `tidy` only while the class has a `numel` the method reaches (step 15 round 5's project rule: the class's own method gives the object back), its folder's own `numel.m` or one in its `private/` folder (MATLAB R2026a: a method's call of the name runs the private one); otherwise the value is a double, and the call is the plain one, here the help text of a MEX function. A sync that adds and removes either file, touching neither caller, ends each step where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m",
+      "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Cel/numel.m": "function y = numel(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "@Cel/all.m Cel::all -calls-> Cel::tidy @ @Cel/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Cel/numel.m": null
+      },
+      "truth": {
+        "edges": [
+          "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Cel/private/numel.m": "function y = numel(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "@Cel/all.m Cel::all -calls-> Cel::tidy @ @Cel/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Cel/private/numel.m": null
+      },
+      "truth": {
+        "edges": [
+          "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m"
+        ]
+      }
+    }
+  ]
+}

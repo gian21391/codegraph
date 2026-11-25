@@ -1,0 +1,2 @@
+function flow(obj)
+end

@@ -1,0 +1,15 @@
+{
+  "why": "`load(fn, 'g')` replaces `g` with what the file holds (MATLAB doc 'load'), so `tidy(g)` dispatches on no known class: the plain call, `tidy.m` (project rule, A2: only a construction that reaches the call states the class).",
+  "truth": {
+    "edges": [
+      "ld.m ld -instantiates-> gadget @ @gadget/gadget.m",
+      "ld.m ld -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "ld.m",
+        "at": "@gadget/tidy.m"
+      }
+    ]
+  }
+}

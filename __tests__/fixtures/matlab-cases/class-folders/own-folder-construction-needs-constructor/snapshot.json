@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/helper.m Gizmo::helper -calls-> Gizmo @ Gizmo.m",
+      "@Gizmo/helper.m Gizmo::helper -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/helper.m Gizmo::helper -calls-> tidy @ tidy.m",
+      "@gadget/helper.m gadget::helper -calls-> gadget @ gadget.m",
+      "@gadget/helper.m gadget::helper -calls-> gadget::tidy @ @gadget/tidy.m",
+      "@gadget/helper.m gadget::helper -calls-> tidy @ tidy.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

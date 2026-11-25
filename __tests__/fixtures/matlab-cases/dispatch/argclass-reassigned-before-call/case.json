@@ -1,0 +1,33 @@
+{
+  "why": "MATLAB dispatches on the class of the argument's value at the call (MATLAB doc 'Method Invocation'). `g = 5;` replaces the object before `tidy(g)`, so `use.m` and `upper.m` (a classdef `Gizmo`, the dispatch fact) call `tidy.m`. In `branch.m` the object may have been replaced: no class is stated, and the call is the plain call (project rule: only a write that reaches the call on every path states the class). In `keep.m` the object is the last write, and `tidy(g)` calls `@gadget/tidy.m` (the step 15 review's probe, extended). In `ops.m` the object is given back by an operator and by a call on it (`k = k + 1`, `k = set(k, \u2026)`), read as the object still (project rule: what a call on the object returns is not followed, and a class's method returns the object it changes); in `conv.m`, `struct(k)` is MATLAB's conversion, a struct (MATLAB doc 'struct'), so `tidy(k)` calls `tidy.m`.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> tidy @ tidy.m",
+      "upper.m upper -calls-> tidy @ tidy.m",
+      "branch.m branch -calls-> tidy @ tidy.m",
+      "keep.m keep -calls-> gadget::tidy @ @gadget/tidy.m",
+      "ops.m ops -calls-> Gizmo::tidy @ Gizmo.m",
+      "conv.m conv -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "@gadget/tidy.m"
+      },
+      {
+        "from": "upper.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "branch.m",
+        "at": "@gadget/tidy.m"
+      },
+      {
+        "from": "conv.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      }
+    ]
+  }
+}

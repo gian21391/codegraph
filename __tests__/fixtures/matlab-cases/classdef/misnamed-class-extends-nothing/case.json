@@ -1,0 +1,17 @@
+{
+  "why": "`classdef Gadget` in `gadget.m` is no class MATLAB knows (a classdef's name matches its file's: MATLAB doc 'Class Folders'): no `extends` edge from it, and no override edge into its `step`. `Sprocket < Basin` is the anchor: its `extends` edge, and `Basin::step` \u2192 `Sprocket::step` (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "Sprocket.m Sprocket -extends-> Basin @ Basin.m"
+    ],
+    "noEdges": [
+      {
+        "from": "gadget.m"
+      },
+      {
+        "from": "Basin.m",
+        "at": "gadget.m"
+      }
+    ]
+  }
+}

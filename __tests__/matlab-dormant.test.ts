@@ -894,7 +894,7 @@ describe('MATLAB script workspaces: when in doubt the call stays failed', () => 
     expect(r.dormant).toEqual(['f_eval.m:3 G']);
   });
 
-  it('a name a `clear` removes is not made; a `clear` that may remove more leaves only what is made after it', async () => {
+  it('a name a `clear` removes is not made; one it keeps is; a `clear` that may remove more leaves only what is made after it', async () => {
     const cases: Array<[string, 'failed' | 'dormant']> = [
       ['X = 1;\nclear X', 'failed'],
       ["X = 1;\nclear('X');", 'failed'],
@@ -904,10 +904,25 @@ describe('MATLAB script workspaces: when in doubt the call stays failed', () => 
       ['X = 1;\nclear all', 'failed'],
       ['X = 1;\nclear variables', 'failed'],
       ['global X\nclear global', 'failed'],
+      // MATLAB doc 'clear': `clear global` removes the global variables alone, the ones declared before it.
+      ['X = 1;\nclear global', 'dormant'],
+      ['clear global\nglobal X', 'dormant'],
+      ['X = 1;\nglobal Y\nclearvars -global', 'dormant'],
+      // A clear removes its names where it stands: an assignment after it makes the name again (MATLAB runs a script in order).
+      ['clear X\nX = 1;', 'dormant'],
+      ['clear X*\nX = 1;', 'dormant'],
+      ['clear -regexp ^X\nX = 1;', 'dormant'],
+      ['clearvars -except Y\nX = 1;', 'dormant'],
       ['X = 1;\nclear classes', 'failed'],
       ['X = 1;\nclearvars', 'failed'],
-      ['X = 1;\nclearvars -except X', 'failed'],
-      ['X = 1;\nclear -regexp ^Y', 'failed'],
+      // MATLAB doc 'clear', 'clearvars': a pattern removes the names it matches, `-except` keeps the ones it lists.
+      ['X = 1;\nclearvars -except X', 'dormant'],
+      ['X = 1;\nclearvars -except Y', 'failed'],
+      ['X = 1;\nclear -regexp ^Y', 'dormant'],
+      ['X = 1;\nclear -regexp ^X', 'failed'],
+      ['X = 1;\nclear X*', 'failed'],
+      ['X = 1;\nclear Y*', 'dormant'],
+      ['X = 1;\nglobal Y\nclear global Y', 'dormant'],
       ['X = 1;\nclear(name)', 'failed'],
       ['X = 1;\nclear functions', 'dormant'],
       ['X = 1;\nclear mex', 'dormant'],

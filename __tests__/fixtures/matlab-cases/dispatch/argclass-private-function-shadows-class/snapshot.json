@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "app/use.m use -calls-> gadget @ app/private/gadget.m",
+      "app/use.m use -calls-> tidy @ lib/tidy.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

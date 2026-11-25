@@ -1,0 +1,14 @@
+{
+  "why": "A class folder's class is defined by the file named after the folder (MATLAB doc 'Class Folders'), and a classdef's name must match its file's: `@vane/VANE.m` defining `classdef vane < Spinner` defines no class `vane` MATLAB knows, so `@vane`'s functions have no class with a superclass, and a call `turn(other, 1)` on a parameter in `@vane/helper.m` is taken for no inherited method of `Spinner` (the caller-class guess, which reads its class's hierarchy, has none here).",
+  "truth": {
+    "edges": [
+      "@vane/helper.m vane::helper -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@vane/helper.m",
+        "to": "turn"
+      }
+    ]
+  }
+}

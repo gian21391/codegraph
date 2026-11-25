@@ -16,9 +16,18 @@
  * The generator's version: bumped whenever a change to the generator or the
  * mutator changes what a seed draws, so that a reproduce line printed by an
  * older one is known not to replay (run.mjs warns). 1: the first campaign;
- * 2: the step 11 campaign; 3: the farther-copy motif and toggle (step 11 fix).
+ * 2: the step 11 campaign; 3: the farther-copy motif and toggle (step 11 fix);
+ * 4: the 'classes' profile's writes motif (step 15 round 7: see writesMotif).
+ * Version 3 is still drawn on request (`--generator-version 3`): its seeds
+ * draw what they drew. Under the default profile version 4 draws exactly
+ * what version 3 draws (the motif is the 'classes' profile's alone), so a
+ * default-profile seed of either tests the same projects: run the 'classes'
+ * profile to test what version 4 adds.
  */
-export const GENERATOR_VERSION = 3;
+export const GENERATOR_VERSION = 4;
+
+/** The versions generateProject can draw (see GENERATOR_VERSION). */
+export const GENERATOR_VERSIONS = [3, 4];
 
 export const NAMES = ['f', 'g', 'h', 'F', 'helper', 'run', 'util', 'Util', 'plot', 'size', 'disp', 'max', 'step', 'data', 'setup', 'widget'];
 export const CLASSES = ['Widget', 'Base', 'Gadget', 'Mid', 'widget'];
@@ -413,9 +422,46 @@ export function guessMotif(rng, files) {
 }
 
 /**
+ * Version 4's 'classes' motif: the writes of an object rounds 4–7 of step 15
+ * read (an operator or MATLAB function on the method's own object or a
+ * constructed one, parenthesised, a concatenation, a literal, `varargin{…}`,
+ * a write a `return` follows, in an `if` or a `try`), a class folder that by
+ * chance has its own `ne`, `numel`, `size`, `horzcat` (or a private
+ * `numel`), and a script whose globals and clears its caller's reads depend
+ * on (`clear global` with items, `clearvars -global -except`, `-regexp`).
+ * Drawn after every version-3 draw, so version 3's projects are unchanged.
+ */
+export function writesMotif(rng, files) {
+  const dir = `${rng.pick(['', 'lib/'])}@Wkr`;
+  putFile(files, `${dir}/Wkr.m`, render(rng, ['function obj = Wkr(varargin)', "    obj = class(struct('n', 0), 'Wkr');", 'end']));
+  putFile(files, `${dir}/tidy.m`, render(rng, ['function tidy(obj)', 'end']));
+  for (const m of ['ne', 'numel', 'size', 'horzcat']) {
+    if (rng.chance(0.4)) putFile(files, `${dir}/${m}.m`, render(rng, [`function obj = ${m}(obj, varargin)`, 'end']));
+  }
+  if (rng.chance(0.25)) putFile(files, `${dir}/private/numel.m`, render(rng, ['function obj = numel(obj, varargin)', 'end']));
+  if (!files['zt.m']) putFile(files, 'zt.m', render(rng, ['function r = zt(n)', '    r = n;', 'end']));
+  if (!files['tidy.m'] && rng.chance(0.7)) putFile(files, 'tidy.m', render(rng, ['function tidy(x)', 'end']));
+  const writes = (v) => [
+    `${v} = ${v} ~= 0;`, `${v} = (${v} + 1);`, `${v} = ~${v};`, `${v} = numel(${v});`, `${v} = size(${v});`, `${v} = [${v}, 1];`,
+    `${v} = horzcat(${v}, ${v});`, `${v} = 5;`, `if c, ${v} = numel(${v}); return; end`, `try, ${v} = 5; zt(c); return; catch, end`,
+    `${v} = Wkr(${v});`, `${v} = ${v}.n;`,
+  ];
+  const body = ['function use(obj, c, varargin)'];
+  for (let i = rng.int(3); i >= 0; i--) body.push(`    ${rng.pick([...writes('obj'), 'obj = varargin{1};'])}`);
+  body.push('    tidy(obj);', '    k = Wkr();');
+  for (let i = rng.int(3); i >= 0; i--) body.push(`    ${rng.pick(writes('k'))}`);
+  body.push('    tidy(k);', 'end');
+  putFile(files, `${dir}/use.m`, render(rng, body));
+  const clear = rng.pick(['clear global', 'clear global gw', 'clear global g*', 'clear global -regexp ^gv', 'clearvars -global -except gv', 'clear gv', 'clear -regexp ^g']);
+  putFile(files, 'gscr.m', render(rng, ['global gw', 'gw = 1;', 'gv = 2;', clear, rng.pick(['gt = 3;', 'gw = 4;', '% done'])]));
+  putFile(files, 'gcall.m', render(rng, ['function gcall', '    gscr', '    y = gw(2);', '    z = gv(2);', '    zt(y + z);', 'end']));
+}
+
+/**
  * A random project of about 3–30 files. `opts.big`: also one big file
  * ('deep' nesting or 'broken' text) of `opts.kb` kilobytes. `opts.profile`
- * 'classes' adds guessMotif (the default profile's draws are unchanged by it).
+ * 'classes' adds guessMotif (the default profile's draws are unchanged by
+ * it), and from `opts.generatorVersion` 4 (the default) writesMotif.
  */
 export function generateProject(rng, opts = {}) {
   const files = {};
@@ -429,5 +475,6 @@ export function generateProject(rng, opts = {}) {
   if (opts.motifs !== false && rng.chance(0.4)) motif(rng, files);
   if (opts.profile === 'classes') guessMotif(rng, files);
   if (opts.big) putFile(files, `${rng.pick(['', 'lib/'])}big_${opts.big}.m`, bigFile(rng, opts.big, opts.kb ?? 200));
+  if (opts.profile === 'classes' && (opts.generatorVersion ?? GENERATOR_VERSION) >= 4) writesMotif(rng, files);
   return files;
 }

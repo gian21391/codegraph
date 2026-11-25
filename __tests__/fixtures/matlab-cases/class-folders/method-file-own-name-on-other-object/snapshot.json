@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/numel.m Gizmo::numel -calls-> tidy @ tidy.m",
+      "@Gizmo/numel.m Gizmo::numel -calls-> zt @ zt.m",
+      "@Gizmo/numel.m Gizmo::numel -instantiates-> Widget @ @Widget/Widget.m"
+    ],
+    "rows": [
+      "@Gizmo/numel.m:3 calls:Widget::numel"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m runs -calls-> app/private/probe.m @ app/private/probe.m"
+    ],
+    "rows": [
+      "app/main.m:2 calls:probe"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "why": "`Cx < Dy` and `Dy < Cx`: a class cannot be its own superclass, however far up, and MATLAB defines neither (it refuses a circular class definition), so no method is inherited along the circle. `spin(x)` in the class folder file `@Cx/f.m` is no call of `Dy::spin`, not even by the caller-class guess (project rule, step 15 item 7: never inherit along a circular chain).",
+  "truth": {
+    "edges": [
+      "@Cx/f.m Cx::f -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Cx/f.m",
+        "to": "spin"
+      }
+    ]
+  }
+}

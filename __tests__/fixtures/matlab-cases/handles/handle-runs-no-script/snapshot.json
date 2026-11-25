@@ -1,11 +1,10 @@
 {
   "index": {
     "edges": [
-      "main.m main -calls-> setup_s.m @ setup_s.m"
+      "main.m main -calls-> setup_s.m @ setup_s.m",
+      "main.m main -references-> setup_s.m @ setup_s.m"
     ],
-    "rows": [
-      "main.m:2 function_ref:setup_s"
-    ],
+    "rows": [],
     "dormant": []
   }
 }

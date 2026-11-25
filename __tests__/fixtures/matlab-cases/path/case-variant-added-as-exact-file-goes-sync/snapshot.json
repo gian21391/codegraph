@@ -1,9 +1,9 @@
 {
   "index": {
-    "edges": [
-      "count.m count.m -calls-> Tally @ off/Tally.m"
+    "edges": [],
+    "rows": [
+      "count.m:1 calls:Tally"
     ],
-    "rows": [],
     "dormant": []
   },
   "steps": [
@@ -15,10 +15,10 @@
       "dormant": []
     },
     {
-      "edges": [
-        "count.m count.m -calls-> Tally @ off/Tally.m"
+      "edges": [],
+      "rows": [
+        "count.m:1 calls:Tally"
       ],
-      "rows": [],
       "dormant": []
     }
   ]

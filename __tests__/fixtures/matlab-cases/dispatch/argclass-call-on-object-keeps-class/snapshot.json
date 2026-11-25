@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "sc.m sc -calls-> Gizmo::scale @ Gizmo.m",
+      "sc.m sc -calls-> Gizmo::tidy @ Gizmo.m",
+      "sc.m sc -instantiates-> Gizmo @ Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

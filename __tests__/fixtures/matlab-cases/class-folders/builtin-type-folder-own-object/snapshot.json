@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "@double/helper.m double::helper -calls-> double::tidy @ @double/tidy.m"
+    ],
+    "rows": [
+      "use.m:2 calls:helper"
+    ],
+    "dormant": []
+  }
+}

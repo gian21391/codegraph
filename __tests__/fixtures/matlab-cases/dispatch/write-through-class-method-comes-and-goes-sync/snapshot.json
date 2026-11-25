@@ -1,0 +1,110 @@
+{
+  "index": {
+    "edges": [
+      "Kid.m Kid -extends-> Mid @ Mid.m",
+      "use.m use -calls-> zt @ zt.m",
+      "use.m use -instantiates-> Kid @ Kid.m"
+    ],
+    "rows": [
+      "@Cel/all.m:3 calls:Cel::sum",
+      "use.m:3 calls:Kid::size",
+      "use.m:4 calls:Kid::peek"
+    ],
+    "dormant": [
+      "@Cel/all.m:2 calls:Cel::numel"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "@Cel/all.m Cel::all -calls-> Cel::numel @ @Cel/numel.m",
+        "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m",
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "use.m:3 calls:Kid::size",
+        "use.m:4 calls:Kid::peek"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "@Cel/all.m:3 calls:Cel::sum",
+        "use.m:3 calls:Kid::size",
+        "use.m:4 calls:Kid::peek"
+      ],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    },
+    {
+      "edges": [
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "Mid.m Mid -extends-> Pak @ Pak.m",
+        "Pak.m Pak::peek -calls-> Kid::peek @ Kid.m",
+        "use.m use -calls-> Kid::peek @ Kid.m",
+        "use.m use -calls-> Pak::size @ Pak.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "@Cel/all.m:3 calls:Cel::sum"
+      ],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    },
+    {
+      "edges": [
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "@Cel/all.m:3 calls:Cel::sum",
+        "use.m:3 calls:Kid::size",
+        "use.m:4 calls:Kid::peek"
+      ],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    },
+    {
+      "edges": [
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "use.m use -calls-> Kid::peek @ Kid.m",
+        "use.m use -calls-> Kid::size @ Kid.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "@Cel/all.m:3 calls:Cel::sum"
+      ],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    },
+    {
+      "edges": [
+        "Kid.m Kid -extends-> Mid @ Mid.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> Kid @ Kid.m"
+      ],
+      "rows": [
+        "@Cel/all.m:3 calls:Cel::sum",
+        "use.m:3 calls:Kid::size",
+        "use.m:4 calls:Kid::peek"
+      ],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    }
+  ]
+}

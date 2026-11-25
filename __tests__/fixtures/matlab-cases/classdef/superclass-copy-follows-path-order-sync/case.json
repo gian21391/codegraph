@@ -1,0 +1,72 @@
+{
+  "why": "A class's methods are those of the one class definition its name resolves to, and of its superclasses, each resolved the same way (MATLAB doc 'Class Precedence and MATLAB Path': of same-named classes the first on the path is the class; 'Function Precedence Order'). `addpath` puts a folder at the front of the path, so after `addpath('lib'); addpath('tools')` the superclass `Mid` of `app/Widget.m` is `tools/Mid.m`, which has no `go`, and `w.go()` reaches no method, nor does `m.go()` on an object of `Mid` itself: another copy's `Mid::go` in `lib/Mid.m` is another class's. With the order swapped, `Mid` is `lib/Mid.m` and `w.go()` calls its `go`; with `tools/Mid.m` deleted too; with it back, nothing again. Each step must end where a fresh index ends (project rule; the step 15 review's fixture, N1).",
+  "truth": {
+    "edges": [
+      "app/use.m use -instantiates-> Widget @ app/Widget.m",
+      "app/Widget.m Widget -extends-> Mid @ tools/Mid.m",
+      "app/use.m use -instantiates-> Mid @ tools/Mid.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/use.m",
+        "to": "go"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":[\"addpath('tools');\",\"addpath('lib');\"]}}\n"
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> Mid::go @ lib/Mid.m",
+          "app/Widget.m Widget -extends-> Mid @ lib/Mid.m",
+          "app/use.m use -instantiates-> Mid @ lib/Mid.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\"matlab\":{\"startup\":[\"addpath('lib');\",\"addpath('tools');\"]}}\n"
+      },
+      "truth": {
+        "edges": [
+          "app/Widget.m Widget -extends-> Mid @ tools/Mid.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/use.m",
+            "to": "go"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "tools/Mid.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> Mid::go @ lib/Mid.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "tools/Mid.m": "classdef Mid < handle\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/Widget.m Widget -extends-> Mid @ tools/Mid.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/use.m",
+            "to": "go"
+          }
+        ]
+      }
+    }
+  ]
+}

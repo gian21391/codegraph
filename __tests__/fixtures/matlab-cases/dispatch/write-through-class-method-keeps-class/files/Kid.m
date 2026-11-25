@@ -1,0 +1,2 @@
+classdef Kid < Pak
+end

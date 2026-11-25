@@ -1,0 +1,37 @@
+{
+  "index": {
+    "edges": [
+      "c1.m c1 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c1.m c1 -instantiates-> Gizmo @ Gizmo.m",
+      "c1.m c1 -instantiates-> Gizmo @ Gizmo.m",
+      "c2.m c2 -calls-> tidy @ tidy.m",
+      "c2.m c2 -instantiates-> Gizmo @ Gizmo.m",
+      "c2.m c2 -instantiates-> Gizmo @ Gizmo.m",
+      "c2.m c2 -instantiates-> Widget @ Widget.m",
+      "c3.m c3 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c3.m c3 -instantiates-> Gizmo @ Gizmo.m",
+      "c3.m c3 -instantiates-> Gizmo @ Gizmo.m",
+      "c4.m c4 -calls-> tidy @ tidy.m",
+      "c4.m c4 -instantiates-> Gizmo @ Gizmo.m",
+      "c4.m c4 -instantiates-> Gizmo @ Gizmo.m",
+      "c4.m c4 -instantiates-> Widget @ Widget.m",
+      "c5.m c5 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c5.m c5 -instantiates-> Gizmo @ Gizmo.m",
+      "c5.m c5 -instantiates-> Gizmo @ Gizmo.m",
+      "c6.m c6 -calls-> tidy @ tidy.m",
+      "c6.m c6 -instantiates-> Gizmo @ Gizmo.m",
+      "c7.m c7 -calls-> tidy @ tidy.m",
+      "c7.m c7 -instantiates-> Gizmo @ Gizmo.m",
+      "c8.m c8 -calls-> tidy @ tidy.m",
+      "c8.m c8 -instantiates-> Gizmo @ Gizmo.m",
+      "c8.m c8 -instantiates-> Gizmo @ Gizmo.m",
+      "c8.m c8 -instantiates-> Widget @ Widget.m",
+      "c9.m c9 -calls-> tidy @ tidy.m",
+      "c9.m c9 -instantiates-> Gizmo @ Gizmo.m",
+      "c9.m c9 -instantiates-> Gizmo @ Gizmo.m",
+      "c9.m c9 -instantiates-> zpk::Wdg @ +zpk/Wdg.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

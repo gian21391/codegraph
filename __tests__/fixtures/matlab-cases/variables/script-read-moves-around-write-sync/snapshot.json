@@ -1,0 +1,61 @@
+{
+  "index": {
+    "edges": [
+      "run1.m run1.m -calls-> zq @ zq.m",
+      "run1.m run1.m -calls-> zt @ zt.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zq @ zq.m",
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zq @ zq.m",
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "run1.m:2 calls:k"
+      ]
+    },
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [
+        "run1.m:2 calls:zq"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "run1.m run1.m -calls-> zq @ zq.m",
+        "run1.m run1.m -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

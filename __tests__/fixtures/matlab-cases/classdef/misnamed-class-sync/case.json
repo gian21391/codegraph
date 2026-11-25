@@ -1,0 +1,73 @@
+{
+  "why": "The root `Vane.m` is the nearer copy and has no `turn`: nothing (project rule, step 15 item 1). Turned misnamed (`classdef Other` in `Vane.m`: no class MATLAB knows, doc 'Class Folders'), `lib/Vane.m` is the class and `a.turn()` calls its method. Back, nothing again; misnamed by case (`classdef vane`), `lib`'s; deleted, `lib`'s; back, nothing. Each step must end where a fresh index ends (project rule; the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "use.m use -instantiates-> Vane @ Vane.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "to": "turn"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Vane.m": "classdef Other\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Vane::turn @ lib/Vane.m",
+          "use.m use -instantiates-> Vane @ lib/Vane.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Vane.m": "classdef Vane\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "turn"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Vane.m": "classdef vane\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Vane::turn @ lib/Vane.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Vane.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Vane::turn @ lib/Vane.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Vane.m": "classdef Vane\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "turn"
+          }
+        ]
+      }
+    }
+  ]
+}

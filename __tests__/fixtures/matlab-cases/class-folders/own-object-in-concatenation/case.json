@@ -1,0 +1,20 @@
+{
+  "why": "A method is given its own object (doc 'Method Invocation'), and concatenating objects of one class gives that class (doc 'Concatenating Objects'): `k = [k, obj]` and `k = [obj(1), k]` in methods of `@Gizmo` keep `k` a Gizmo, so `tidy(k)` is `Gizmo::tidy` (step 15 round 7: a concatenation with the variable itself among its elements keeps its class).",
+  "truth": {
+    "edges": [
+      "@Gizmo/poke.m Gizmo::poke -calls-> zt @ zt.m",
+      "@Gizmo/poke.m Gizmo::poke -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/prod2.m Gizmo::prod2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/poke.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/prod2.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

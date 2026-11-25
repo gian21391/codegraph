@@ -9,8 +9,6 @@
     "rows": [
       "use.m:6 calls:WAVE"
     ],
-    "dormant": [
-      "@Poly/Poly.m:3 calls:Poly::class"
-    ]
+    "dormant": []
   }
 }

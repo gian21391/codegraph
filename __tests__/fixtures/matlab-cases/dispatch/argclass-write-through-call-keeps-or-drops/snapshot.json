@@ -1,0 +1,35 @@
+{
+  "index": {
+    "edges": [
+      "cls.m cls -calls-> tidy @ tidy.m",
+      "cls.m cls -instantiates-> gadget @ @gadget/gadget.m",
+      "cnt.m cnt -calls-> tidy @ tidy.m",
+      "cnt.m cnt -instantiates-> Gizmo @ Gizmo.m",
+      "getv.m getv -calls-> gadget::get @ @gadget/get.m",
+      "getv.m getv -calls-> gadget::tidy @ @gadget/tidy.m",
+      "getv.m getv -instantiates-> gadget @ @gadget/gadget.m",
+      "go.m go -calls-> Suite::run @ Suite.m",
+      "go.m go -instantiates-> Report @ Report.m",
+      "go.m go -instantiates-> Suite @ Suite.m",
+      "pls.m pls -calls-> Gizmo::tidy @ Gizmo.m",
+      "pls.m pls -instantiates-> Gizmo @ Gizmo.m",
+      "setkeep.m setkeep -calls-> gadget::set @ @gadget/set.m",
+      "setkeep.m setkeep -calls-> gadget::tidy @ @gadget/tidy.m",
+      "setkeep.m setkeep -instantiates-> gadget @ @gadget/gadget.m",
+      "strc.m strc -calls-> tidy @ tidy.m",
+      "strc.m strc -instantiates-> Gizmo @ Gizmo.m",
+      "upd.m upd -calls-> Report::send @ Report.m",
+      "upd.m upd -calls-> bumpcount @ bumpcount.m",
+      "upd.m upd -instantiates-> Report @ Report.m"
+    ],
+    "rows": [
+      "go.m:5 calls:Report::send"
+    ],
+    "dormant": [
+      "cls.m:3 calls:gadget::class",
+      "cnt.m:3 calls:Gizmo::numel",
+      "pls.m:3 calls:Gizmo::plus",
+      "strc.m:3 calls:Gizmo::struct"
+    ]
+  }
+}

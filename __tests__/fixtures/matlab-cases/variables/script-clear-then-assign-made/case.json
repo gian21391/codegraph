@@ -1,0 +1,18 @@
+{
+  "why": "MATLAB runs a script's statements in order (the user's ruling 3, text order in a script; doc 'clear'): a clear removes the names it matches where it stands, and an assignment after it makes the name again. `clear xa*` then `xa1 = 5`, `clear xb` then `xb = 5`, `clearvars -except qq` then `xc = 5`, `clear -regexp ^xd` then `xd = 5` each leave the name in the caller's workspace, so the caller's read of it indexes the variable (a dormant row, no call out of the index); `xa2 = 5` then `clear xa*` leaves none (a failed row).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> zt @ zt.m",
+      "main.m main -calls-> s.m @ s.m"
+    ],
+    "dormant": [
+      "main.m:3 calls:xa1",
+      "main3.m:3 calls:xb",
+      "main4.m:3 calls:xc",
+      "main5.m:3 calls:xd"
+    ],
+    "rows": [
+      "main2.m:3 calls:xa2"
+    ]
+  }
+}

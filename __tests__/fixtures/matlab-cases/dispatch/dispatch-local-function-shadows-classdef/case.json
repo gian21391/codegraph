@@ -1,0 +1,20 @@
+{
+  "why": "`Gizmo()` in `use.m` calls the file's local function `Gizmo`, which comes before the classdef `Gizmo.m` (MATLAB doc 'Function Precedence Order': local functions first), so `g` is a struct and `tidy(g)` calls `tidy.m`, not `Gizmo`'s method (the step 15 review's probe; wrong before step 15 too). In `recv.m` the same holds for a member call: `g.tidy()` reads a field of the struct, no method of `Gizmo` (two classes define `tidy`, so nothing names one).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> tidy @ tidy.m",
+      "use.m use -calls-> Gizmo @ use.m",
+      "recv.m recv -calls-> Gizmo @ recv.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "recv.m",
+        "to": "tidy"
+      }
+    ]
+  }
+}

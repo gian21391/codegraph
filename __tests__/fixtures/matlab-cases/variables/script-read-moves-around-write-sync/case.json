@@ -1,0 +1,78 @@
+{
+  "why": "A script reads in text order (the user's ruling, step 11): a read before the write is a call of `zq.m`, one after it indexes the variable. The read moved after the write; into a loop before the write (the first pass calls); into an `else` of the write's `if` (that clause runs when the write did not); into a `catch` after the write in its `try` (the write may have run: MATLAB doc 'try, catch'); `zq.m` deleted and restored. Each step must end where a fresh index ends (project rule; the step 15 review's probe, extended).",
+  "truth": {
+    "edges": [
+      "run1.m run1.m -calls-> zt @ zt.m",
+      "run1.m run1.m -calls-> zq @ zq.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "run1.m": "zt(1);\nzq = 1;\nzq(2)\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "run1.m",
+            "at": "zq.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "run1.m": "zt(1);\nfor k = 1:2\n  zq(2)\n  zq = 1;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "run1.m run1.m -calls-> zq @ zq.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "run1.m": "zt(1);\nif k\n  zq = 1;\nelse\n  zq(2)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "run1.m run1.m -calls-> zq @ zq.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "run1.m": "zt(1);\ntry\n  zq = 1;\n  error('stop');\ncatch\n  zq(2)\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "run1.m",
+            "at": "zq.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "run1.m": "zt(1);\nzq(2)\nzq = 1;\n",
+        "zq.m": null
+      },
+      "truth": {
+        "edges": [
+          "run1.m run1.m -calls-> zt @ zt.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zq.m": "function r = zq(n)\nr = n;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "run1.m run1.m -calls-> zq @ zq.m"
+        ]
+      }
+    }
+  ]
+}

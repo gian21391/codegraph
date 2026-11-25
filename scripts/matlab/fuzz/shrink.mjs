@@ -174,9 +174,10 @@ function draftTruth(failure) {
 /**
  * Writes a shrunk failure under `outDir/<id>/` as a catalog case: `files/`,
  * `case.json` (steps + draft truth + pendingBug), and `repro.txt` (the seed,
- * the command that reproduces it, and the full difference).
+ * the command that reproduces it, and the full difference). `generatorVersion`
+ * is the version the run drew its cases with (run.mjs `--generator-version`).
  */
-export function writeFinding(outDir, id, run, shrunk, command) {
+export function writeFinding(outDir, id, run, shrunk, command, generatorVersion = GENERATOR_VERSION) {
   const dir = path.join(outDir, id);
   fs.rmSync(dir, { recursive: true, force: true });
   const f = shrunk.failure;
@@ -187,7 +188,7 @@ export function writeFinding(outDir, id, run, shrunk, command) {
     fs.writeFileSync(p, c);
   }
   const truth = draftTruth(f);
-  const why = `Fuzz finding (${f.oracle}${f.spec ? `: ${f.spec.kind}` : ''}${f.where ? `: ${f.where}` : ''}); seed ${run.seed}, case ${run.caseIndex}, generator version ${GENERATOR_VERSION}; in the catalog, cite it as "found by the step 11 fuzzer". Draft truth from the ${f.oracle === 'metamorphic' ? 'unvaried project' : 'fresh index'}: review before it joins the catalog.`;
+  const why = `Fuzz finding (${f.oracle}${f.spec ? `: ${f.spec.kind}` : ''}${f.where ? `: ${f.where}` : ''}); seed ${run.seed}, case ${run.caseIndex}, generator version ${generatorVersion}; in the catalog, cite it as "found by the step 11 fuzzer". Draft truth from the ${f.oracle === 'metamorphic' ? 'unvaried project' : 'fresh index'}: review before it joins the catalog.`;
   const json = { why, truth: needsSequence(f) ? {} : truth };
   if (needsSequence(f)) json.steps = shrunk.edits.map((e, i) => (i === shrunk.edits.length - 1 ? { edit: mapEdit(e.edit), truth } : { edit: mapEdit(e.edit) }));
   // `fails` is the runner's list of problems for the case (matlab-cases.test.ts prints it when it differs): fill it
@@ -199,7 +200,7 @@ export function writeFinding(outDir, id, run, shrunk, command) {
     `finding ${id}`,
     `oracle: ${f.oracle}${f.spec ? ` (${JSON.stringify(f.spec)})` : ''}${f.where ? ` in ${f.where}` : ''}`,
     `reproduce: ${command}`,
-    `generator version: ${GENERATOR_VERSION} (a reproduce line replays only with the generator version it names)`,
+    `generator version: ${generatorVersion} (a reproduce line replays only with the generator version it names)`,
     `original: ${Object.keys(run.files).length} files, failed at step ${run.failure.step} of ${run.edits.length}`,
     `shrunk: ${Object.keys(shrunk.files).length} files, ${shrunk.edits.length} edits, in ${shrunk.evals} replays and ${Math.round(shrunk.ms / 1000)} s${shrunk.reproduced ? '' : ' (DID NOT REPRODUCE: flaky?)'}`,
     '',

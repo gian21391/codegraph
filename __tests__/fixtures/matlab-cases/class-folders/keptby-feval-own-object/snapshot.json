@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> Cel::numel @ @Cel/numel.m",
+      "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m",
+      "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+    ],
+    "rows": [
+      "@Bare/all.m:2 calls:Bare::numel",
+      "@Bare/all.m:3 calls:Bare::sum"
+    ],
+    "dormant": []
+  }
+}

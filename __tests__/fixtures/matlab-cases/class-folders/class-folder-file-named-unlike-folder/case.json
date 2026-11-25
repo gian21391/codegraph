@@ -1,0 +1,14 @@
+{
+  "why": "A class folder's class is defined by the file named after the folder (MATLAB doc 'Class Folders'): `@Vane/vane.m` defines no class `vane` (nor `Vane`), so `vane()` makes no object of it and `a.turn()` calls no method of it.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "@Vane/vane.m"
+      }
+    ]
+  }
+}

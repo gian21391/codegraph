@@ -1,0 +1,27 @@
+{
+  "index": {
+    "edges": [
+      "brc.m brc -calls-> tidy @ tidy.m",
+      "brc.m brc -instantiates-> Gizmo @ Gizmo.m",
+      "cct.m cct -calls-> Gizmo::tidy @ Gizmo.m",
+      "cct.m cct -instantiates-> Gizmo @ Gizmo.m",
+      "cct.m cct -instantiates-> Gizmo @ Gizmo.m",
+      "emp.m emp -calls-> tidy @ tidy.m",
+      "emp.m emp -instantiates-> Gizmo @ Gizmo.m",
+      "idx.m idx -calls-> Gizmo::tidy @ Gizmo.m",
+      "idx.m idx -instantiates-> Gizmo @ Gizmo.m",
+      "oidx.m oidx -calls-> gadget::tidy @ @gadget/tidy.m",
+      "oidx.m oidx -instantiates-> gadget @ @gadget/gadget.m",
+      "prp.m prp -calls-> tidy @ tidy.m",
+      "prp.m prp -instantiates-> Gizmo @ Gizmo.m",
+      "rng.m rng -calls-> Gizmo::tidy @ Gizmo.m",
+      "rng.m rng -instantiates-> Gizmo @ Gizmo.m",
+      "vct.m vct -calls-> Gizmo::tidy @ Gizmo.m",
+      "vct.m vct -instantiates-> Gizmo @ Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "prp.m:3 calls:Gizmo::prop"
+    ]
+  }
+}

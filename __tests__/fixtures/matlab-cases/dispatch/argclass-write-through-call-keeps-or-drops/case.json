@@ -1,0 +1,49 @@
+{
+  "why": "What a call that is passed the object gives back, by a stated project rule (the index does not follow a call's result): `v = f(…, v, …)` keeps `v`'s class when `f` is the project's (no MATLAB function has its name: `report = bumpcount(report, 2)`, the value object's update idiom), or one of MATLAB's that gives the object back (`set`, `plus` and the other operator functions: doc 'Implementing Operators for Your Class'). A MATLAB function's name the class defines a method of is the class's method (doc 'Method Invocation'), and a project rule takes it to give the object back (step 15 round 5): the index cannot read what a method returns, so a method of the object's class called on it is read as the value object's update idiom, as a project function is. `g = get(g, 'n')` with `@gadget/get.m`, which returns the object it is given, keeps `g` a `gadget`. Any other MATLAB function gives what MATLAB's gives (doc 'numel', 'class', 'struct'): `numel(k)`, `class(g)`, `struct(k)` hold no object of the class, so `tidy` there calls `tidy.m`. So does `report = run(s, report)` on a `Suite` `s` (project rule, step 15 round 4): `run` is one of MATLAB's names, and whether it is a method of `s`'s class here only the resolver can tell, so `report` is no longer known to be a `Report` and `send(report)` is the plain call, which no function answers. (Review 2 findings 2 and 3, review 3 finding 4.)",
+  "truth": {
+    "edges": [
+      "go.m go -calls-> Suite::run @ Suite.m",
+      "upd.m upd -calls-> bumpcount @ bumpcount.m",
+      "upd.m upd -calls-> Report::send @ Report.m",
+      "cnt.m cnt -calls-> tidy @ tidy.m",
+      "cls.m cls -calls-> tidy @ tidy.m",
+      "setkeep.m setkeep -calls-> gadget::tidy @ @gadget/tidy.m",
+      "strc.m strc -calls-> tidy @ tidy.m",
+      "pls.m pls -calls-> Gizmo::tidy @ Gizmo.m",
+      "getv.m getv -calls-> gadget::tidy @ @gadget/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "cnt.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "cls.m",
+        "at": "@gadget/tidy.m"
+      },
+      {
+        "from": "strc.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "setkeep.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "pls.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "go.m",
+        "to": "Report::send"
+      },
+      {
+        "from": "getv.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

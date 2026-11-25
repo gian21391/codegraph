@@ -1,0 +1,23 @@
+{
+  "why": "A write through a MATLAB name that errors on an object (MATLAB R2026a: `sort`, `==`, `&&`, `~=`, and `<=`, `>`, `>=` (measured in step 15 round 7b) on an object whose class defines no such method) ends no hint, the parentheses around it read through (doc 'Operator Precedence'): a later call is reached with the object or not at all, so `tidy(k)` is `Gizmo::tidy` (step 15 round 7, decisions 1 and 5). So is it after `k = [a, a]`, two objects of the class (doc 'Concatenating Objects of Different Classes': the result is of their class), and after a write a `return` follows on its own branch, which reaches no later call (decision 6's rule for what reaches).",
+  "truth": {
+    "edges": [
+      "u1.m u1 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u2.m u2 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u3.m u3 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u4.m u4 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u5.m u5 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u6.m u6 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u6.m u6 -calls-> zt @ zt.m",
+      "u7.m u7 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u8.m u8 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u9.m u9 -calls-> Gizmo::tidy @ Gizmo.m"
+    ],
+    "noEdges": [
+      {
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

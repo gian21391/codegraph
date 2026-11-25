@@ -1,0 +1,52 @@
+{
+  "index": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m",
+      "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Cel/all.m:2 calls:Cel::numel"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "@Cel/all.m Cel::all -calls-> Cel::numel @ @Cel/numel.m",
+        "@Cel/all.m Cel::all -calls-> Cel::tidy @ @Cel/tidy.m",
+        "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m",
+        "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    },
+    {
+      "edges": [
+        "@Cel/all.m Cel::all -calls-> Cel::tidy @ @Cel/tidy.m",
+        "@Cel/all.m Cel::all -calls-> numel @ @Cel/private/numel.m",
+        "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "@Cel/all.m Cel::all -calls-> tidy.m @ tidy.m",
+        "@Cel/all.m Cel::all -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "@Cel/all.m:2 calls:Cel::numel"
+      ]
+    }
+  ]
+}

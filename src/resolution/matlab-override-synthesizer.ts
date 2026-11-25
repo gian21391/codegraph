@@ -53,7 +53,7 @@ import type { QueryBuilder } from '../db/queries';
 import type { MaybeYield } from './cooperative-yield';
 import { isMatlabClassFolderFile } from './matlab-class-folders';
 import { dirOf } from '../graph/matlab-search-path';
-import { isConstructor, ownerOf } from './matlab-lookup';
+import { isConstructor, isMatlabMisnamedClass, ownerOf } from './matlab-lookup';
 
 export const MATLAB_OVERRIDE = 'matlab-override';
 export const MATLAB_SUBCLASS_METHOD = 'matlab-subclass-method';
@@ -82,7 +82,8 @@ function dispatchable(m: Node, methods: ClassMethods): boolean {
 
 async function readHierarchy(queries: QueryBuilder, onYield: MaybeYield): Promise<Hierarchy | null> {
   const classes = new Map<string, Node>();
-  for (const cls of queries.iterateNodesByKindIn([...CLASS_KINDS], ['matlab'])) classes.set(cls.id, cls);
+  // A misnamed class is no class MATLAB knows (see isMatlabMisnamedClass): no line of a hierarchy runs through it.
+  for (const cls of queries.iterateNodesByKindIn([...CLASS_KINDS], ['matlab'])) if (!isMatlabMisnamedClass(cls)) classes.set(cls.id, cls);
   const supers = new Map<string, Node[]>();
   const subs = new Map<string, Node[]>();
   let scanned = 0;

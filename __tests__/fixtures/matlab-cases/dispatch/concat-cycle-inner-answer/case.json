@@ -1,0 +1,21 @@
+{
+  "why": "Review 5 finding 5. Straight-line code: `k = [w, Gizmo()]` concatenates two Gizmo objects (doc 'Concatenating Objects'), so `k` is a Gizmo, and `w = [k]` then too: `tidy(k)` and `tidy(w)` are `Gizmo::tidy` in both files, whichever is read first (step 15 round 7, decision 3: an answer does not depend on which call is asked first; the answer worked out for `w` inside `k`'s cycle is not kept for the next read).",
+  "truth": {
+    "edges": [
+      "usea.m usea -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "useb.m useb -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "usea.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      },
+      {
+        "from": "useb.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

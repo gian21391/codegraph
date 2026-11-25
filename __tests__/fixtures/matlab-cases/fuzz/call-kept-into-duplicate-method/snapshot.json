@@ -1,11 +1,10 @@
 {
   "index": {
-    "edges": [
-      "lib/Mid.m Mid::update -calls-> Mid::reset @ Mid.m"
-    ],
+    "edges": [],
     "rows": [
       "Mid.m:1 extends:Base",
-      "Mid.m:1 extends:Gadget"
+      "Mid.m:1 extends:Gadget",
+      "lib/Mid.m:6 calls:Mid::reset"
     ],
     "dormant": []
   },

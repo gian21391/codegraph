@@ -1,0 +1,15 @@
+{
+  "why": "`gadget()` in `use.m` calls the file's local function `gadget`, which comes before a class constructor in an `@` folder (MATLAB doc 'Function Precedence Order': local functions before class constructors), so `g` is a struct and `tidy(g)` calls the path's `tidy.m`, not `@gadget/tidy.m` (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> tidy @ tidy.m",
+      "use.m use -calls-> gadget @ use.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "@gadget/tidy.m"
+      }
+    ]
+  }
+}

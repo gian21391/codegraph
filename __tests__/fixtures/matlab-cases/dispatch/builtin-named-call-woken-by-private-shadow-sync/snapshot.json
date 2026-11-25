@@ -1,0 +1,29 @@
+{
+  "index": {
+    "edges": [
+      "app/use.m use -calls-> gadget::disp @ lib/@gadget/disp.m",
+      "app/use.m use -instantiates-> gadget @ lib/@gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/use.m use -calls-> gadget @ app/private/gadget.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "app/use.m:3 calls:gadget::disp"
+      ]
+    },
+    {
+      "edges": [
+        "app/use.m use -calls-> gadget::disp @ lib/@gadget/disp.m",
+        "app/use.m use -instantiates-> gadget @ lib/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

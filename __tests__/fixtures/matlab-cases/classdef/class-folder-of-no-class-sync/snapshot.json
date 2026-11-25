@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> Crate::fluff @ lib/@Crate/fluff.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "main.m:2 calls:Crate::fluff"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "main.m main -calls-> Crate::fluff @ lib/@Crate/fluff.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

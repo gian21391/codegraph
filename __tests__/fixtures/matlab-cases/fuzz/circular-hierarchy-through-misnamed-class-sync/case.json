@@ -1,0 +1,58 @@
+{
+  "why": "`obj.reset` in the method `step` of the classdef `Gadget` in `+pkg/@Gadget/gadget.m` reaches no `reset`, and `Base < pkg.Gadget` names no class. MATLAB defines a class folder's class by the file named after the folder, with its case, and a classdef's name must match its file's (doc 'Class Folders'): `gadget.m` defines no class `pkg.Gadget` (project rule since step 15, isMisnamedClass in matlab-lookup.ts), so `Base` has no superclass of the project's, and no call on a `pkg.Gadget` runs a subclass's `reset` (the self-call rule of matlab-override-synthesizer.ts finds none). Read as a class anyway, its chain `pkg.Gadget < Widget < Mid < Node < Base < pkg.Gadget`, once the path config is dropped (every folder in reach, the nearest copy first: project rule), comes back to itself, which MATLAB refuses too (a class cannot be its own superclass; project rule since step 15: methodOnHierarchy follows no circular chain). A fresh index linked `Base::reset` through the circle and a sync did not (found by the step 11 fuzzer: s2005-c6, generator version 3, step 15); each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Widget.m": "classdef Widget < Mid\n    properties\n        step\n    end\n    methods\n        function obj = Widget(x)\n            obj@Mid(x);\n        end\n        function r = update(obj, x)\n            w = Gadget(x);\n            y = pkg.Widget([1 2]);\n        end\n    end\n    methods (Abstract)\n        r = g(obj)\n    end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "+pkg/@Gadget/gadget.m": "classdef Gadget < Widget\n    methods\n        function obj = Gadget(x)\n            obj@Widget(x);\n            plot(obj);\n        end\n        function r = size(obj)\n            zq = (1;\n            disp('日本'); % café\n        end\n        function r = step(obj, x)\n            y = Pkg.Util(obj);\n            y = obj.reset;\n        end\n    end\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "+pkg/@Gadget/gadget.m",
+            "to": "reset"
+          },
+          {
+            "from": "Base.m",
+            "to": "Gadget"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": null
+      },
+      "truth": {
+        "edges": [
+          "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m",
+          "Widget.m Widget -extends-> Mid @ app/Mid.m"
+        ],
+        "noEdges": [
+          {
+            "from": "+pkg/@Gadget/gadget.m",
+            "to": "reset"
+          },
+          {
+            "from": "Base.m",
+            "to": "Gadget"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "index": {
+    "edges": [
+      "step.m step.m -references-> widget::widget @ zlib/widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "step.m step.m -references-> alib/widget.m @ alib/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -references-> widget @ alib/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -references-> alib/widget.m @ alib/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -references-> widget::widget @ zlib/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

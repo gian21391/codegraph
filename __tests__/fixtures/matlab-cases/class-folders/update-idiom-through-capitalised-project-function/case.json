@@ -1,0 +1,27 @@
+{
+  "why": "Review 5 finding 2. `Zconf` is a project function, not a class. By the project rule for what a call returns (the update idiom), a write `v = f(…, v, …)` that passes the variable itself keeps the class it had, whatever the callee's case (step 15 round 8b ruling): `obj = Zconf(obj)` in a method of `@Gizmo` and `k = Zconf(k)` after `k = Gizmo()` keep a Gizmo, so `tidy(obj)` and `tidy(k)` are `Gizmo::tidy` (doc 'Method Invocation'). Nothing makes an object of a class `Zconf`. In `use3.m`, `k = numel(k)` leaves a double (MATLAB's `numel`: `Gizmo` has none), and `k = Gizmo(k)` then makes a Gizmo again, so `tidy(k)` is `Gizmo::tidy` whatever came before.",
+  "truth": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use2.m use2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/use1.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use2.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use3.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

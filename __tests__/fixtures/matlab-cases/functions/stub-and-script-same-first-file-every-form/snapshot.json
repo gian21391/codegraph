@@ -1,0 +1,59 @@
+{
+  "index": {
+    "edges": [
+      "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+      "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+      "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+      "lib/t.m t -calls-> lib/qq.m @ lib/qq.m",
+      "lib/t.m t -calls-> lib/qq.m @ lib/qq.m",
+      "lib/t.m t -calls-> zt @ lib/zt.m"
+    ],
+    "rows": [
+      "lib/t.m:8 calls:qq"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/t.m t -calls-> lib/lcz.m @ lib/lcz.m",
+        "lib/t.m t -calls-> lib/lcz.m @ lib/lcz.m",
+        "lib/t.m t -calls-> lib/qq.m @ lib/qq.m",
+        "lib/t.m t -calls-> lib/qq.m @ lib/qq.m",
+        "lib/t.m t -calls-> zt @ lib/zt.m"
+      ],
+      "rows": [
+        "lib/t.m:5 calls:lcz",
+        "lib/t.m:8 calls:qq"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/t.m t -calls-> lib/lcz.m @ lib/lcz.m",
+        "lib/t.m t -calls-> lib/lcz.m @ lib/lcz.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> zt @ lib/zt.m"
+      ],
+      "rows": [
+        "lib/t.m:5 calls:lcz"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+        "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+        "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m",
+        "lib/t.m t -calls-> zt @ lib/zt.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "why": "`tidy(g)` after `g = gadget();` dispatches to `ext/@gadget/tidy.m` only while `gadget()` reaches the class (MATLAB doc 'Function Precedence Order', 'Method Invocation'): first the function `gadget.m` answers it (a struct); the constructor `ext/@gadget/gadget.m` added comes before it (a class folder's class before a path function: project rule, step 7 of the lookup); the function deleted, the class still; a root classdef `gadget` with no `tidy` added is the class the name resolves to (project rule, step 15 item 1: the copy nearest the caller), whose objects have no `tidy`; it deleted, the folder's class again; its method deleted, `tidy.m`; the method back and the constructor deleted, no class: `tidy.m`. Each step must end where a fresh index ends (project rule; the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> gadget @ gadget.m",
+      "use.m use -calls-> tidy @ tidy.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "ext/@gadget/gadget.m": "function obj = gadget()\nobj = class(struct('n', 0), 'gadget');\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gadget.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gadget.m": "classdef gadget\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> tidy @ tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gadget.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "ext/@gadget/tidy.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> tidy @ tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "ext/@gadget/tidy.m": "function tidy(obj)\nend\n",
+        "ext/@gadget/gadget.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> tidy @ tidy.m"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "at": "ext/@gadget/tidy.m"
+          }
+        ]
+      }
+    }
+  ]
+}

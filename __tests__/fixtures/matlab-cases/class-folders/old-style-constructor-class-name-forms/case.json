@@ -1,0 +1,20 @@
+{
+  "why": "In an old-style class's constructor `class(s, name)` makes the object of the class (doc 'class'; `mfilename` there is the class's own name, doc 'mfilename'), whatever the name is written as: `tidy(obj)` after `obj = class(s, mfilename)` in `@Gizmo/Gizmo.m`, and after `obj = class(s, \"Nut\")` in `@Nut/Nut.m`, is the class's method.",
+  "truth": {
+    "edges": [
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> zt @ zt.m",
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Nut/Nut.m Nut::Nut -calls-> Nut::tidy @ @Nut/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/Gizmo.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Nut/Nut.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

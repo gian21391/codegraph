@@ -1,0 +1,89 @@
+{
+  "why": "Whether a write through a MATLAB function that gives a value of another class keeps the object (doc 'Method Invocation'; MATLAB R2026a: `numel`, `size` give a double for an object whose class has no such method) turns on the class's own method set, which a sync moves without touching the calling file: `numel.m` coming into and going from `@Cel/` makes `x = numel(x); sum(x)` in `@Cel/all.m` the class's `sum` (the project rule: the class's own method gives the object back) and back; `Mid`'s superclass list changing from `handle` to `Pak` (which defines `size`) gives `Kid < Mid` an inherited `size`, so `peek(q)` after `q = size(q)` is `Kid::peek`, and back; `size` added to `Kid` itself, and removed. Without the method the write's value is no object of the class, and the call is the plain one. Every step must end where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Cel/all.m",
+        "to": "Cel::sum"
+      },
+      {
+        "from": "use.m",
+        "to": "Kid::peek"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@Cel/numel.m": "function y = numel(x)\ny = x;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@Cel/numel.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "@Cel/all.m",
+            "to": "Cel::sum"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Mid.m": "classdef Mid < Pak\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Kid::peek @ Kid.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Mid.m": "classdef Mid < handle\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "Kid::peek"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Kid.m": "classdef Kid < Mid\nmethods\nfunction peek(obj)\nend\nfunction obj = size(obj)\nend\nend\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> Kid::peek @ Kid.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Kid.m": "classdef Kid < Mid\nmethods\nfunction peek(obj)\nend\nend\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "Kid::peek"
+          }
+        ]
+      }
+    }
+  ]
+}

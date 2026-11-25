@@ -1,0 +1,16 @@
+{
+  "why": "Review 5 finding 4: a class folder's `private/` function is visible only to the folder's own functions (doc 'Private Functions'; MATLAB R2026a: from a function outside `@Qpz`, `numel(k)` on a `Qpz` runs MATLAB's `numel`, a double, not `@Qpz/private/numel.m`). In `use1.m`, outside the folder, `k = numel(k)` leaves a double: `tidy(k)` is the plain `tidy`. In `@Gizmo/inside.m`, and in `@Gizmo/private/helper.m` (a private function reaches its own folder's: doc 'Private Functions'), the private `numel` runs and gives the object back (project rule): `Gizmo::tidy`.",
+  "truth": {
+    "edges": [
+      "use1.m use1 -calls-> tidy @ tidy.m",
+      "@Gizmo/inside.m Gizmo::inside -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/private/helper.m helper -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use1.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  }
+}

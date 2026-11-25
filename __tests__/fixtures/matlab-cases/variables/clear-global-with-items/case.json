@@ -1,0 +1,15 @@
+{
+  "why": "`clear global` and `clearvars -global` remove global variables only (doc 'clear', 'clearvars'; MATLAB R2026a: `clearvars -global -except gz` keeps the non-global `q`, `clear global xa*` the non-global `xa1`, `clear global -regexp ^xb` the non-global `xb2` and removes the global `xb3`). So the caller's `q(2)`, `xa1(2)`, `xb2(2)` index the script's variables (dormant rows: no call out of the index), and `xb3(2)` calls `xb3.m`.",
+  "truth": {
+    "edges": [
+      "m1.m m1 -calls-> zt @ zt.m",
+      "m1.m m1 -calls-> s1.m @ s1.m",
+      "m3.m m3 -calls-> xb3 @ xb3.m"
+    ],
+    "dormant": [
+      "m1.m:3 calls:q",
+      "m2.m:3 calls:xa1",
+      "m3.m:3 calls:xb2"
+    ]
+  }
+}

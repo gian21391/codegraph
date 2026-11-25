@@ -2,11 +2,12 @@
   "index": {
     "edges": [
       "Widget.m Widget -extends-> Mid @ Mid.m",
-      "use.m use.m -calls-> Mid::step @ lib/Mid.m",
-      "use.m use.m -calls-> Mid::step @ lib/Mid.m",
       "use.m use.m -instantiates-> Widget @ Widget.m"
     ],
-    "rows": [],
+    "rows": [
+      "use.m:2 calls:Widget::step",
+      "use.m:3 calls:Widget::step"
+    ],
     "dormant": []
   },
   "steps": [
@@ -23,11 +24,12 @@
     {
       "edges": [
         "Widget.m Widget -extends-> Mid @ Mid.m",
-        "use.m use.m -calls-> Mid::step @ lib/Mid.m",
-        "use.m use.m -calls-> Mid::step @ lib/Mid.m",
         "use.m use.m -instantiates-> Widget @ Widget.m"
       ],
-      "rows": [],
+      "rows": [
+        "use.m:2 calls:Widget::step",
+        "use.m:3 calls:Widget::step"
+      ],
       "dormant": []
     },
     {
@@ -42,11 +44,12 @@
     {
       "edges": [
         "Widget.m Widget -extends-> Mid @ Mid.m",
-        "use.m use.m -calls-> Mid::step @ lib/Mid.m",
-        "use.m use.m -calls-> Mid::step @ lib/Mid.m",
         "use.m use.m -instantiates-> Widget @ Widget.m"
       ],
-      "rows": [],
+      "rows": [
+        "use.m:2 calls:Widget::step",
+        "use.m:3 calls:Widget::step"
+      ],
       "dormant": []
     }
   ]

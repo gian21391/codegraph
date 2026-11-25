@@ -1,0 +1,20 @@
+{
+  "index": {
+    "edges": [
+      "s1.m s1.m -calls-> x @ x.m",
+      "s1.m s1.m -calls-> zt @ zt.m",
+      "s10.m s10.m -calls-> u @ u.m",
+      "s11.m s11.m -calls-> gq @ gq.m",
+      "s13.m s13.m -calls-> xmq @ xmq.m",
+      "s14.m s14.m -calls-> x1z @ x1z.m",
+      "s2.m s2.m -calls-> xa @ xa.m",
+      "s3.m s3.m -calls-> xb @ xb.m",
+      "s4.m s4.m -calls-> zg @ zg.m",
+      "s6.m s6.m -calls-> c @ c.m",
+      "s7.m s7.m -calls-> v @ v.m",
+      "s9.m s9.m -calls-> xj1 @ xj1.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

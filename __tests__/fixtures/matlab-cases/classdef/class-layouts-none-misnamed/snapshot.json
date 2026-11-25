@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> Sluice::open @ @Sluice/open.m",
+      "use.m use -calls-> Vane::turn @ @Vane/Vane.m",
+      "use.m use -calls-> pkg::Reed::bend @ +pkg/@Reed/Reed.m",
+      "use.m use -calls-> weir::flow @ @weir/flow.m",
+      "use.m use -instantiates-> Sluice @ @Sluice/Sluice.m",
+      "use.m use -instantiates-> Vane @ @Vane/Vane.m",
+      "use.m use -instantiates-> pkg::Reed @ +pkg/@Reed/Reed.m",
+      "use.m use -instantiates-> weir @ @weir/weir.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "why": "`tidy(g)` after `g = gadget();` dispatches to the class's method `@gadget/tidy.m`: a method of the class of an argument comes before a function on the path (MATLAB doc 'Function Precedence Order', 'Method Invocation'), whatever case the class's name is written in. `g.tidy()` calls the same method. With the method file deleted, `tidy(g)` calls the root function `tidy.m`, and with it back the method again. Each step must end where a fresh index ends (project rule; the step 15 review's fixture).",
+  "truth": {
+    "edges": [
+      "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m",
+      "use.m use.m -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@gadget/tidy.m": null
+      },
+      "truth": {
+        "edges": [
+          "use.m use.m -calls-> tidy @ tidy.m"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "at": "@gadget/tidy.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@gadget/tidy.m": "function tidy(obj)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "tidy",
+            "at": "tidy.m"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "why": "A class cannot be its own superclass, however far up: MATLAB refuses a circular class definition, so no method is inherited along such a chain. `obj.wilt()` in `Thorn < Briar` calls the inherited `Briar::wilt`; once `Briar.m` says `Briar < Thorn` the chain comes back to `Thorn`, and the call links nowhere; with `Briar < handle` back it links again. A class's own method is still linked (project rule: the sync follows a chain upwards only; see methodOnHierarchy in matlab-lookup.ts). Each step must end where a fresh index ends (project rule; the shape of the step 15 fuzz find s2005-c6).",
+  "truth": {
+    "edges": [
+      "Thorn.m Thorn::prick -calls-> Briar::wilt @ Briar.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Briar.m": "classdef Briar < Thorn\n  methods\n    function r = wilt(obj)\n      r = 1;\n    end\n  end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Briar.m Briar -extends-> Thorn @ Thorn.m"
+        ],
+        "noEdges": [
+          {
+            "from": "Thorn.m",
+            "to": "wilt"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Briar.m": "classdef Briar < handle\n  methods\n    function r = wilt(obj)\n      r = 1;\n    end\n  end\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "Thorn.m Thorn::prick -calls-> Briar::wilt @ Briar.m"
+        ]
+      }
+    }
+  ]
+}

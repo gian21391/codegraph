@@ -1,0 +1,17 @@
+{
+  "why": "A private script `app/private/probe.m` is first for `app/main.m` (private functions before the path: MATLAB doc 'Function Precedence Order'): `probe()` runs it (MATLAB R2026a), and `probe(2)` is an error, no call of `lib/probe.m` (the user's ruling, step 15), a live row.",
+  "truth": {
+    "edges": [
+      "app/main.m runs -calls-> app/private/probe.m @ app/private/probe.m"
+    ],
+    "rows": [
+      "app/main.m:2 calls:probe"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "lib/probe.m"
+      }
+    ]
+  }
+}

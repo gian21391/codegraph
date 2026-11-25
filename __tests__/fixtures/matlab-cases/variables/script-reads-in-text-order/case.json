@@ -11,11 +11,5 @@
     "noDormant": [
       "s.m:3 calls:helperT"
     ]
-  },
-  "pendingBug": {
-    "id": "S11-ruling-text-order",
-    "fails": [
-      "index: missing row s.m:1 calls:helperT"
-    ]
   }
 }

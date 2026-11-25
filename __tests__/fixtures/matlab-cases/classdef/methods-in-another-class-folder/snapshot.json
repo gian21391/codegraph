@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "kettle.m kettle -calls-> plume::fluff @ extra/@plume/fluff.m",
+      "kettle.m kettle -instantiates-> crate @ lib/@crate/crate.m",
+      "kettle.m kettle -instantiates-> plume @ lib/@plume/plume.m"
+    ],
+    "rows": [
+      "kettle.m:5 calls:fluff"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "why": "Review 5 finding 6, the class side of finding 2: `obj = Widget(obj)` in a method of `@Gizmo`, with `Widget` a class, makes a `Widget` (doc 'Class Constructor Methods'), so `tidy(obj)` is `Widget::tidy`. PENDING (S18-construction-from-object): the index reads the write as the update idiom (step 15 round 8b project rule: a call passed the variable itself keeps its class, since whether the callee is a class is the resolver's to tell), so it gives the old class. Fixing it needs a sync re-open keyed by the construction's name: when a name of the definition delta turns between a function and a class, put back the calls on a variable written by a construction of that name (rows by the `Name::` prefix, edges through the files of the construction's own references), so the answer can follow the callee's kind; not built in step 15.",
+  "truth": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> Widget::tidy @ Widget.m",
+      "@Gizmo/use1.m Gizmo::use1 -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/use1.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  },
+  "pendingBug": {
+    "id": "S18-construction-from-object",
+    "fails": [
+      "index: missing edge @Gizmo/use1.m Gizmo::use1 -calls-> Widget::tidy @ Widget.m",
+      "index: unwanted edge @Gizmo/use1.m Gizmo::use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m (matches {\"from\":\"@Gizmo/use1.m\",\"to\":\"Gizmo::tidy\"})"
+    ]
+  }
+}

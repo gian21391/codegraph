@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/inside.m Gizmo::inside -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/inside.m Gizmo::inside -calls-> numel @ @Gizmo/private/numel.m",
+      "@Gizmo/inside.m Gizmo::inside -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "@Gizmo/private/helper.m helper -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/private/helper.m helper -calls-> numel @ @Gizmo/private/numel.m",
+      "@Gizmo/private/helper.m helper -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use1.m use1 -calls-> tidy @ tidy.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [
+      "use1.m:3 calls:Gizmo::numel"
+    ],
+    "dormant": []
+  }
+}

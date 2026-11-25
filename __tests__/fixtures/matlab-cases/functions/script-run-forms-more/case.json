@@ -1,0 +1,22 @@
+{
+ "why": "A script `app/probe.m` first on the path, a function `lib/probe.m` farther. MATLAB R2026a (the lead's run): a statement and `probe()` run the script, `h()` on a handle to it runs it, `probe(2)` and `h(2)` error. So `probe( )` (empty, a space), a statement `probe` in an `if` line, `feval(@probe)`, `run('probe')` and `f = str2func('probe'); f()` run the script; `feval(@probe, 1)`, `f(1)` and `cellfun(@probe, {1})` (which calls `probe(1)`) error and call no `lib/probe.m`. And `v = probe();`, which asks the script for an output, errors as `v = probe;` does (R2026a; a script returns nothing, doc 'Scripts vs Functions'): a live row, no call (the empty argument list runs a script only as a statement of its own).",
+ "truth": {
+  "edges": [
+   "app/main.m main -calls-> zt @ lib/zt.m",
+   "app/main.m sp -calls-> app/probe.m @ app/probe.m",
+   "app/main.m inif -calls-> app/probe.m @ app/probe.m",
+   "app/main.m fh -calls-> app/probe.m @ app/probe.m",
+   "app/main.m rn -calls-> app/probe.m @ app/probe.m",
+   "app/main.m sf -calls-> app/probe.m @ app/probe.m"
+  ],
+  "noEdges": [
+   {
+    "from": "app/main.m",
+    "at": "lib/probe.m"
+   }
+  ],
+  "rows": [
+   "app/main.m:31 calls:probe"
+  ]
+ }
+}

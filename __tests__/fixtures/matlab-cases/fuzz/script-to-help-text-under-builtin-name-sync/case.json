@@ -1,0 +1,42 @@
+{
+  "why": "Fuzz find s2302-c15 (the step 15 review, classes profile), shrunk; generated text only. `lib/run.m` reads `obj` on line 1 before its script writes it (text order: the user's ruling, step 11), so `max(obj)` is a plain call of `max`, whose nearest file, the empty `lib/max.m`, is a script (the user's ruling, step 11): a call with arguments that finds a script first links nowhere (the user's ruling, step 15). An empty path config changes nothing. Turned into help text, `lib/max.m` is a stub, which comes after every function (project rule, step 8), and the root `max.m` answers. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "lib/run.m",
+        "to": "max"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": ""
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "lib/run.m",
+            "to": "max"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/max.m": "% MAX  help text only"
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m lib/run.m -calls-> max @ max.m"
+        ],
+        "noRows": [
+          {
+            "file": "lib/run.m",
+            "name": "Base::max"
+          }
+        ]
+      }
+    }
+  ]
+}

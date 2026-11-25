@@ -1,0 +1,107 @@
+{
+  "why": "`disp(g)` after `g = gadget();` calls the class's `disp` when `gadget` is a class with one (doc 'Function Precedence Order', 'Method Invocation'), else MATLAB's own. Project rule (step 15 round 3): such a call's row is kept, dormant, only while a class of the callee's name exists (any package, any case), or while a plain call of the built-in's name would be kept (a project `disp.m` a bare call reaches); else it is dropped, as an uncarried built-in's call is. The steps bring the class and take it away, a case variant of it, and a root `disp.m`; each must end where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m",
+      "use.m use -calls-> gadget @ gadget.m"
+    ],
+    "noDormant": [
+      "use.m:3 calls:gadget::disp"
+    ],
+    "noRows": [
+      "use.m:3 calls:gadget::disp"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "gadget.m": null,
+        "@gadget/gadget.m": "function obj = gadget()\nobj = class(struct('n', 0), 'gadget');\nend\n",
+        "@gadget/disp.m": "function disp(obj)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> gadget::disp @ @gadget/disp.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@gadget/gadget.m": null,
+        "gadget.m": "function s = gadget()\ns = struct('n', 1);\nend\n"
+      },
+      "truth": {
+        "noDormant": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noRows": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": "classdef Gadget\nend\n"
+      },
+      "truth": {
+        "dormant": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/Gadget.m": null
+      },
+      "truth": {
+        "noDormant": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noRows": [
+          "use.m:3 calls:gadget::disp"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "disp.m": "function disp(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> disp @ disp.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "disp.m": null
+      },
+      "truth": {
+        "noDormant": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noRows": [
+          "use.m:3 calls:gadget::disp"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "disp"
+          }
+        ]
+      }
+    }
+  ]
+}

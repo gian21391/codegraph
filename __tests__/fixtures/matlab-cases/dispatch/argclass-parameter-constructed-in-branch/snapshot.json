@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "pb.m pb -calls-> tidy @ tidy.m",
+      "pb.m pb -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

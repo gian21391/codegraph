@@ -1,0 +1,10 @@
+{
+  "matlab": {
+    "startup": [
+      "addpath('lib', '-end');",
+      "addpath('tools', '-end');"
+    ]
+  },
+  "exclude": [
+  ]
+}

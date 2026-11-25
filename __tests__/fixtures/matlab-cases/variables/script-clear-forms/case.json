@@ -1,0 +1,69 @@
+{
+  "why": "In a script, reads go in text order (the user's ruling 3), and a clear ends the writes of exactly the names it removes (MATLAB doc 'clear', 'clearvars'; R2026a: `clear global zg` removes `zg` only, `clear xa*` the names matching): `clearvars -except y` removes `x` and keeps `y`; `clear xa*` removes `xa`, not `x`; `clear -regexp ^xb` removes `xb`, not `w`; `clear -regexp mq` removes `xmq` (a regular expression matches anywhere in the name), not `w`; `clear x*z` removes `x1z`, not `x1za` (a wildcard matches the whole name); `clearvars xj* -except xjk` removes `xj1`, not `xjk`; `clear global zg` removes `zg`, not `y`; `clear functions` removes no variable; `clear classes` removes every one. `clear global` alone removes the global variables, the names declared `global` before it, and no other (doc 'clear': \"clear global removes all global variables\"): it keeps `q` and removes `gq`, and a name declared global after it stays. So each removed name read after is a call of its function, and each kept one indexes the variable. A clear whose names are built at run time (`clear(n)`) may remove any name: no write reaches through it (project rule).",
+  "truth": {
+    "edges": [
+      "s1.m s1.m -calls-> zt @ zt.m",
+      "s1.m s1.m -calls-> x @ x.m",
+      "s2.m s2.m -calls-> xa @ xa.m",
+      "s3.m s3.m -calls-> xb @ xb.m",
+      "s4.m s4.m -calls-> zg @ zg.m",
+      "s6.m s6.m -calls-> c @ c.m",
+      "s7.m s7.m -calls-> v @ v.m",
+      "s9.m s9.m -calls-> xj1 @ xj1.m",
+      "s10.m s10.m -calls-> u @ u.m",
+      "s11.m s11.m -calls-> gq @ gq.m",
+      "s13.m s13.m -calls-> xmq @ xmq.m",
+      "s14.m s14.m -calls-> x1z @ x1z.m"
+    ],
+    "noEdges": [
+      {
+        "from": "s1.m",
+        "to": "y"
+      },
+      {
+        "from": "s2.m",
+        "at": "x.m"
+      },
+      {
+        "from": "s3.m",
+        "to": "w"
+      },
+      {
+        "from": "s4.m",
+        "to": "y"
+      },
+      {
+        "from": "s5.m",
+        "to": "w"
+      },
+      {
+        "from": "s9.m",
+        "to": "xjk"
+      },
+      {
+        "from": "s10.m",
+        "at": "x.m"
+      },
+      {
+        "from": "s11.m",
+        "to": "q"
+      },
+      {
+        "from": "s12.m",
+        "to": "gq"
+      },
+      {
+        "from": "s13.m",
+        "to": "w"
+      },
+      {
+        "from": "s14.m",
+        "to": "x1za"
+      },
+      {
+        "from": "s8.m",
+        "to": "q"
+      }
+    ]
+  }
+}

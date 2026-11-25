@@ -8,10 +8,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "helper.m helper.m -references-> F @ off/F.m"
+      "edges": [],
+      "rows": [
+        "helper.m:1 function_ref:F"
       ],
-      "rows": [],
       "dormant": []
     },
     {

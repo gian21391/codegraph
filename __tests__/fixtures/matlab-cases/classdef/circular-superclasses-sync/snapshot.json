@@ -1,0 +1,30 @@
+{
+  "index": {
+    "edges": [
+      "Thorn.m Thorn -extends-> Briar @ Briar.m",
+      "Thorn.m Thorn::prick -calls-> Briar::wilt @ Briar.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "Briar.m Briar -extends-> Thorn @ Thorn.m",
+        "Thorn.m Thorn -extends-> Briar @ Briar.m"
+      ],
+      "rows": [
+        "Thorn.m:4 calls:Thorn::wilt"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "Thorn.m Thorn -extends-> Briar @ Briar.m",
+        "Thorn.m Thorn::prick -calls-> Briar::wilt @ Briar.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

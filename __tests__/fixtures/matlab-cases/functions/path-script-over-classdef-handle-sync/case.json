@@ -1,0 +1,50 @@
+{
+  "why": "Review 5 finding 1 for a script on the path: `alib/widget.m` comes before `zlib/widget.m`, a classdef, in path order (both folders on the path, `alib` first), so while it is a script `hf = @widget` names the script, and the constructor otherwise (doc 'Function Precedence Order': the first file of the name on the path). A sync that adds it, turns it into a function and back and removes it must end each step where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "step.m step.m -references-> widget::widget @ zlib/widget.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "alib/widget.m": ""
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -references-> alib/widget.m @ alib/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "alib/widget.m": "function widget(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -references-> widget @ alib/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "alib/widget.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -references-> alib/widget.m @ alib/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "alib/widget.m": null
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -references-> widget::widget @ zlib/widget.m"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "use1.m use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use1.m use1 -instantiates-> Widget @ @Widget/Widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

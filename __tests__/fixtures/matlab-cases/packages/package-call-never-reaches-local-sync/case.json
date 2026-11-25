@@ -6,12 +6,6 @@
       "app/main.m main -calls-> pkg::tool @ +pkg/tool.m"
     ]
   },
-  "known": [
-    {
-      "what": "A fresh index links `pkg.util(x)` to `tool.m`'s own local `util` whenever `tool.m` has one, `+pkg/util.m` there or not; a sync that drops `+pkg/util.m` keeps the call as a dormant row instead.",
-      "why": "The resolver's qualified-name lookup accepts a local function of the calling file, which MATLAB never reaches by a package-qualified name: a resolution rule, for step 15. The sync and the fresh index disagree only after that wrong answer; fix the rule first, then check that a sync ends where a fresh index ends (review of step 13, from the step 13 fuzzer's s1302-c41)."
-    }
-  ],
   "steps": [
     {
       "edit": {
@@ -94,26 +88,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S15-pkg-call-to-local",
-    "fails": [
-      "index: missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 1 (fresh): unwanted edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m (matches {\"from\":\"+pkg/tool.m\",\"to\":\"util\"})",
-      "step 2 (synced): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 2 (fresh): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 3 (fresh): unwanted edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m (matches {\"from\":\"+pkg/tool.m\",\"to\":\"util\"})",
-      "step 4 (synced): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 4 (fresh): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 5 (fresh): unwanted edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m (matches {\"from\":\"+pkg/tool.m\",\"to\":\"util\"})",
-      "step 6 (synced): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 6 (fresh): missing edge +pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
-      "step 1 (+pkg/util.m): edges differ; only synced: []; only fresh: [\"+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m\"]",
-      "step 1 (+pkg/util.m): dormant rows differ; only synced: [\"+pkg/tool.m:2 calls:pkg::util\"]; only fresh: []",
-      "step 3 (+pkg/util.m): edges differ; only synced: []; only fresh: [\"+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m\"]",
-      "step 3 (+pkg/util.m): dormant rows differ; only synced: [\"+pkg/tool.m:2 calls:pkg::util\"]; only fresh: []",
-      "step 5 (+pkg/util.m): edges differ; only synced: []; only fresh: [\"+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/tool.m\"]",
-      "step 5 (+pkg/util.m): dormant rows differ; only synced: [\"+pkg/tool.m:2 calls:pkg::util\"]; only fresh: []"
-    ]
-  }
+  ]
 }

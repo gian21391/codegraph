@@ -1,0 +1,2 @@
+function probe(n)
+end

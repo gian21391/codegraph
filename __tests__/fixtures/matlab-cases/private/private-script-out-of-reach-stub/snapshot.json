@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "app/sub/u.m u -calls-> zt @ lib/zt.m",
+      "app/t.m t -calls-> lib/bin/foo.m @ lib/bin/foo.m",
+      "app/t.m t -calls-> zt @ lib/zt.m"
+    ],
+    "rows": [
+      "app/sub/u.m:3 calls:foo"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "index": {
+    "edges": [
+      "app/@Node/Node.m Node -extends-> Base @ Base.m",
+      "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+    ],
+    "rows": [
+      "Base.m:1 extends:pkg::Gadget",
+      "lib/Mid.m:1 extends:Gadget"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "Widget.m Widget -extends-> Mid @ lib/Mid.m",
+        "Widget.m Widget::Widget -instantiates-> Mid @ lib/Mid.m",
+        "app/@Node/Node.m Node -extends-> Base @ Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+      ],
+      "rows": [
+        "Base.m:1 extends:pkg::Gadget",
+        "Widget.m:10 calls:Gadget",
+        "Widget.m:11 calls:pkg::Widget",
+        "lib/Mid.m:1 extends:Gadget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "+pkg/@Gadget/gadget.m pkg::Gadget::Gadget -calls-> Widget::Widget @ Widget.m",
+        "Widget.m Widget -extends-> Mid @ lib/Mid.m",
+        "Widget.m Widget::Widget -instantiates-> Mid @ lib/Mid.m",
+        "app/@Node/Node.m Node -extends-> Base @ Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+      ],
+      "rows": [
+        "+pkg/@Gadget/gadget.m:1 extends:Widget",
+        "+pkg/@Gadget/gadget.m:13 calls:pkg::Gadget::reset",
+        "Base.m:1 extends:pkg::Gadget",
+        "Widget.m:10 calls:Gadget",
+        "Widget.m:11 calls:pkg::Widget",
+        "lib/Mid.m:1 extends:Gadget"
+      ],
+      "dormant": [
+        "+pkg/@Gadget/gadget.m:12 calls:Pkg::Util",
+        "+pkg/@Gadget/gadget.m:5 calls:pkg::Gadget::plot"
+      ]
+    },
+    {
+      "edges": [
+        "+pkg/@Gadget/gadget.m pkg::Gadget::Gadget -calls-> Widget::Widget @ Widget.m",
+        "Widget.m Widget -extends-> Mid @ app/Mid.m",
+        "Widget.m Widget::Widget -instantiates-> Mid @ app/Mid.m",
+        "app/@Node/Node.m Node -extends-> Base @ Base.m",
+        "app/Mid.m Mid -extends-> Node @ app/@Node/Node.m"
+      ],
+      "rows": [
+        "+pkg/@Gadget/gadget.m:1 extends:Widget",
+        "+pkg/@Gadget/gadget.m:13 calls:pkg::Gadget::reset",
+        "Base.m:1 extends:pkg::Gadget",
+        "Widget.m:10 calls:Gadget",
+        "Widget.m:11 calls:pkg::Widget",
+        "lib/Mid.m:1 extends:Gadget"
+      ],
+      "dormant": [
+        "+pkg/@Gadget/gadget.m:12 calls:Pkg::Util",
+        "+pkg/@Gadget/gadget.m:5 calls:pkg::Gadget::plot"
+      ]
+    }
+  ]
+}

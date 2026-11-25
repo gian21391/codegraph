@@ -876,7 +876,7 @@ describe('MATLAB function precedence', () => {
 });
 
 describe('MATLAB scripts run by name', () => {
-  it('links a statement naming a script, and `run` naming one, to the script\'s file — and nothing else but a stub', async () => {
+  it('links a statement naming a script, `run` naming one, a private one in reach and a handle to one, to the script\'s file — and nothing else but a stub', async () => {
     const { edges } = await indexOfProject({
       'setup_paths.m': '% adds the project\'s folders\naddpath(pwd);\n',
       'lib/config.m': 'cfg = 1;\n',
@@ -885,6 +885,7 @@ describe('MATLAB scripts run by name', () => {
       'doc_only.m': '% DOC_ONLY  help for a MEX function\n%   y = doc_only(x)\n',
       // Outside the path's plain folders.
       '+pkg/pkgscript.m': 'q = 1;\n',
+      // A private script, run from the folder's parent as a private function is (MATLAB doc 'Function Precedence Order').
       'private/privscript.m': 'q = 1;\n',
       // Octave's, which goes unread.
       'oct.m': '# an Octave script\nx = 1;\n',
@@ -905,7 +906,7 @@ describe('MATLAB scripts run by name', () => {
         'privscript',
         'oct',
         "run('lib/config')", // a path: not read
-        'h = @setup_paths;', // a handle runs no script
+        'h = @setup_paths;', // a handle to the script (MATLAB R2026a: `h()` runs it)
         'end',
         '',
       ].join('\n'),
@@ -917,25 +918,31 @@ describe('MATLAB scripts run by name', () => {
       'main.m main -calls-> lib/config.m @ lib/config.m',
       'main.m main -calls-> lib/config.m @ lib/config.m',
       'main.m main -calls-> lib/config.m @ lib/config.m',
+      'main.m main -calls-> private/privscript.m @ private/privscript.m',
       'main.m main -calls-> setup_paths.m @ setup_paths.m',
       'main.m main -calls-> setup_paths.m @ setup_paths.m',
       'main.m main -calls-> setup_paths.m @ setup_paths.m',
+      'main.m main -references-> setup_paths.m @ setup_paths.m',
       'runner.m runner.m -calls-> setup_paths.m @ setup_paths.m',
     ]);
   });
 
-  it('takes the nearest file of the name, script or function, and only a function when called with arguments', async () => {
-    const { edges } = await indexOfProject({
+  it('takes the nearest file of the name, script or function; a call with arguments that finds a script first reaches nothing', async () => {
+    // MATLAB runs the first `tool` it finds; called with an argument, a script
+    // is an error ('Attempt to execute SCRIPT tool as a function'), not a call
+    // of the farther function: no edge, a live row.
+    const { edges, unresolved } = await indexOfProject({
       'a/tool.m': 'function tool(n)\nend\n',
       'b/tool.m': 'disp(1);\n',
-      'a/useA.m': 'function useA()\ntool\nend\n',
+      'a/useA.m': 'function useA()\ntool\ntool(1)\nend\n',
       'b/useB.m': 'function useB()\ntool\ntool(1)\nend\n',
     });
     expect(edges).toEqual([
       'a/useA.m useA -calls-> tool @ a/tool.m',
+      'a/useA.m useA -calls-> tool @ a/tool.m',
       'b/useB.m useB -calls-> b/tool.m @ b/tool.m',
-      'b/useB.m useB -calls-> tool @ a/tool.m',
     ]);
+    expect(unresolved).toEqual(['b/useB.m:3 calls:tool']);
   });
 });
 
@@ -972,7 +979,7 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
     expect(unresolved).toEqual([]);
   });
 
-  it('comes last: a function file of the name, nearer or farther, a script for a statement, and a local function win', async () => {
+  it('comes last: a function file of the name, nearer or farther, and a local function win; a nearer stub beats a script for every form', async () => {
     const { edges } = await indexOfProject({
       // A stub beside the caller, the function farther.
       'x/tool.m': HELP('tool'),
@@ -980,8 +987,9 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
       'x/useX.m': 'function useX()\ntool(1);\ntool\nend\n',
       // A function beside the caller, the stub farther.
       'y/useY.m': 'function useY()\ntool(1);\nend\n',
-      // A script farther than the stub: it runs a statement; a call with
-      // arguments goes to the stub, the nearer of the two files of the name.
+      // A script farther than the stub: the statement and the call with
+      // arguments go to the stub, the nearer of the two files of the name
+      // (MATLAB finds the same first file for every form of the call).
       'x/run1.m': HELP('run1'),
       'y/run1.m': 'disp(1);\n',
       'x/useRun.m': 'function useRun()\nrun1\nrun1(2);\nend\n',
@@ -994,7 +1002,7 @@ describe('MATLAB stubs: the help text of a MEX function', () => {
     expect(edges).toEqual([
       'x/localer.m localer -calls-> tool2 @ x/localer.m',
       'x/useRun.m useRun -calls-> x/run1.m @ x/run1.m',
-      'x/useRun.m useRun -calls-> y/run1.m @ y/run1.m',
+      'x/useRun.m useRun -calls-> x/run1.m @ x/run1.m',
       'x/useX.m useX -calls-> tool @ y/tool.m',
       'x/useX.m useX -calls-> tool @ y/tool.m',
       'y/useY.m useY -calls-> tool @ y/tool.m',
@@ -1517,12 +1525,13 @@ describe('MATLAB\'s names that are only methods of its classes are no built-ins'
   }, 120_000);
 
   it('keeps a live row of one that a project class\'s method carries, called on an object resolution cannot type', async () => {
-    // tk_write_grid.m builds a doctree and adds to it with function syntax.
+    // tk_write_grid.m adds with function syntax to a doctree it is passed. (One
+    // it builds, `tree = doctree(f)`, is typed: the call is the class's method.)
     const r = await indexOfProject({
       'external/gridf/@doctree/doctree.m': "function t = doctree(f)\nt = class(struct('f', f), 'doctree');\nend\n",
       'external/gridf/@doctree/add.m': 'function t = add(t, uid, kind, name)\nend\n',
-      'iolib/tk_write_grid.m': "function tk_write_grid(f)\ntree = doctree(f);\ntree = add(tree, 1, 'element', 'Fresh_Leaf');\nend\n",
+      'iolib/tk_write_grid.m': "function tk_write_grid(tree)\ntree = add(tree, 1, 'element', 'Fresh_Leaf');\nend\n",
     });
-    expect(r.unresolved).toEqual(['iolib/tk_write_grid.m:3 calls:add']);
+    expect(r.unresolved).toEqual(['iolib/tk_write_grid.m:2 calls:add']);
   });
 });

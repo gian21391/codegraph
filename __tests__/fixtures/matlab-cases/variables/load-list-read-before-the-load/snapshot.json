@@ -1,9 +1,10 @@
 {
   "index": {
     "edges": [],
-    "rows": [],
+    "rows": [
+      "user.m:2 calls:a"
+    ],
     "dormant": [
-      "user.m:2 calls:a",
       "v.m:3 calls:a"
     ]
   }

@@ -1,0 +1,12 @@
+{
+  "why": "A script reads in text order (the user's ruling, step 11), a member chain's head too: on line 1 of `run1.m` `h` is no variable yet, so `h.spin()` is no call on a `Gyro` (MATLAB: no function or namespace `h`, an error), only line 3 calls `Gyro::spin`. In `run2.m`, `pkg` is no variable on line 1, so `pkg.f()` calls `+pkg/f.m` (MATLAB doc 'Namespaces').",
+  "truth": {
+    "edges": [
+      "run1.m run1.m -calls-> Gyro::spin @ Gyro.m",
+      "run2.m run2.m -calls-> pkg::f @ +pkg/f.m"
+    ],
+    "rows": [
+      "run1.m:1 calls:h::spin"
+    ]
+  }
+}

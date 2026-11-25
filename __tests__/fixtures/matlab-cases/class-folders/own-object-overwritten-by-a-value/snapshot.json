@@ -1,0 +1,16 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> tidy @ tidy.m",
+      "@Gizmo/use2.m Gizmo::use2 -calls-> tidy @ tidy.m",
+      "@Gizmo/use3.m Gizmo::use3 -calls-> tidy @ tidy.m",
+      "@Gizmo/use4.m Gizmo::use4 -calls-> tidy @ tidy.m",
+      "@Gizmo/use5.m Gizmo::use5 -calls-> tidy @ tidy.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Gizmo/use3.m:2 calls:Gizmo::n",
+      "@Gizmo/use4.m:2 calls:Gizmo::n"
+    ]
+  }
+}

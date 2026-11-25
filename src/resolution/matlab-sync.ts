@@ -13,17 +13,23 @@
  *   - A method call reaches an inherited method through the superclass lists
  *     of the classes between: a class whose list changes (`Mid < pkg.Base`
  *     → `Mid < handle`) changes no name either (MatlabSuperclassChange).
+ *   - A call on an object a constructor's call made (`tidy(g)` after `g =
+ *     gadget();`) dispatches to the class only while that call reaches it,
+ *     which a definition, a script or a case variant of the constructor's
+ *     name moves, though the call is looked up by another name
+ *     (reopenMatlabHintedCalls).
  */
 
 import type { Node, NodeKind, UnresolvedReference } from '../types';
-import type { QueryBuilder } from '../db/queries';
+import { DORMANT_REF_STATUS, type QueryBuilder } from '../db/queries';
 import type { ResolutionContext } from './types';
 import { resurrectRefFromDroppedEdge } from './resurrect-ref';
-import { isMatlabPathScript, isMatlabPathStub, matlabAncestorClasses, matlabSuperclassNames } from './matlab-lookup';
+import { isMatlabPathScript, isMatlabPathStub, matlabAncestorClasses, matlabMethodHeldBy, matlabSuperclassNames } from './matlab-lookup';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
 import { dirOf } from '../graph/matlab-search-path';
-import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { wakeMatlabBuiltinRows } from './matlab-builtin-carriers';
+import { KEPT_BY, matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { isMatlabKeptByName } from '../extraction/languages/matlab-builtins';
 
 /** What a script runs before, or a stub comes after: a function file's function, or a class on the path. */
 const NAMESAKE_KINDS: ReadonlySet<string> = new Set(['function', 'class', 'enum']);
@@ -76,7 +82,10 @@ export function matlabScriptCandidates(queries: QueryBuilder, changedFilePaths: 
  * the name of one that is a script or a stub (`setup_paths` for
  * `setup_paths.m`), or kept dormant as a built-in's call only the path gave a
  * copy of (`sound` for `sound.m`), go back too: it may answer them now; for a script, so do
- * the statements linked to a farther function or class of its name. Calls in
+ * the calls linked to a farther function or class of its name (a statement runs the script, and a
+ * call of another form that finds it first fails). (The failed calls of the name of a script that
+ * stopped being one are retried with the delta: its file node `n.m` is a delta name, whose
+ * namesakes reopenMatlabNamesakes reads.) Calls in
  * `changedFilePaths` are left alone: the sync resolved them already.
  * `matlabFilePaths` are the ones matlabScriptCandidates picks out of them.
  * Returns the number of references put back, and the rows of the ones that
@@ -132,20 +141,24 @@ export function reopenMatlabScriptRuns(
     const script = isMatlabPathScript(filePath, context);
     if (script || isMatlabPathStub(filePath, context)) {
       stems.add(stem);
-      // A script runs a statement before a farther function or class of its
-      // name, which answered it while this file was help text, Octave or
-      // nothing: the delta's rebind for the name, which no definition here
-      // changed (a stub comes after them all, and takes nothing from them).
-      // Only a statement can move (a script takes no argument), and every one
-      // is read through the namesakes themselves, so no name is too common
-      // for it (`getlvl`, thousands of calls of its functions).
+      // A script comes before a farther function or class of its name, which
+      // answered the name while this file was help text, Octave or nothing:
+      // it runs a statement, and a call of any other form that finds it
+      // first is an error (see resolveBare in ./matlab-lookup). The delta's
+      // rebind for the name, which no definition here changed (a stub comes
+      // after them all, and takes nothing from them). Every call is read
+      // through the namesakes themselves, so no name is too common for it
+      // (`getlvl`, thousands of calls of its functions). A class's
+      // constructor is one (`hf = @widget`, `widget(1)` on a classdef
+      // `widget`: the method `widget::widget` a call or a handle links to).
       if (script) {
         for (const namesake of queries.getNodesByName(stem)) {
-          if (namesake.language !== 'matlab' || !NAMESAKE_KINDS.has(namesake.kind)) continue;
+          if (namesake.language !== 'matlab') continue;
+          if (!NAMESAKE_KINDS.has(namesake.kind) && !(namesake.kind === 'method' && namesake.qualifiedName === `${stem}::${stem}`)) continue;
           for (const edge of queries.getCrossFileIncomingEdgesFromLanguage(namesake.id, namesake.filePath, 'matlab')) {
             if (fresh.has(edge.sourceFilePath) || copyEdges.has(edge.edgeId)) continue;
             const ref = resurrectRefFromDroppedEdge(edge);
-            if (!ref || matlabRefFacts(ref).form !== 'statement') continue;
+            if (!ref) continue;
             copyEdges.add(edge.edgeId);
             copyRefs.push(ref);
           }
@@ -171,10 +184,14 @@ export function reopenMatlabScriptRuns(
   }
   const fromEdges = edgeIds.length > 0 ? queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs) : [];
   if (copyEdges.size > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds([...copyEdges], copyRefs);
+  // By the name a call is looked up by as a function: a call on an object recorded under its class (`Box::tidy`
+  // for `tidy(b)`, whose class may have no method of it) finds the script first as a plain `tidy(…)` does.
   const rowIds = stems.size === 0 ? [] : queries.getRetryableFailedReferences([...stems]).flatMap((ref) =>
-    ref.language === 'matlab' && stems.has(ref.referenceName) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
+    ref.language === 'matlab' && stems.has(calledName(ref.referenceName)) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
   const woken = stems.size === 0 ? 0 : wakeMatlabBuiltinRows(queries, stems, fresh);
-  return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds) + woken, fromEdges };
+  // A script or a stub of a constructor's name is what a call of it reaches, or no longer reaches (see reopenMatlabHintedCalls).
+  const hinted = stems.size === 0 ? 0 : reopenMatlabHintedCalls(queries, stems, changedFilePaths);
+  return { count: refs.length + copyRefs.length + queries.reopenFailedReferences(rowIds) + woken + hinted, fromEdges };
 }
 
 /**
@@ -237,8 +254,8 @@ export function reopenMatlabNamesakes(
       if (node.kind === 'file' && fresh.has(node.filePath)) continue;
       // The rebind's, unless a definition's own file (it may hold more calls than the rebind takes of one name).
       // Nor a symbol named like a file the delta holds alone (`foo` for `foo.m` gone or come): a stub comes after
-      // it, an Octave or encrypted file blocks nothing, and a new script's (an empty file's too) statements are
-      // reopened with the script runs. Neither when the delta also holds a case variant of it (`Foo.m` come,
+      // it, an Octave or encrypted file blocks nothing, and the calls a new script (an empty file too) takes or
+      // blocks are reopened with the script runs. Neither when the delta also holds a case variant of it (`Foo.m` come,
       // `foo.m` gone: a case-only rename), which vetoes or stops vetoing a call of any form, however many.
       if ((delta.has(node.name) || (node.kind !== 'file' && stems.has(node.name))) && !exactFiles.has(node.name) &&
         !(called !== null && hasCaseVariant(stems, called))) continue;
@@ -257,7 +274,113 @@ export function reopenMatlabNamesakes(
   const rowIds = variants.size === 0 ? [] : queries.getRetryableFailedReferences([...variants], Number.MAX_SAFE_INTEGER).flatMap((ref) =>
     ref.language === 'matlab' && variants.has(calledName(ref.referenceName)) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
   const woken = variants.size === 0 ? 0 : wakeMatlabBuiltinRows(queries, variants, fresh);
-  return refs.length + queries.reopenFailedReferences(rowIds) + woken;
+  // What a call of a constructor's name reaches moved with its definitions and case variants (see reopenMatlabHintedCalls).
+  const hinted = reopenMatlabHintedCalls(queries, [...stems, ...variants], changedFilePaths);
+  // And whether a class has a method of a delta name, which a call on its object read through a write may need (see reopenMatlabKeptByCalls).
+  const kept = reopenMatlabKeptByCalls(queries, stems);
+  return refs.length + queries.reopenFailedReferences(rowIds) + woken + hinted + kept;
+}
+
+/**
+ * Put back in the pending set the MATLAB calls on an object read through a
+ * write that passed it to a MATLAB function of one of `names` (the keptBy
+ * fact: `tidy(x)` after `x = numel(x)`, `numel`), linked or
+ * failed: the call takes the class's method only while the class has a
+ * method of each such name (resolveBare in ./matlab-lookup), which a
+ * definition of the name coming or going in the class, in a class it
+ * inherits from, or a superclass list changing moves (the definition delta
+ * holds these names, a class hierarchy's too: see MatlabSuperclassChange),
+ * though no name the call is looked up by changed. Every one, no ceiling,
+ * read by the calls' own names: those a class holds a method under
+ * (getMatlabClassMemberNames), not a scan of every row's and edge's facts.
+ * Only a name a `keptBy` fact can carry is asked about (isMatlabKeptByName:
+ * one of MATLAB's), so a delta of the project's own names reads nothing.
+ * (A dormant one is not woken: its called name has no carrier, which a
+ * method of a `keptBy` name does not give it; one that does comes with the
+ * delta's own names. One in a file the sync changed is pending already.)
+ * Returns the number put back.
+ */
+export function reopenMatlabKeptByCalls(queries: QueryBuilder, names: Iterable<string>): number {
+  const wanted = new Set([...names].filter(isMatlabKeptByName));
+  if (wanted.size === 0) return 0;
+  const asks = (candidates: readonly string[] | undefined): boolean => (matlabRefFacts({ candidates }).keptBy ?? []).some((f) => wanted.has(f));
+  // Only a call of a name some class holds a method under can take one: the class's method of the call's own name,
+  // whose coming or going puts that name in the delta (and its calls back through the namesakes above).
+  const { rows, edges } = queries.getMatlabCallsWithCandidateNamed(KEPT_BY, queries.getMatlabClassMemberNames());
+  const edgeIds: number[] = [];
+  const refs: UnresolvedReference[] = [];
+  for (const edge of edges) {
+    const ref = resurrectRefFromDroppedEdge(edge);
+    if (!ref || !asks(ref.candidates)) continue;
+    edgeIds.push(edge.edgeId);
+    refs.push(ref);
+  }
+  if (edgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs);
+  const failed = rows.filter((row) => asks(row.candidates)).map((row) => row.rowId);
+  return refs.length + queries.reopenFailedReferences(failed);
+}
+
+/**
+ * Put back in the pending set the MATLAB calls on an object the extractor
+ * took from a constructor's call whose name is one of `names`, in files the
+ * sync left alone, linked or failed: `tidy(g)` after `g = gadget();` (the
+ * argClass fact), `area(c)` after `c = Shape(…)` and `disp(g)` (`Shape::area`,
+ * `gadget::disp`: the dispatch fact). Such a call takes the class's method
+ * only while a call of the constructor's name reaches the class from the
+ * caller (constructedClass in ./matlab-lookup), which a function, a class, a
+ * script or a stub of the name, or a case variant of it, coming, going or
+ * changing kind moves, though no name the call itself is looked up by
+ * changed: a private `gadget.m` that comes makes `g` a struct. Read through
+ * the methods of the classes of those names (by qualified name, a package's
+ * class too), whatever they answer: the edges into a MATLAB node of a
+ * method's name, the call's own or a farther function's, and the failed
+ * rows under it, each kept only when its fact names one of those classes.
+ * No ceiling: each one's answer turns on the name just changed. Returns the
+ * number put back.
+ */
+export function reopenMatlabHintedCalls(queries: QueryBuilder, names: Iterable<string>, changedFilePaths: readonly string[]): number {
+  const owners = new Set<string>();
+  for (const name of names) {
+    if (!IDENTIFIER.test(name) || owners.has(name)) continue;
+    owners.add(name);
+    for (const c of queries.getNodesByName(name)) if (c.language === 'matlab' && CLASS_KINDS.includes(c.kind)) owners.add(c.qualifiedName);
+  }
+  /** Method name → the classes of `names` that have a method of it. */
+  const members = new Map<string, Set<string>>();
+  for (const qn of owners) {
+    for (const m of queries.getMatlabMethodsOfClass(qn)) {
+      const list = members.get(m.name);
+      if (list) list.add(qn);
+      else members.set(m.name, new Set([qn]));
+    }
+  }
+  if (members.size === 0) return 0;
+  const hinted = (ref: UnresolvedReference): boolean => {
+    if (ref.language !== 'matlab') return false;
+    const member = calledName(ref.referenceName);
+    const classes = members.get(member);
+    if (!classes) return false;
+    const facts = matlabRefFacts(ref);
+    if (ref.referenceName === member) return facts.argClass !== undefined && classes.has(facts.argClass);
+    return facts.dispatch !== undefined && classes.has(ref.referenceName.slice(0, -(member.length + 2)));
+  };
+  const fresh = new Set(changedFilePaths);
+  const edgeIds: number[] = [];
+  const refs: UnresolvedReference[] = [];
+  const targets = [...members.keys()].flatMap((m) => [m, ...matlabFileNames(m)]);
+  for (const edge of queries.getMatlabRebindEdgesByTargetName(targets)) {
+    if (fresh.has(edge.sourceFilePath)) continue;
+    const ref = resurrectRefFromDroppedEdge(edge);
+    if (!ref || !hinted(ref)) continue;
+    edgeIds.push(edge.edgeId);
+    refs.push(ref);
+  }
+  if (edgeIds.length > 0) queries.replaceResolutionEdgesWithUnresolvedRefIds(edgeIds, refs);
+  const rowIds = queries.getRetryableFailedReferences([...members.keys()], Number.MAX_SAFE_INTEGER).flatMap((ref) =>
+    hinted(ref) && !fresh.has(ref.filePath ?? '') && ref.rowId !== undefined ? [ref.rowId] : []);
+  // And the dormant ones: a call under a built-in's name the class's method did not answer (`gadget::disp`).
+  const asleep = queries.getMatlabCallRefsByTail(members.keys(), DORMANT_REF_STATUS).flatMap((ref) => (hinted(ref) && !fresh.has(ref.filePath) ? [ref.rowId] : []));
+  return refs.length + queries.reopenFailedReferences(rowIds) + (asleep.length > 0 ? queries.setMatlabDormancy(asleep, []) : 0);
 }
 
 /**
@@ -279,6 +402,9 @@ export function reopenMatlabInheritedFailures(queries: QueryBuilder, names: read
 }
 
 const CLASS_KINDS: readonly NodeKind[] = ['class', 'enum'];
+
+/** A file in a class folder (`…/@Cls/x.m`). */
+const CLASS_FOLDER_FILE = /(?:^|\/)@[^/]+\/[^/]+$/;
 
 /** A class as a sync compares it: its superclass list as written, and whether it is a classdef (not an old-style class). */
 interface ClassShape {
@@ -310,10 +436,10 @@ function classesIn(queries: QueryBuilder, file: string): Map<string, ClassShape>
  * methods of every class the old and the new lists reach, with their
  * ancestors, are what the sync's rebind re-opens (edges into a node of the
  * name, failures under it), as if a definition of that name had come or gone.
- * A class's methods are those of every copy of its qualified name, as the
- * resolver's methodOnHierarchy takes them (./matlab-lookup): a call on a
- * `Widget < Mid` may answer from another copy of `Mid` than the one the list
- * resolves to.
+ * A class's methods are those the definition its name resolves to holds, as
+ * the resolver's methodOnHierarchy takes them (./matlab-lookup): a call on a
+ * `Widget < Mid` answers from the copy of `Mid` the list resolves to, never
+ * from another copy.
  * A class that comes or goes counts as a list changed from or to nothing, and
  * re-opens every name its ancestors' methods have, edges included, not only
  * the names it defines (the definition delta has those): it can be the link
@@ -369,7 +495,7 @@ export class MatlabSuperclassChange {
         if (sameStanding) continue;
         moved.add(qn);
         // A class folder's methods, which the folder's files are named after: its `contains` edges come later, from synthesis.
-        if (/(?:^|\/)@[^/]+\/[^/]+$/.test(file)) {
+        if (CLASS_FOLDER_FILE.test(file)) {
           const dir = dirOf(file);
           matlabFiles ??= this.queries.getFilePathsOfLanguage('matlab');
           for (const f of matlabFiles) {
@@ -380,6 +506,9 @@ export class MatlabSuperclassChange {
       }
     }
     for (const qn of moved) {
+      // Every copy's methods, and those of a class folder no copy holds: which copy is the class, or whether any
+      // is (a built-in type's class folder's methods answer only then: see qualifiedMethod), is what moved.
+      for (const m of this.queries.getMatlabMethodsOfClass(qn)) names.add(m.name);
       for (const copy of context.getNodesByQualifiedName(qn)) {
         if (copy.language !== 'matlab' || !CLASS_KINDS.includes(copy.kind)) continue;
         reached.push({ bases: matlabSuperclassNames(copy), filePath: copy.filePath });
@@ -395,12 +524,17 @@ export class MatlabSuperclassChange {
   }
 
   /**
-   * The names of a class's methods: those of every copy of its qualified name
-   * (`Mid::step` in `lib/Mid.m` for an `app/Mid.m`, its class folder's
-   * files), and those the class folder's pass made it contain.
+   * The names of a class's methods: those the class definition `cls` holds
+   * (its file, its class folder), as the resolver's heldMethods takes them
+   * (./matlab-lookup), and those the class folder's pass made it contain.
+   * (An old-style class's other `@Cls` folders' methods are no ancestor's:
+   * a classdef cannot list an old-style class as a superclass, see
+   * superclassNamed; for a class whose copies moved, changedNames takes
+   * every method of its qualified name already.)
    */
   private methodsOf(cls: Node): Set<string> {
-    const names = new Set(this.queries.getMatlabMethodNamesOfClass(cls.qualifiedName));
+    const names = new Set<string>();
+    for (const m of this.queries.getMatlabMethodsOfClass(cls.qualifiedName)) if (matlabMethodHeldBy(cls, m)) names.add(m.name);
     const contained = this.queries.getOutgoingEdges(cls.id, ['contains']).map((e) => e.target);
     for (const n of this.queries.getNodesByIds(contained).values()) if (n.kind === 'method') names.add(n.name);
     return names;

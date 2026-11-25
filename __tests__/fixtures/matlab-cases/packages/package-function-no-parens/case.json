@@ -5,11 +5,5 @@
       "main.m main -calls-> pkg::sub::low @ +pkg/+sub/low.m",
       "main.m main -calls-> pkg::top @ +pkg/top.m"
     ]
-  },
-  "pendingBug": {
-    "id": "S11-packages-1",
-    "fails": [
-      "index: missing edge main.m main -calls-> pkg::sub::low @ +pkg/+sub/low.m"
-    ]
   }
 }

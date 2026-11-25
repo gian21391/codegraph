@@ -90,10 +90,11 @@
  */
 
 import type { NodeFilter, QueryBuilder } from '../db/queries';
+import type { Node } from '../types';
 import type { UnresolvedRef } from './types';
 import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES, addMatlabReachableNames, callsByName, withoutUnanswerableMatlabBuiltins } from '../extraction/languages/matlab-builtins';
 import { matlabFileNames } from '../extraction/languages/matlab-path';
-import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { matlabRefFacts, type MatlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { referenceNameTail } from '../db/reference-tail';
 
 /**
@@ -301,6 +302,86 @@ export function isMatlabPlainCall(ref: { referenceName: string; referenceKind: s
   return facts.form === undefined && !facts.runtime && facts.dispatch === undefined && !facts.computed;
 }
 
+/**
+ * Whether a call is one on an object a lower-case callee made, under a
+ * built-in's name (`disp(g)` after `g = gadget();`: `gadget::disp` with the
+ * dispatch and the argClass facts), that the class's method may answer
+ * (doc 'Function Precedence Order': a method of the argument's class comes
+ * before MATLAB's function). Failed, it is kept, dormant, only as a fresh
+ * index keeps it (see matlabBuiltinDispatchKept), and deleted otherwise. One
+ * on an object a capitalised callee made (`datestr(T)` after `T = Stamp(…)`,
+ * no argClass fact) keeps the rule of the class's other calls, a failed row
+ * while a symbol carries its name (the dead-code check reads those).
+ */
+function isMatlabBuiltinDispatch(facts: MatlabRefFacts): boolean {
+  return facts.dispatch !== undefined && facts.argClass !== undefined && MATLAB_BUILTINS.has(facts.dispatch) && !facts.runtime;
+}
+
+/**
+ * Whether `ref` is such a call (see isMatlabBuiltinDispatch): its dormancy
+ * asks no carrier alone, so a sync wakes it, as a built-in's call, where the
+ * definitions of its name change (matlabDormancyFlips in
+ * ./matlab-builtin-carriers) or what its constructor's name reaches does
+ * (reopenMatlabHintedCalls in ./matlab-sync), and the carrier step deletes
+ * it, or writes it again, where the classes of its callee's name, or the
+ * carriers and the reach of its built-in's name, come or go.
+ */
+export function isMatlabBuiltinDispatchCall(ref: { referenceKind: string; language?: string; candidates?: readonly string[] }): boolean {
+  return ref.language === 'matlab' && ref.referenceKind === 'calls' && isMatlabBuiltinDispatch(matlabRefFacts(ref));
+}
+
+/** A call's (see isMatlabBuiltinDispatch) class key: its callee's name, lowered (`gadget` for `argClass:gadget`). */
+export function matlabDispatchClassKey(ref: { candidates?: readonly string[] }): string {
+  return (matlabRefFacts(ref).argClass ?? '').toLowerCase();
+}
+
+/**
+ * Of `refs`, failed calls on an object a lower-case callee made under a
+ * built-in's name (see isMatlabBuiltinDispatch), the ones a fresh index keeps,
+ * dormant; it deletes the others. Kept: one whose callee's name a class is
+ * named, in any package and any case (`gadget`, `Gadget`, `pkg.gadget`: a
+ * class of the name may answer it where a sync makes the call reach that
+ * class, ./matlab-sync), and one a plain call of the built-in's name would
+ * keep, with no such class: the call is looked up as that plain call then, a
+ * project function of the name answering it or none, so it is kept as one is
+ * (see judgeMatlabBuiltinFailures): a callable MATLAB symbol carries the
+ * name, and a `.m` file of it is one a bare call reaches or the call's file
+ * imports or defines the name (withoutUnanswerableMatlabBuiltins, the
+ * extraction's discard). Every other one names a class nothing defines and
+ * a built-in no project copy can answer: MATLAB's own function runs, and the
+ * row is dropped as an uncarried built-in's call is. A sync that gives its
+ * callee's name a class, or its built-in's name a carrier or a reach, writes
+ * it again (the carrier step: ./matlab-builtin-carriers).
+ */
+export function matlabBuiltinDispatchKept<R extends { referenceName: string; filePath: string; candidates?: readonly string[] }>(
+  refs: readonly R[],
+  queries: QueryBuilder,
+): Set<R> {
+  const kept = new Set<R>();
+  if (refs.length === 0) return kept;
+  const classes = queries.getMatlabClassFilesByLowerName(refs.map(matlabDispatchClassKey));
+  const rest = refs.filter((ref) => !classes.has(matlabDispatchClassKey(ref)));
+  for (const ref of refs) if (!rest.includes(ref)) kept.add(ref);
+  if (rest.length === 0) return kept;
+  const tailOf = (ref: R): string => matlabRefFacts(ref).dispatch!;
+  const carried = queries.getNodeNamesAmong(rest.flatMap((ref) => matlabNameKeys(tailOf(ref))), MATLAB_CALLABLE_NODES);
+  let reachable: Set<string> | null = null;
+  const nodes = new Map<string, Node[]>();
+  for (const ref of rest) {
+    const tail = tailOf(ref);
+    if (!matlabNameKeys(tail).some((k) => carried.has(k))) continue;
+    if (!reachable) {
+      reachable = new Set();
+      const unread = queries.getUnreadMatlabFilePaths();
+      addMatlabReachableNames(queries.getFilePathsOfLanguage('matlab').filter((p) => !unread.has(p)), reachable);
+    }
+    let own = nodes.get(ref.filePath);
+    if (!own) nodes.set(ref.filePath, (own = queries.getNodesByFiles([ref.filePath])));
+    if (withoutUnanswerableMatlabBuiltins([{ referenceName: tail, referenceKind: 'calls' }], own, reachable).length > 0) kept.add(ref);
+  }
+  return kept;
+}
+
 /** The failures a resolution pass does not park as failed (see the top of this file). */
 export interface UnanswerableMatlabFailures {
   /** A built-in's calls no symbol could answer, deleted. */
@@ -412,8 +493,14 @@ export function unanswerableMatlabFailures(
   const builtins: Array<{ ref: UnresolvedRef; keys: string[]; fresh: boolean; unfiltered: boolean }> = [];
   const bareMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
   const calledMembers: Array<{ ref: UnresolvedRef; keys: string[] }> = [];
+  const onObjects: UnresolvedRef[] = [];
   for (const ref of failures) {
     if (ref.language !== 'matlab') continue;
+    // `disp(g)` on an object, `gadget::disp` (see isMatlabBuiltinDispatch): a fresh index keeps it only as matlabBuiltinDispatchKept says.
+    if (isMatlabBuiltinDispatchCall(ref)) {
+      onObjects.push(ref);
+      continue;
+    }
     const member = matlabMemberCall(ref);
     if (member) {
       // A computed name is kept (see the top of this file).
@@ -443,6 +530,8 @@ export function unanswerableMatlabFailures(
   // another language).
   dropUncarried(methodNames, MATLAB_CALLABLE_NODES);
   judgeMatlabBuiltinFailures(builtins, known, queries, { deleted, dormant }, mayWin);
+  const onObjectsKept = matlabBuiltinDispatchKept(onObjects, queries);
+  for (const ref of onObjects) (onObjectsKept.has(ref) ? dormant : deleted).add(ref);
   if (pending.length === 0) return { deleted, dormant };
   const carried = matlabCarriedKeys(pending.flatMap((p) => p.keys), known, queries);
   for (const { ref, keys } of pending) {

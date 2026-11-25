@@ -1,0 +1,25 @@
+{
+  "index": {
+    "edges": [
+      "main.m main -calls-> kit::deep::fetch @ +kit/+deep/fetch.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": [
+        "main.m:2 calls:kit::deep::fetch"
+      ]
+    },
+    {
+      "edges": [
+        "main.m main -calls-> kit::deep::fetch @ +kit/+deep/fetch.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

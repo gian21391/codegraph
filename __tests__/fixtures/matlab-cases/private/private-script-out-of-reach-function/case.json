@@ -1,0 +1,14 @@
+{
+  "why": "A `private/` folder's files are callable only from its parent folder and itself (MATLAB doc 'Private Functions'), so `far/private/probe.m`, a script, is nothing to `app/main.m`: `probe(2)` there calls `lib/probe.m`, a function, as if the private script were not there.",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> probe @ lib/probe.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "far/private/probe.m"
+      }
+    ]
+  }
+}

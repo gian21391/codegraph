@@ -1,0 +1,20 @@
+{
+  "why": "A call in a `try` body may throw, and the `catch` clause and what follows the `try` then run (doc 'try, catch'): in `use3.m`, `tidy(a)` runs only when `zt(c)` threw after `a = 5`, so it is the root `tidy.m` whatever `return` follows in the body. In `use4.m` the `if` branch returns after `a = 5`, so `tidy(a)` sees only the Gizmo: `Gizmo::tidy`.",
+  "truth": {
+    "edges": [
+      "use3.m use3 -calls-> zt @ zt.m",
+      "use3.m use3 -calls-> tidy @ tidy.m",
+      "use4.m use4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use3.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "use4.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

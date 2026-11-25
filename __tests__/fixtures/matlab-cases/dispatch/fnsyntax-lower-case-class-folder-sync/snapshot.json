@@ -1,0 +1,32 @@
+{
+  "index": {
+    "edges": [
+      "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m",
+      "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m",
+      "use.m use.m -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "use.m use.m -calls-> tidy @ tidy.m",
+        "use.m use.m -instantiates-> gadget @ @gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "use.m:3 calls:g.tidy"
+      ]
+    },
+    {
+      "edges": [
+        "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m",
+        "use.m use.m -calls-> gadget::tidy @ @gadget/tidy.m",
+        "use.m use.m -instantiates-> gadget @ @gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

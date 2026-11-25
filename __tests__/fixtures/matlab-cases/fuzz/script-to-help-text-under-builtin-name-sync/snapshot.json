@@ -1,0 +1,35 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "lib/run.m:1 calls:max",
+      "lib/run.m:2 calls:Base"
+    ],
+    "dormant": [
+      "lib/run.m:1 calls:obj"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [],
+      "rows": [
+        "lib/run.m:1 calls:max",
+        "lib/run.m:2 calls:Base"
+      ],
+      "dormant": [
+        "lib/run.m:1 calls:obj"
+      ]
+    },
+    {
+      "edges": [
+        "lib/run.m lib/run.m -calls-> max @ max.m"
+      ],
+      "rows": [
+        "lib/run.m:2 calls:Base"
+      ],
+      "dormant": [
+        "lib/run.m:1 calls:obj"
+      ]
+    }
+  ]
+}

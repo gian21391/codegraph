@@ -1,0 +1,2 @@
+function fluff(obj)
+end

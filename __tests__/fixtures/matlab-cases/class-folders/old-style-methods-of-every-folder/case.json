@@ -1,0 +1,11 @@
+{
+  "why": "Three `@gadget` folders on the path, `lib` first, then `tools`, then `ext`; `lib` and `tools` each hold a constructor `gadget.m`, `ext` only a method. MATLAB R2026a: the object comes from the first constructor on the path (`lib`'s), and the methods of all three folders are its methods, the one in a folder with a constructor of its own too: each call runs.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> gadget::first @ lib/@gadget/first.m",
+      "use.m use -calls-> gadget::second @ tools/@gadget/second.m",
+      "use.m use -calls-> gadget::third @ ext/@gadget/third.m",
+      "use.m use -instantiates-> gadget @ lib/@gadget/gadget.m"
+    ]
+  }
+}

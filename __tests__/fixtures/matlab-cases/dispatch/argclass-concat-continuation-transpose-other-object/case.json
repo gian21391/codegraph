@@ -1,0 +1,50 @@
+{
+  "why": "An expression of a class keeps it (MATLAB doc 'Object Arrays', 'Concatenating Objects'): `k = [k, ...` / `Gizmo()]` over a continuation line (a continuation or a comment in the brackets is no element), `k = k(end:-1:1)'` and `k = k.'` (a transpose of an index), `k = [k, w]` with `w` another `Gizmo`, `k = [k(1), k(2)]`: each `tidy(k)` is the class's method (doc 'Function Precedence Order'). A concatenation with `k` itself among its elements keeps the class (project rule, step 15 round 7): MATLAB gives the class, or the class's own concatenation runs, or it errors (MATLAB R2026a: `[k, 1]` and objects of two classes error), so after `k = [k, 1]` or `k = [k, w]` with `w` a `Widget` the call is reached with the object or not at all, and `tidy(k)` is the class's method.",
+  "truth": {
+    "edges": [
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use2.m use2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use4.m use4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use5.m use5 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use6.m use6 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use7.m use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use8.m use8 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use1.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use2.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use3.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use4.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use5.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use6.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use7.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use8.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

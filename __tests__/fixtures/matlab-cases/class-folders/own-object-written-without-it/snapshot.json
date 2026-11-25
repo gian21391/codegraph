@@ -1,0 +1,21 @@
+{
+  "index": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> tidy @ tidy.m",
+      "@Gizmo/use1.m Gizmo::use1 -calls-> zt @ zt.m",
+      "@Gizmo/use2.m Gizmo::use2 -calls-> tidy @ tidy.m",
+      "@Gizmo/use3.m Gizmo::use3 -calls-> tidy @ tidy.m",
+      "@Gizmo/use4.m Gizmo::use4 -calls-> tidy @ tidy.m",
+      "@Gizmo/use5.m Gizmo::use5 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use5.m Gizmo::use5 -calls-> zt @ zt.m",
+      "@Gizmo/use6.m Gizmo::use6 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use7.m Gizmo::use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use8.m Gizmo::use8 -calls-> Widget::tidy @ Widget.m",
+      "@Gizmo/use8.m Gizmo::use8 -instantiates-> Widget @ Widget.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "@Gizmo/use8.m:2 calls:Gizmo::n"
+    ]
+  }
+}

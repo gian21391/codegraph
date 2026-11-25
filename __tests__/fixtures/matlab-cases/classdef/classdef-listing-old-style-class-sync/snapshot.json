@@ -1,0 +1,62 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m",
+      "use.m use -instantiates-> W @ W.m"
+    ],
+    "rows": [
+      "use.m:3 calls:W::tidy",
+      "use.m:4 calls:W::spin"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> W @ W.m"
+      ],
+      "rows": [
+        "W.m:1 extends:gadget",
+        "use.m:3 calls:W::tidy",
+        "use.m:4 calls:W::spin"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "W.m W -extends-> gadget @ lib/@gadget/gadget.m",
+        "use.m use -calls-> gadget::spin @ lib/@gadget/spin.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> W @ W.m"
+      ],
+      "rows": [
+        "use.m:3 calls:W::tidy"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> W @ W.m"
+      ],
+      "rows": [
+        "W.m:1 extends:gadget",
+        "use.m:3 calls:W::tidy",
+        "use.m:4 calls:W::spin"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> zt @ zt.m",
+        "use.m use -instantiates-> W @ W.m"
+      ],
+      "rows": [
+        "use.m:3 calls:W::tidy",
+        "use.m:4 calls:W::spin"
+      ],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m main -calls-> probe @ lib/probe.m",
+      "app/main.m main -calls-> probe @ lib/probe.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "app/main.m main -calls-> app/probe.m @ app/probe.m"
+      ],
+      "rows": [
+        "app/main.m:2 calls:probe"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> probe @ lib/probe.m",
+        "app/main.m main -calls-> probe @ lib/probe.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> app/probe.m @ app/probe.m"
+      ],
+      "rows": [
+        "app/main.m:2 calls:probe"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> probe @ lib/probe.m",
+        "app/main.m main -calls-> probe @ lib/probe.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> app/probe.m @ app/probe.m"
+      ],
+      "rows": [
+        "app/main.m:2 calls:probe"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "app/main.m main -calls-> probe @ lib/probe.m",
+        "app/main.m main -calls-> probe @ lib/probe.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

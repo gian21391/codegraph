@@ -1,0 +1,20 @@
+{
+  "index": {
+    "edges": [
+      "usea.m usea -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "usea.m usea -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "usea.m usea -calls-> zt @ zt.m",
+      "usea.m usea -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "usea.m usea -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "usea.m usea -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "useb.m useb -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "useb.m useb -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "useb.m useb -calls-> zt @ zt.m",
+      "useb.m useb -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "useb.m useb -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "useb.m useb -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

@@ -46,7 +46,7 @@ describe('MATLAB sync converges on a fresh index', () => {
     expect(synced).toEqual(fresh);
   });
 
-  it('when a script with a farther copy becomes help text only, or Octave, and back: the call returns to the nearer copy', async () => {
+  it('when a script with a farther copy becomes help text only, or Octave, and back: the stub keeps the call, Octave sends it to the farther copy, and it returns', async () => {
     const FARTHER_CALL = 'main.m main -calls-> sub/setup_paths.m @ sub/setup_paths.m';
     const { steps, synced, fresh } = await syncedAndFresh(
       { 'main.m': MAIN, 'setup_paths.m': 'addpath(pwd);\n', 'sub/setup_paths.m': 'x = 1;\n' },
@@ -55,7 +55,8 @@ describe('MATLAB sync converges on a fresh index', () => {
       { 'setup_paths.m': '# Octave\naddpath(pwd);\n' },
       { 'setup_paths.m': 'addpath(pwd);\n' },
     );
-    expect(steps).toEqual([[SCRIPT_CALL], [FARTHER_CALL], [SCRIPT_CALL], [FARTHER_CALL], [SCRIPT_CALL]]);
+    // As help text the nearer file is a stub, the first file of the name for every form of the call (step 15).
+    expect(steps).toEqual([[SCRIPT_CALL], [SCRIPT_CALL], [SCRIPT_CALL], [FARTHER_CALL], [SCRIPT_CALL]]);
     expect(synced).toEqual(fresh);
   });
 
@@ -454,12 +455,13 @@ describe('MATLAB sync converges on a fresh index for stubs, the help text of a M
   }, 120_000);
 
   it('when a stub that answered a statement before a farther function becomes a script, and back', async () => {
-    // The script, nearer, runs the statement; as help text, the farther function answers both calls.
+    // The script, nearer, runs the statement, and the call with an argument that finds it first is an error (no
+    // edge); as help text, the farther function answers both calls.
     const steps = [{ 'app/mexf.m': HELP }, { 'app/mexf.m': 'disp(1);\n' }];
     const run = await syncedAndFreshEachStep({ 'app/main.m': MAIN, 'app/mexf.m': 'disp(1);\n', 'lib/mexf.m': FUNCTION }, ...steps);
     expectEachStepFresh(run, steps);
     expect(run[0]!.synced).toEqual(['app/main.m main -calls-> mexf @ lib/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m']);
-    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> app/mexf.m @ app/mexf.m', 'app/main.m main -calls-> mexf @ lib/mexf.m']);
+    expect(run[1]!.synced).toEqual(['app/main.m main -calls-> app/mexf.m @ app/mexf.m']);
   }, 120_000);
 
   it('when a nearer function of the name is added and removed while a stub exists, and a farther one too', async () => {
@@ -572,7 +574,9 @@ describe('MATLAB recovery from an interrupted index', () => {
       (await CodeGraph.init(freshRoot, { index: true })).close();
       const fresh = rows(freshRoot);
       // A call written with arguments that resolves to nothing stays; the bare
-      // reads and the member call nothing defines are kept dormant.
+      // reads and the member call nothing defines are kept dormant. `plot(t)`
+      // on what `cfg` made (`cfg::plot`) keeps no row: no class `cfg`, and no
+      // project `plot` a bare call reaches, so it is MATLAB's own `plot`.
       expect(fresh).toEqual([
         'helper.m:2 nope_read dormant',
         'main.m:2 cfg dormant',

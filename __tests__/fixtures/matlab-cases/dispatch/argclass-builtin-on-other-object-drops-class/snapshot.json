@@ -1,0 +1,20 @@
+{
+  "index": {
+    "edges": [
+      "use1.m use1 -calls-> tidy @ tidy.m",
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use2.m use2 -calls-> tidy @ tidy.m",
+      "use2.m use2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use2.m use2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "use1.m:4 calls:Gizmo::numel",
+      "use2.m:4 calls:Gizmo::isequal"
+    ]
+  }
+}

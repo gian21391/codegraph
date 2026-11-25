@@ -1,10 +1,10 @@
 {
   "index": {
-    "edges": [
-      "+pkg/Mid.m pkg::Mid -extends-> Base @ @Base/Base.m",
-      "+pkg/Mid.m pkg::Mid -extends-> Base @ @Base/Base.m"
+    "edges": [],
+    "rows": [
+      "+pkg/Mid.m:1 extends:Base",
+      "+pkg/Mid.m:1 extends:Base"
     ],
-    "rows": [],
     "dormant": []
   },
   "steps": [

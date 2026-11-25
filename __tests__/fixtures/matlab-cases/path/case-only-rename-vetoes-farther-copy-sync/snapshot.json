@@ -1,9 +1,9 @@
 {
   "index": {
-    "edges": [
-      "lib/use.m use -calls-> shift @ shift.m"
+    "edges": [],
+    "rows": [
+      "lib/use.m:2 calls:shift"
     ],
-    "rows": [],
     "dormant": []
   },
   "steps": [
@@ -15,10 +15,10 @@
       "dormant": []
     },
     {
-      "edges": [
-        "lib/use.m use -calls-> shift @ shift.m"
+      "edges": [],
+      "rows": [
+        "lib/use.m:2 calls:shift"
       ],
-      "rows": [],
       "dormant": []
     }
   ]

@@ -1,0 +1,17 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m byname -calls-> app/probe.m @ app/probe.m",
+      "app/main.m empty -calls-> app/probe.m @ app/probe.m",
+      "app/main.m handle -references-> app/probe.m @ app/probe.m",
+      "app/main.m main -calls-> zt @ lib/zt.m",
+      "app/main.m runs -calls-> app/probe.m @ app/probe.m"
+    ],
+    "rows": [
+      "app/main.m:2 calls:probe",
+      "app/main.m:3 calls:probe",
+      "app/main.m:4 calls:probe"
+    ],
+    "dormant": []
+  }
+}

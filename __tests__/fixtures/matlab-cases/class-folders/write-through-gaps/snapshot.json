@@ -1,0 +1,27 @@
+{
+  "index": {
+    "edges": [
+      "@Cel/g1.m Cel::g1 -calls-> Cel::numel @ @Cel/numel.m",
+      "@Cel/g6.m Cel::g6 -calls-> Cel::sum @ @Cel/sum.m",
+      "@Gizmo/g8.m Gizmo::g8 -calls-> tidy @ tidy.m",
+      "@Gizmo/g8.m Gizmo::g8 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -calls-> zt @ zt.m",
+      "use3.m use3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use3.m use3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use4.m use4 -calls-> qpk::Spool::tidy @ +qpk/Spool.m",
+      "use4.m use4 -instantiates-> qpk::Spool @ +qpk/Spool.m",
+      "use4.m use4 -instantiates-> qpk::Spool @ +qpk/Spool.m",
+      "use5.m use5 -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [
+      "@Cel/g1.m:4 calls:Cel::sum",
+      "@Gizmo/g8.m:3 calls:Gizmo::numel"
+    ],
+    "dormant": [
+      "@Cel/g1.m:3 calls:Cel::size",
+      "@Cel/g6.m:3 calls:Cel::size",
+      "use5.m:3 calls:gadget::numel"
+    ]
+  }
+}

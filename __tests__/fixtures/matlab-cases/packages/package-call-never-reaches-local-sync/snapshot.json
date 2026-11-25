@@ -1,11 +1,10 @@
 {
   "index": {
     "edges": [
+      "+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
       "app/main.m main -calls-> pkg::tool @ +pkg/tool.m"
     ],
-    "rows": [
-      "+pkg/tool.m:2 calls:pkg::util"
-    ],
+    "rows": [],
     "dormant": []
   },
   "steps": [
@@ -20,11 +19,10 @@
     },
     {
       "edges": [
+        "+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
         "app/main.m main -calls-> pkg::tool @ +pkg/tool.m"
       ],
-      "rows": [
-        "+pkg/tool.m:2 calls:pkg::util"
-      ],
+      "rows": [],
       "dormant": []
     },
     {
@@ -38,11 +36,10 @@
     },
     {
       "edges": [
+        "+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
         "app/main.m main -calls-> pkg::tool @ +pkg/tool.m"
       ],
-      "rows": [
-        "+pkg/tool.m:2 calls:pkg::util"
-      ],
+      "rows": [],
       "dormant": []
     },
     {
@@ -56,11 +53,10 @@
     },
     {
       "edges": [
+        "+pkg/tool.m pkg::tool -calls-> pkg::util @ +pkg/util.m",
         "app/main.m main -calls-> pkg::tool @ +pkg/tool.m"
       ],
-      "rows": [
-        "+pkg/tool.m:2 calls:pkg::util"
-      ],
+      "rows": [],
       "dormant": []
     }
   ]

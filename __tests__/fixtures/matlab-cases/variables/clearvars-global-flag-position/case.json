@@ -1,0 +1,14 @@
+{
+  "why": "MATLAB R2026a: `clearvars -global qzv qzw` removes the global `qzw` and keeps the non-global `qzv`, so `tidy(qzv)` is `Gizmo::tidy`; `clearvars qzx -global` warns that the `-global` flag after an item is ignored and removes `qzx` as `clearvars qzx` would, so `qzx` is no variable at `qzx(1)`, which calls the function `qzx` (step 15 round 8).",
+  "truth": {
+    "edges": [
+      "m1.m m1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "m2.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "why": "`numel(s, k)` and `isequal(s, k)` on objects of a class that overloads neither run MATLAB's functions, which return a double and a logical (doc 'numel', 'isequal'); `tidy(k)` then calls the root `tidy.m`, not the class's method (doc 'Function Precedence Order'). Project rule (step 15 round 4): a MATLAB function's value is no object of the class, whatever its first argument holds.",
+  "truth": {
+    "edges": [
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -calls-> tidy @ tidy.m",
+      "use2.m use2 -calls-> tidy @ tidy.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use1.m",
+        "at": "@Gizmo/tidy.m"
+      },
+      {
+        "from": "use2.m",
+        "at": "@Gizmo/tidy.m"
+      }
+    ]
+  }
+}

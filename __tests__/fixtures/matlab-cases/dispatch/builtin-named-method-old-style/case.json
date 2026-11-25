@@ -1,0 +1,21 @@
+{
+  "why": "A method of an argument's class comes before MATLAB's function of the name (MATLAB doc 'Function Precedence Order', 'Method Invocation'): `disp(g)` calls `@gadget/disp.m` and `disp(k)` calls `Gizmo`'s `disp`. In `plain.m`, `noclass()` is a function, so `n` is a struct and `disp(n)` is MATLAB's own: no edge, and no row either (project rule, step 15 round 3: such a call is kept, dormant, only while a class of its callee's name exists, any package and any case, or while a plain call of the built-in's name would be kept; neither holds here) (the step 15 review's probe, extended).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Gizmo::disp @ Gizmo.m",
+      "use.m use -calls-> gadget::disp @ @gadget/disp.m"
+    ],
+    "noEdges": [
+      {
+        "from": "plain.m",
+        "to": "disp"
+      }
+    ],
+    "noDormant": [
+      "plain.m:3 calls:noclass::disp"
+    ],
+    "noRows": [
+      "plain.m:3 calls:noclass::disp"
+    ]
+  }
+}

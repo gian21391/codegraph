@@ -1,0 +1,2 @@
+function open(obj)
+end

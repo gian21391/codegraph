@@ -1,0 +1,72 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [
+      "lib/run.m:1 calls:Box",
+      "lib/run.m:2 calls:Box::tidy"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+      ],
+      "rows": [
+        "lib/run.m:1 calls:Box"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "lib/run.m:1 calls:Box",
+        "lib/run.m:2 calls:Box::tidy"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run.m lib/run.m -calls-> tidy @ lib/tidy.m"
+      ],
+      "rows": [
+        "lib/run.m:1 calls:Box"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "lib/run.m:1 calls:Box",
+        "lib/run.m:2 calls:Box::tidy"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+      ],
+      "rows": [
+        "lib/run.m:1 calls:Box"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "lib/run.m:1 calls:Box",
+        "lib/run.m:2 calls:Box::tidy"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+      ],
+      "rows": [
+        "lib/run.m:1 calls:Box"
+      ],
+      "dormant": []
+    }
+  ]
+}

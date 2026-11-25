@@ -1,0 +1,67 @@
+{
+  "why": "In a script, a read before the script's own assignment of the name goes in text order (the user's ruling (step 11); MATLAB doc 'Function Precedence Order': a variable comes first, once there is one): `y = blend(1);` before `blend = 3;` calls `blend.m`, and the read after the assignment reads the variable. With the assignment moved first, no read is a call; moved back, the call again. In a loop, a read before the assignment in the loop's body calls `blend.m` on the first pass, a real call; and a read in the `else` of an `if` whose other clause makes the variable runs only when that clause did not, so it is a call too. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "mix.m mix.m -calls-> blend @ blend.m"
+    ],
+    "noRows": [
+      {
+        "file": "mix.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "mix.m": "blend = 3;\ny = blend(1);\nz = blend(2);\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "mix.m"
+          }
+        ],
+        "noRows": [
+          {
+            "file": "mix.m"
+          }
+        ],
+        "noDormant": [
+          {
+            "file": "mix.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "mix.m": "y = blend(1);\nblend = 3;\nz = blend(2);\n"
+      },
+      "truth": {
+        "edges": [
+          "mix.m mix.m -calls-> blend @ blend.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "mix.m": "for k = 1:2\n  y = blend(1);\n  blend = 3;\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "mix.m mix.m -calls-> blend @ blend.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "mix.m": "if rand > 0.5\n  blend = 3;\nelse\n  y = blend(1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "mix.m mix.m -calls-> blend @ blend.m"
+        ]
+      }
+    }
+  ]
+}

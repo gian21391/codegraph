@@ -1,0 +1,2 @@
+function third(obj)
+end

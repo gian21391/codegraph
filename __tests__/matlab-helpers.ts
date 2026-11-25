@@ -182,6 +182,16 @@ export interface StateFacts {
   nodes: string[];
   exceptions: string[];
   sharedPlaces: string[];
+  /**
+   * Every MATLAB row and every edge out of a MATLAB node (`contains` too)
+   * with what it stores beside its place, one entry each (a multiset: two
+   * of one place count twice): a row as `file:line:col kind:name from
+   * status candidates name_tail` (`from` its source node's qualified name),
+   * an edge as `file:line:col source -kind-> target @ file metadata
+   * provenance`. A sync must store these as a fresh index does, facts and
+   * their order included (step 15: the `ctor` fact).
+   */
+  stored: string[];
 }
 
 /**
@@ -239,7 +249,13 @@ export function stateFacts(root: string): StateFacts {
       try { list = JSON.parse(f.e); } catch { list = [{ code: 'parse_error', message: String(f.e) }]; }
       for (const e of Array.isArray(list) ? list : [list]) if (isExtractionException(e)) exceptions.push(`${f.p}: ${String((e as { message?: unknown }).message ?? '')}`);
     }
-    return { nodes, exceptions: exceptions.sort(), sharedPlaces: sharedMatlabPlaces(d) };
+    const rows = (d.prepare(`SELECT r.file_path AS f, r.line AS l, r.col AS c, r.reference_kind AS k, r.reference_name AS n, n.qualified_name AS q, r.status AS s, r.candidates AS cs, r.name_tail AS t
+      FROM unresolved_refs r LEFT JOIN nodes n ON n.id = r.from_node_id WHERE r.language = 'matlab'`).all() as Array<Record<string, string | number | null>>)
+      .map((r) => `${r.f}:${r.l}:${r.c} ${r.k}:${r.n} from=${r.q ?? ''} ${r.s} ${r.cs ?? ''} ${r.t}`);
+    const edges = (d.prepare(`SELECT s.file_path AS f, e.line AS l, e.col AS c, s.qualified_name AS sq, e.kind AS k, t.qualified_name AS tq, t.file_path AS tf, e.metadata AS m, e.provenance AS p
+      FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target WHERE s.language = 'matlab'`).all() as Array<Record<string, string | number | null>>)
+      .map((e) => `${e.f}:${e.l}:${e.c} ${e.sq} -${e.k}-> ${e.tq} @ ${e.tf} ${e.m ?? ''} ${e.p ?? ''}`);
+    return { nodes, exceptions: exceptions.sort(), sharedPlaces: sharedMatlabPlaces(d), stored: [...rows, ...edges].sort() };
   } finally {
     db.close();
   }

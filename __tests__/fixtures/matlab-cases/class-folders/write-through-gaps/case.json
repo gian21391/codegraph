@@ -1,0 +1,30 @@
+{
+  "why": "Shapes the rules of rounds 4 to 7 hold, each MATLAB's answer (R2026a measured: `numel`, `size` give a double for an object whose class has no such method; concatenating objects of one class gives that class). `@Cel/g1.m`: `x = numel(x); x = size(x)` with `numel.m` and no `size.m` in `@Cel/` makes a double, so `sum(x)` is MATLAB's. `@Cel/g6.m`: the `if` branch writes `x = size(x)` and returns, so `sum(x)` sees only the Cel: `Cel::sum`. `@Gizmo/g8.m`: `obj = numel(obj)` (no `numel` in `@Gizmo/`) is a double, and `k = [obj]` with it, so `tidy(k)` is the root `tidy.m`. `use3.m`: `k = [(w)]`, `w` a Gizmo, keeps `k` a Gizmo. `use4.m`: `k = [qpk.Spool()]` keeps `k` a `qpk.Spool`. `use5.m`: `g = numel(g)` makes `g` a double, so `disp(g)` is MATLAB's, not `gadget::disp`.",
+  "truth": {
+    "edges": [
+      "@Cel/g6.m Cel::g6 -calls-> Cel::sum @ @Cel/sum.m",
+      "@Gizmo/g8.m Gizmo::g8 -calls-> tidy @ tidy.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use4.m use4 -calls-> qpk::Spool::tidy @ +qpk/Spool.m",
+      "use3.m use3 -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Cel/g1.m",
+        "to": "Cel::sum"
+      },
+      {
+        "from": "@Gizmo/g8.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "use3.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use5.m",
+        "to": "gadget::disp"
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "index": {
+    "edges": [
+      "use1.m use1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use1.m use1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use2.m use2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use2.m use2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use3.m use3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use3.m use3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use3.m use3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use4.m use4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use4.m use4 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use5.m use5 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use5.m use5 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use6.m use6 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use6.m use6 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use6.m use6 -instantiates-> Widget @ @Widget/Widget.m",
+      "use7.m use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use7.m use7 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use8.m use8 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use8.m use8 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

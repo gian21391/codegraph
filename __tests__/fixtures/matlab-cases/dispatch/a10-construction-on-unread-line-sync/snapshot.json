@@ -1,0 +1,31 @@
+{
+  "index": {
+    "edges": [
+      "u1.m u1 -calls-> zt @ zt.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "u3.m:2 calls:gadget"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "u1.m u1 -calls-> zt @ zt.m",
+        "u3.m u3 -calls-> gadget::disp @ @gadget/disp.m",
+        "u3.m u3 -instantiates-> gadget @ @gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "u1.m u1 -calls-> zt @ zt.m"
+      ],
+      "rows": [],
+      "dormant": [
+        "u3.m:2 calls:gadget"
+      ]
+    }
+  ]
+}

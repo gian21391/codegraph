@@ -11,11 +11,10 @@
   },
   "steps": [
     {
-      "edges": [
-        "main.m main -calls-> Robot::step @ @Robot/step.m"
-      ],
+      "edges": [],
       "rows": [
-        "main.m:2 calls:Robot"
+        "main.m:2 calls:Robot",
+        "main.m:3 calls:Robot::step"
       ],
       "dormant": [
         "@Robot/step.m:2 calls:Robot::Q"

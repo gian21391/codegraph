@@ -1,0 +1,72 @@
+{
+  "why": "MATLAB finds the same first file of a name for `f`, `f()` and `f(1)`; only what it does then differs (R2026a: a script first runs for `f` and `f()`, and `f(1)` errors). With no path, nearness stands in for path order (project rule, step 8). In `lib/t.m`, `lib/bin/lcz.m` (a MEX function's help, a stub) is nearer than `doc/help/lcz.m` (an empty file, a script by ruling 1), so all three forms of `lcz` link the stub. `lib/qq.m`, an empty script beside the caller, is nearer than the stub `other/bin/qq.m`: `qq` and `qq()` run the script, and `qq(1)` links nothing (a live row). (Review 2 finding 5.) The steps move the nearer file: the stubs' sides swap.",
+  "truth": {
+    "edges": [
+      "lib/t.m t -calls-> zt @ lib/zt.m",
+      "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m",
+      "lib/t.m t -calls-> lib/qq.m @ lib/qq.m"
+    ],
+    "rows": [
+      "lib/t.m:8 calls:qq"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/t.m",
+        "at": "doc/help/lcz.m"
+      },
+      {
+        "from": "lib/t.m",
+        "at": "other/bin/qq.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/bin/lcz.m": null,
+        "lib/lcz.m": ""
+      },
+      "truth": {
+        "edges": [
+          "lib/t.m t -calls-> lib/lcz.m @ lib/lcz.m"
+        ],
+        "rows": [
+          "lib/t.m:5 calls:lcz"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/t.m",
+            "at": "doc/help/lcz.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/qq.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/t.m t -calls-> other/bin/qq.m @ other/bin/qq.m"
+        ],
+        "noRows": [
+          "lib/t.m:8 calls:qq"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/lcz.m": null,
+        "lib/bin/lcz.m": "% LCZ  help for a MEX function\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/t.m t -calls-> lib/bin/lcz.m @ lib/bin/lcz.m"
+        ],
+        "noRows": [
+          "lib/t.m:5 calls:lcz"
+        ]
+      }
+    }
+  ]
+}

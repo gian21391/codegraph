@@ -1,0 +1,68 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> gadget @ gadget.m",
+      "use.m use -calls-> zt @ zt.m",
+      "use2.m use2 -calls-> zt @ zt.m"
+    ],
+    "rows": [
+      "use2.m:2 calls:gaDGet"
+    ],
+    "dormant": [
+      "use.m:3 calls:gadget::disp",
+      "use2.m:3 calls:gaDGet::disp"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "use.m use -calls-> gadget @ gadget.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use2.m use2 -calls-> zt @ zt.m"
+      ],
+      "rows": [
+        "use2.m:2 calls:gaDGet"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> gadget @ gadget.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use2.m use2 -calls-> zt @ zt.m"
+      ],
+      "rows": [
+        "use2.m:2 calls:gaDGet"
+      ],
+      "dormant": [
+        "use.m:3 calls:gadget::disp",
+        "use2.m:3 calls:gaDGet::disp"
+      ]
+    },
+    {
+      "edges": [
+        "use.m use -calls-> gadget @ gadget.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use2.m use2 -calls-> zt @ zt.m"
+      ],
+      "rows": [
+        "use2.m:2 calls:gaDGet"
+      ],
+      "dormant": [
+        "use.m:3 calls:gadget::disp",
+        "use2.m:3 calls:gaDGet::disp"
+      ]
+    },
+    {
+      "edges": [
+        "use.m use -calls-> gadget @ gadget.m",
+        "use.m use -calls-> zt @ zt.m",
+        "use2.m use2 -calls-> zt @ zt.m"
+      ],
+      "rows": [
+        "use2.m:2 calls:gaDGet"
+      ],
+      "dormant": []
+    }
+  ]
+}

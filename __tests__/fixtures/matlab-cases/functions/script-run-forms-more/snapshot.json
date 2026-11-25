@@ -1,0 +1,23 @@
+{
+  "index": {
+    "edges": [
+      "app/main.m cf -references-> app/probe.m @ app/probe.m",
+      "app/main.m fh -calls-> app/probe.m @ app/probe.m",
+      "app/main.m fh -references-> app/probe.m @ app/probe.m",
+      "app/main.m fh1 -references-> app/probe.m @ app/probe.m",
+      "app/main.m inif -calls-> app/probe.m @ app/probe.m",
+      "app/main.m main -calls-> zt @ lib/zt.m",
+      "app/main.m rn -calls-> app/probe.m @ app/probe.m",
+      "app/main.m sf -calls-> app/probe.m @ app/probe.m",
+      "app/main.m sf -references-> app/probe.m @ app/probe.m",
+      "app/main.m sf1 -references-> app/probe.m @ app/probe.m",
+      "app/main.m sp -calls-> app/probe.m @ app/probe.m"
+    ],
+    "rows": [
+      "app/main.m:14 calls:probe",
+      "app/main.m:25 calls:probe",
+      "app/main.m:31 calls:probe"
+    ],
+    "dormant": []
+  }
+}

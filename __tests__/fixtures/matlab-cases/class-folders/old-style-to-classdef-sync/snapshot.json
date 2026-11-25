@@ -5,9 +5,7 @@
       "use.m use -instantiates-> Poly @ @Poly/Poly.m"
     ],
     "rows": [],
-    "dormant": [
-      "@Poly/Poly.m:3 calls:Poly::class"
-    ]
+    "dormant": []
   },
   "steps": [
     {
@@ -24,9 +22,7 @@
         "use.m use -instantiates-> Poly @ @Poly/Poly.m"
       ],
       "rows": [],
-      "dormant": [
-        "@Poly/Poly.m:3 calls:Poly::class"
-      ]
+      "dormant": []
     }
   ]
 }

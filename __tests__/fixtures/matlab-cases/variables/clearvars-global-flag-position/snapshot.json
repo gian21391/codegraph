@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "m1.m m1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "m1.m m1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "m1.m m1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "m2.m m2 -calls-> tidy @ tidy.m",
+      "m2.m m2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

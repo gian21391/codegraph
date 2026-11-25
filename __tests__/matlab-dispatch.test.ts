@@ -1343,12 +1343,12 @@ describe('MATLAB call in function syntax on an object the code does not type (st
 
   it('dispatches on an element or a copy of the method\'s own object, and on it after a number (E1): exact edges', async () => {
     expect(refs('Seg.m', SEG).filter((r) => /isfixed|scaled|numel/.test(r))).toEqual([
-      // On the method's own object as it is: dispatched before this step too.
-      '5 calls:Seg::numel [dispatch:numel]',
-      '7 calls:Seg::isfixed [dispatch:isfixed]',
-      '10 calls:Seg::isfixed [dispatch:isfixed]',
-      '12 calls:Seg::isfixed [dispatch:isfixed]',
-      '12 calls:Seg::scaled [dispatch:scaled]',
+      // On the method's own object as it is: dispatched before this step too (`selfArg`: the class is the caller's own).
+      '5 calls:Seg::numel [dispatch:numel,selfArg]',
+      '7 calls:Seg::isfixed [dispatch:isfixed,selfArg]',
+      '10 calls:Seg::isfixed [dispatch:isfixed,selfArg]',
+      '12 calls:Seg::isfixed [dispatch:isfixed,selfArg]',
+      '12 calls:Seg::scaled [dispatch:scaled,selfArg]',
       // A copy written twice, once a number: nothing said of it, and no object either.
       '15 calls:isfixed',
       // A built-in's name stays the built-in's call.

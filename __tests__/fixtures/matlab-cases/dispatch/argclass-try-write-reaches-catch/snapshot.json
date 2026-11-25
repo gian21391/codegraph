@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "tc.m tc -calls-> tidy @ tidy.m",
+      "tc.m tc -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

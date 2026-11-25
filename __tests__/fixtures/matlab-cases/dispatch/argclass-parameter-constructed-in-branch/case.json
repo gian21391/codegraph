@@ -1,0 +1,15 @@
+{
+  "why": "`g` is a parameter: it holds the caller's value on entry, and `if c, g = gadget(); end` replaces it on one path only, so `tidy(g)` may get anything (project rule, step 15 A2: a class is stated only when a construction reaches the call on every path; MATLAB doc 'Method Invocation'). The plain call: `tidy.m`.",
+  "truth": {
+    "edges": [
+      "pb.m pb -instantiates-> gadget @ @gadget/gadget.m",
+      "pb.m pb -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "pb.m",
+        "at": "@gadget/tidy.m"
+      }
+    ]
+  }
+}

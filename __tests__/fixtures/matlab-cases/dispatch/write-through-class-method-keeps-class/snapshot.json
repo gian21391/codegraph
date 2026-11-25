@@ -1,0 +1,42 @@
+{
+  "index": {
+    "edges": [
+      "@Bare/isodd.m Bare::isodd -calls-> Bare::peek @ @Bare/peek.m",
+      "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m",
+      "@Fil/isodd.m Fil::isodd -calls-> Fil::peek @ @Fil/peek.m",
+      "@Fil/isodd.m Fil::isodd -calls-> Fil::reshape @ @Fil/reshape.m",
+      "Kid.m Kid -extends-> Pak @ Pak.m",
+      "use1.m use1 -calls-> Cel::tidy @ @Cel/tidy.m",
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use1.m use1 -instantiates-> Cel @ @Cel/Cel.m",
+      "use2.m use2 -calls-> tidy @ tidy.m",
+      "use2.m use2 -instantiates-> Bare @ @Bare/Bare.m",
+      "use3.m use3 -calls-> Pak::peek @ Pak.m",
+      "use3.m use3 -calls-> Pak::reshape @ Pak.m",
+      "use3.m use3 -instantiates-> Pak @ Pak.m",
+      "use4.m use4 -calls-> Pak::peek @ Pak.m",
+      "use4.m use4 -calls-> Pak::reshape @ Pak.m",
+      "use4.m use4 -instantiates-> Kid @ Kid.m",
+      "use5.m use5 -calls-> Plain::peek @ Plain.m",
+      "use5.m use5 -instantiates-> Plain @ Plain.m",
+      "use6.m use6 -calls-> Pak::peek @ Pak.m",
+      "use6.m use6 -calls-> Pak::size @ Pak.m",
+      "use6.m use6 -instantiates-> Pak @ Pak.m",
+      "use7.m use7 -calls-> Pak::peek @ Pak.m",
+      "use7.m use7 -calls-> Pak::size @ Pak.m",
+      "use7.m use7 -instantiates-> Kid @ Kid.m",
+      "use8.m use8 -instantiates-> Plain @ Plain.m"
+    ],
+    "rows": [
+      "@Bare/all.m:3 calls:Bare::sum",
+      "@Bare/isodd.m:2 calls:Bare::reshape",
+      "use5.m:3 calls:Plain::reshape",
+      "use8.m:3 calls:Plain::size",
+      "use8.m:4 calls:Plain::peek"
+    ],
+    "dormant": [
+      "@Bare/all.m:2 calls:Bare::numel",
+      "use2.m:3 calls:Bare::numel"
+    ]
+  }
+}

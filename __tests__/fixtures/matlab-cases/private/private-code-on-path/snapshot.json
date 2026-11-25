@@ -6,8 +6,6 @@
       "lib1/@Pt/private/helper.m:2 calls:onlyold",
       "lib1/private/phelper.m:2 calls:onlyold"
     ],
-    "dormant": [
-      "lib1/@Pt/Pt.m:3 calls:Pt::class"
-    ]
+    "dormant": []
   }
 }

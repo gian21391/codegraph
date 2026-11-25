@@ -1,0 +1,15 @@
+{
+  "why": "Inside a class folder's method file, a call of the file's own name on an object of another class runs MATLAB's function (MATLAB R2026a: `size(w)` in `@Qa/size.m` on another class's object runs MATLAB's `size`): `k = numel(k)` in `@Gizmo/numel.m` with `k` a Widget is MATLAB's `numel`, a double (no `numel` in `@Widget/`), so `tidy(k)` is the root `tidy.m`.",
+  "truth": {
+    "edges": [
+      "@Gizmo/numel.m Gizmo::numel -calls-> zt @ zt.m",
+      "@Gizmo/numel.m Gizmo::numel -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/numel.m",
+        "to": "Widget::tidy"
+      }
+    ]
+  }
+}

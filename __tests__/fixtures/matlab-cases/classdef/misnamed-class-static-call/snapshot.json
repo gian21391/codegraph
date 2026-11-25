@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "rows": [
+      "use.m:2 calls:Gadget::go"
+    ],
+    "dormant": []
+  }
+}

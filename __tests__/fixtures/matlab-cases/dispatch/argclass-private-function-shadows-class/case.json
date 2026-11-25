@@ -1,0 +1,15 @@
+{
+  "why": "`gadget()` in `app/use.m` calls `app/private/gadget.m` (private functions before class constructors: MATLAB doc 'Function Precedence Order'), so `g` is a struct and `tidy(g)` calls `lib/tidy.m`, not `lib/@gadget/tidy.m` (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "app/use.m use -calls-> tidy @ lib/tidy.m",
+      "app/use.m use -calls-> gadget @ app/private/gadget.m"
+    ],
+    "noEdges": [
+      {
+        "from": "app/use.m",
+        "at": "lib/@gadget/tidy.m"
+      }
+    ]
+  }
+}

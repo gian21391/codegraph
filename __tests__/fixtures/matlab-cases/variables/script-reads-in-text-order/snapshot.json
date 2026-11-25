@@ -2,6 +2,7 @@
   "index": {
     "edges": [],
     "rows": [
+      "s.m:1 calls:helperT",
       "t.m:1 calls:helperT"
     ],
     "dormant": []

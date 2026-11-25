@@ -1,0 +1,54 @@
+{
+  "why": "A concatenation without the variable itself among its elements keeps its class `C` when at least one element holds a `C` and no element is known to hold an object of another class (step 15 round 7b ruling). MATLAB R2026a gives one of three: an array of `C`, the class's own `horzcat` run (project rule: it gives the object back), or an error (`[k, 5]`, `[5, k]` and `[k, w]` with `w` of another class, measured for a classdef and an old-style class), past which no later call is reached. So `k = [a, 5]` with `a` a `Gizmo` keeps `tidy(k)` the class's, as its transpose does; `[a, b]` with `b` a `Widget` holds two known classes and gives none, so `tidy(k)` is the plain `tidy`; so does `[[a, b], a]`, an element that holds two, and `[a, zpk.Wdg()]`, a package's class constructed; so is `[]'`, an empty double, and `[5, 6]'`, no object at all.",
+  "truth": {
+    "edges": [
+      "c1.m c1 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c3.m c3 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c5.m c5 -calls-> Gizmo::tidy @ Gizmo.m",
+      "c2.m c2 -calls-> tidy @ tidy.m",
+      "c4.m c4 -calls-> tidy @ tidy.m",
+      "c6.m c6 -calls-> tidy @ tidy.m",
+      "c7.m c7 -calls-> tidy @ tidy.m",
+      "c8.m c8 -calls-> tidy @ tidy.m",
+      "c9.m c9 -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "c1.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "c3.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "c5.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "c2.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "c4.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "c6.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "c7.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "c8.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "c9.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "why": "`g = gadget` on a line that also holds text the parser could not read (`y = (1 +;`) is no construction the index reads (project rule: a name on such a line is not read, see inUnreadText), so `disp(g)` is MATLAB's own call, which the index drops, before and after a class `gadget` with a `disp` method comes in a sync and goes: the sync finds the files that construct a class of the name by the constructions they store (step 15 round 7, the ctor fact), and this one stores none, so it must end where a fresh index ends. `g = gadget` on a line of its own, with the unread text on the next, is read, and its `disp(g)` is the class's while the class is there.",
+  "truth": {
+    "edges": [
+      "u1.m u1 -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "u1.m",
+        "to": "gadget::disp"
+      },
+      {
+        "from": "u3.m",
+        "to": "gadget::disp"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "@gadget/gadget.m": "function obj = gadget(varargin)\nobj = class(struct('n', 0), 'gadget');\nend\n",
+        "@gadget/disp.m": "function disp(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "u3.m u3 -calls-> gadget::disp @ @gadget/disp.m"
+        ],
+        "noEdges": [
+          {
+            "from": "u1.m",
+            "to": "gadget::disp"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "@gadget/gadget.m": null,
+        "@gadget/disp.m": null
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "u1.m",
+            "to": "gadget::disp"
+          },
+          {
+            "from": "u3.m",
+            "to": "gadget::disp"
+          }
+        ]
+      }
+    }
+  ]
+}

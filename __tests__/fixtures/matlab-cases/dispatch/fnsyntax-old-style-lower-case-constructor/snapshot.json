@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "kettle.m kettle -calls-> brew @ brew.m",
+      "kettle.m kettle -calls-> plume::settle @ @plume/settle.m",
+      "kettle.m kettle -calls-> settle @ settle.m",
+      "kettle.m kettle -instantiates-> plume @ @plume/plume.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

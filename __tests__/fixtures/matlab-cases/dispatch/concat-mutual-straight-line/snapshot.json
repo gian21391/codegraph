@@ -1,0 +1,17 @@
+{
+  "index": {
+    "edges": [
+      "use7.m use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use7.m use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use7.m use7 -calls-> zt @ zt.m",
+      "use7.m use7 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use7.m use7 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use8.m use8 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use8.m use8 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use8.m use8 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "use8.m use8 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

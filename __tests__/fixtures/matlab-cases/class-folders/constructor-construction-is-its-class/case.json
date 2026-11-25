@@ -1,0 +1,15 @@
+{
+  "why": "Inside the old-style constructor `@gadget/gadget.m`, `other = gadget();` calls the constructor itself (its folder's class: MATLAB doc 'Class Folders'), so `tidy(other)` dispatches to `@gadget/tidy.m`.",
+  "truth": {
+    "edges": [
+      "@gadget/gadget.m gadget::gadget -calls-> gadget::tidy @ @gadget/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@gadget/gadget.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

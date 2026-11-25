@@ -9,7 +9,7 @@
   "steps": [
     {
       "edges": [
-        "main.m main -calls-> sub/prep.m @ sub/prep.m"
+        "main.m main -calls-> prep.m @ prep.m"
       ],
       "rows": [],
       "dormant": []

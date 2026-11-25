@@ -1,0 +1,2 @@
+function spin(obj)
+end

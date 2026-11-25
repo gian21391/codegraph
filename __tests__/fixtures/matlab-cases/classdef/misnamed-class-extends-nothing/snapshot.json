@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "Basin.m Basin::go -calls-> Basin::step @ Basin.m",
+      "Basin.m Basin::step -calls-> Sprocket::step @ Sprocket.m",
+      "Sprocket.m Sprocket -extends-> Basin @ Basin.m"
+    ],
+    "rows": [
+      "gadget.m:1 extends:Basin"
+    ],
+    "dormant": []
+  }
+}

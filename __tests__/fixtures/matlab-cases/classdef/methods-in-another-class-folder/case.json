@@ -1,0 +1,17 @@
+{
+  "why": "A class folder holds its class's methods (MATLAB doc 'Class Folders', 'Methods in Separate Files'). A classdef class's methods are those of its own folder: `extra/@crate/fluff.m` is no method of the class `lib/@crate/crate.m`, so `fluff(c)` reaches nothing and stays a live row. An old-style class's methods are the functions of every `@plume` folder on the path (the legacy class model, which built-in types' class folders such as `@double` still follow; project rule since step 15), so `fluff(p)` on a `plume` calls `extra/@plume/fluff.m`, a folder that holds no constructor of its own.",
+  "truth": {
+    "edges": [
+      "kettle.m kettle -calls-> plume::fluff @ extra/@plume/fluff.m"
+    ],
+    "rows": [
+      "kettle.m:5 calls:fluff"
+    ],
+    "noEdges": [
+      {
+        "from": "kettle.m",
+        "at": "extra/@crate/fluff.m"
+      }
+    ]
+  }
+}

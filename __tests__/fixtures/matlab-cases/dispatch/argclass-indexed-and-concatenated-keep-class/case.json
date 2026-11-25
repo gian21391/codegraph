@@ -1,0 +1,44 @@
+{
+  "why": "MATLAB doc 'Object Arrays' and 'Concatenating Objects': indexing an object array with parentheses gives an array of its class (`k = k(1)`, `k = k(2:end)`), and concatenating objects of one class gives that class (`[k, Gizmo()]`, `[k; k]`), so `tidy(k)` dispatches to `Gizmo::tidy` (doc 'Method Invocation'), and `g = g(1)` keeps a `gadget`. Not so `k = k{1}` and `k = k.prop` (what a cell or a property holds is not stated: no class) nor `k = []` (a double): `tidy(k)` calls `tidy.m` there. (Review 2 finding 1, extended.)",
+  "truth": {
+    "edges": [
+      "idx.m idx -calls-> Gizmo::tidy @ Gizmo.m",
+      "rng.m rng -calls-> Gizmo::tidy @ Gizmo.m",
+      "cct.m cct -calls-> Gizmo::tidy @ Gizmo.m",
+      "vct.m vct -calls-> Gizmo::tidy @ Gizmo.m",
+      "oidx.m oidx -calls-> gadget::tidy @ @gadget/tidy.m",
+      "brc.m brc -calls-> tidy @ tidy.m",
+      "prp.m prp -calls-> tidy @ tidy.m",
+      "emp.m emp -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "idx.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "cct.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "oidx.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "brc.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "prp.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      },
+      {
+        "from": "emp.m",
+        "to": "tidy",
+        "at": "Gizmo.m"
+      }
+    ]
+  }
+}

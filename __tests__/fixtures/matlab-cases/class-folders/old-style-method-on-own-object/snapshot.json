@@ -4,8 +4,6 @@
       "@Poly/show.m Poly::show -calls-> Poly::value @ @Poly/value.m"
     ],
     "rows": [],
-    "dormant": [
-      "@Poly/Poly.m:3 calls:Poly::class"
-    ]
+    "dormant": []
   }
 }

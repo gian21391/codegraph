@@ -1,5 +1,5 @@
 {
-  "why": "A statement naming a script runs it; a call with arguments takes only a function (a script takes none: MATLAB doc 'Scripts vs. Functions', 'eval'; the case functions/script-vs-function-with-args). The statement takes the nearest file of the name, script or function, and a call with arguments the nearest function (project rule, the case functions/script-vs-function-with-args). The text `f; f(2); f(3);` holds three references of `f`, each placed where its name is written in the literal (project rule, step 14). So with a farther function `f.m` added the calls go to it and the statement stays on the script; with the script gone the statement goes to the function too; with the script back the statement runs it again: a real call, which a sync must not hide; and each step must end where a fresh index ends, counts included (project rule). Until step 14 the three were written where the text starts, and a sync lost the statement's reference once its edge met another's (found by the step 14 review).",
+  "why": "A statement naming a script runs it, and takes the nearest file of the name, script or function (MATLAB doc 'Scripts vs. Functions', 'eval'). MATLAB runs the first file of a name it finds on the path, and a call of any form but a statement that finds a script first is an error ('Attempt to execute SCRIPT … as a function'; MATLAB doc 'Scripts vs. Functions', 'Function Precedence Order'), not a call of a farther function: it links nowhere and stays a live row (the user's ruling (step 15); matlab-resolution.test.ts 'takes the nearest file of the name, script or function; a call with arguments that finds a script first reaches nothing'). The text `f; f(2); f(3);` holds three references of `f`, each placed where its name is written in the literal (project rule, step 14). So with a farther function `f.m` added, the statement stays on the script `lib/f.m` and the calls with arguments, which find that script first, link nowhere; with the script gone all three go to the function; with the script back the statement runs it again and the calls link nowhere again: the statement is a real call, which a sync must not hide; and each step must end where a fresh index ends, counts included (project rule). Until step 14 the three were written where the text starts, and a sync lost the statement's reference once its edge met another's (found by the step 14 review).",
   "truth": {
     "edges": [
       "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
@@ -15,13 +15,16 @@
       },
       "truth": {
         "edges": [
-          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m",
-          "lib/caller.m caller -calls-> f @ f.m"
+          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
         ],
-        "noRows": [
+        "rows": [
+          "lib/caller.m:2 calls:f"
+        ],
+        "noEdges": [
           {
-            "file": "lib/caller.m",
-            "name": "f"
+            "from": "lib/caller.m",
+            "to": "f",
+            "at": "f.m"
           }
         ]
       }
@@ -48,8 +51,17 @@
       },
       "truth": {
         "edges": [
-          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m",
-          "lib/caller.m caller -calls-> f @ f.m"
+          "lib/caller.m caller -calls-> lib/f.m @ lib/f.m"
+        ],
+        "rows": [
+          "lib/caller.m:2 calls:f"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/caller.m",
+            "to": "f",
+            "at": "f.m"
+          }
         ]
       }
     },

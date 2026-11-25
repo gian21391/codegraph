@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> Bolt::tidy @ @Bolt/tidy.m",
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> zt @ zt.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

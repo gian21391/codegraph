@@ -1,0 +1,31 @@
+{
+  "index": {
+    "edges": [
+      "u1.m u1 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u1.m u1 -instantiates-> Gizmo @ Gizmo.m",
+      "u2.m u2 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u2.m u2 -instantiates-> Gizmo @ Gizmo.m",
+      "u3.m u3 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u3.m u3 -instantiates-> Gizmo @ Gizmo.m",
+      "u4.m u4 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u4.m u4 -instantiates-> Gizmo @ Gizmo.m",
+      "u5.m u5 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u5.m u5 -instantiates-> Gizmo @ Gizmo.m",
+      "u5.m u5 -instantiates-> Gizmo @ Gizmo.m",
+      "u6.m u6 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u6.m u6 -calls-> zt @ zt.m",
+      "u6.m u6 -instantiates-> Gizmo @ Gizmo.m",
+      "u7.m u7 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u7.m u7 -instantiates-> Gizmo @ Gizmo.m",
+      "u8.m u8 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u8.m u8 -instantiates-> Gizmo @ Gizmo.m",
+      "u9.m u9 -calls-> Gizmo::tidy @ Gizmo.m",
+      "u9.m u9 -instantiates-> Gizmo @ Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "u1.m:3 calls:Gizmo::sort",
+      "u6.m:4 calls:Gizmo::numel"
+    ]
+  }
+}

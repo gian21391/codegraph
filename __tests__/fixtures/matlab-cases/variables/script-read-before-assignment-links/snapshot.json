@@ -1,6 +1,7 @@
 {
   "index": {
     "edges": [
+      "s.m s.m -calls-> helperT @ helperT.m",
       "t.m t.m -calls-> helperT @ helperT.m"
     ],
     "rows": [],

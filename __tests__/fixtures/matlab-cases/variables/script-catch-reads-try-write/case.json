@@ -1,0 +1,14 @@
+{
+  "why": "`zq = 1;` runs, then `error` sends control to the `catch` clause, where `zq` is the script's variable: `zq(2)` indexes it (MATLAB doc 'try, catch': the catch block runs after the statement that errs, and what the try block ran before it stays). It is also after the write in text order (the user's ruling, step 11). No call of `zq.m` (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "run1.m run1.m -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "run1.m",
+        "at": "zq.m"
+      }
+    ]
+  }
+}

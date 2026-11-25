@@ -3,9 +3,7 @@
     "edges": [
       "tools/widget.m widget -extends-> Mid @ Mid.m"
     ],
-    "rows": [
-      "tools/Gadget.m:3 calls:pkg::Base::run"
-    ],
+    "rows": [],
     "dormant": [
       "tools/Gadget.m:4 calls:a::data",
       "tools/Gadget.m:4 calls:pkg::Base"
@@ -15,7 +13,6 @@
     {
       "edges": [
         "+pkg/Base.m pkg::Base -extends-> widget @ tools/widget.m",
-        "tools/Gadget.m disp -calls-> Mid::run @ @Mid/Mid.m",
         "tools/Gadget.m disp -instantiates-> pkg::Base @ +pkg/Base.m",
         "tools/widget.m widget -extends-> Mid @ Mid.m"
       ],

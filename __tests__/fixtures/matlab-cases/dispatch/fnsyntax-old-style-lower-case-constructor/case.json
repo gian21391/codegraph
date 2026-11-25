@@ -1,0 +1,10 @@
+{
+  "why": "An old-style class is an `@plume` folder whose `plume.m` is a constructor function (`class(s, 'plume')`), named in lower case as such classes usually are. `settle(p)` after `p = plume();` dispatches to its method `@plume/settle.m`, ahead of the function `settle.m` on the path (MATLAB doc 'Function Precedence Order': a method of an argument's class first). The anchor: `settle(q)` after `q = brew();`, a function's value, calls the function `settle.m` (`brew` is no class, so no method of it).",
+  "truth": {
+    "edges": [
+      "kettle.m kettle -calls-> plume::settle @ @plume/settle.m",
+      "kettle.m kettle -calls-> settle @ settle.m",
+      "kettle.m kettle -calls-> brew @ brew.m"
+    ]
+  }
+}

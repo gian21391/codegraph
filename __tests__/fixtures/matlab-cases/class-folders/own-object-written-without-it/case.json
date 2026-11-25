@@ -1,0 +1,33 @@
+{
+  "why": "Review 5 finding 3 (step 15 round 8 ruling): the update idiom (a call that gives back what it is passed) needs the object passed, so in a method of `@Gizmo` a write whose right side does not hold the own object ends it, but a construction of the class or a copy (another variable, an element of one, `varargin{…}`): `obj = zt(3)` (a project function returning its argument, a double), `obj = zeros(2)`, `obj = num2str(5)` (a char), `obj = -1` (a unary minus over a literal is a literal) leave a double or a char, and `tidy(obj)` is the plain `tidy` (doc 'Function Precedence Order'). `obj = zt(obj)` passes it (project rule: Gizmo::tidy); so does `obj = w(2)` copy an element of another variable `w` holding the object, and `obj = varargin{1}` (the copy idiom). `obj = Widget(obj.n)`, a construction of another class that is not passed the object itself, makes a `Widget` (doc 'Class Constructor Methods'): `Widget::tidy`.",
+  "truth": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> tidy @ tidy.m",
+      "@Gizmo/use2.m Gizmo::use2 -calls-> tidy @ tidy.m",
+      "@Gizmo/use3.m Gizmo::use3 -calls-> tidy @ tidy.m",
+      "@Gizmo/use4.m Gizmo::use4 -calls-> tidy @ tidy.m",
+      "@Gizmo/use5.m Gizmo::use5 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use6.m Gizmo::use6 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use7.m Gizmo::use7 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/use8.m Gizmo::use8 -calls-> Widget::tidy @ Widget.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/use1.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use2.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use3.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use4.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  }
+}

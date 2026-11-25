@@ -1,0 +1,62 @@
+{
+  "why": "`tidy(g)` after `g = gadget();` in `app/use.m` dispatches to `lib/@gadget/tidy.m` while `gadget()` reaches the class (MATLAB doc 'Method Invocation'); a private `app/private/gadget.m` added comes before the class (MATLAB doc 'Function Precedence Order': private functions before class constructors), so `g` is a struct and `tidy(g)` calls `lib/tidy.m`; it deleted, the class's method again; a script there blocks the constructor (the user's ruling, step 15: a call with arguments that finds a script first reaches nothing), and help text only (a stub, after every function: step 8) does not. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "app/use.m use -calls-> gadget::tidy @ lib/@gadget/tidy.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/private/gadget.m": "function s = gadget()\ns = struct('n', 1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> tidy @ lib/tidy.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/use.m",
+            "at": "lib/@gadget/tidy.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/private/gadget.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> gadget::tidy @ lib/@gadget/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/private/gadget.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> tidy @ lib/tidy.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/use.m",
+            "at": "lib/@gadget/tidy.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/private/gadget.m": "% GADGET  help text only\n"
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> gadget::tidy @ lib/@gadget/tidy.m"
+        ]
+      }
+    }
+  ]
+}

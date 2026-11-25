@@ -1,0 +1,2 @@
+g = gadget(:);
+disp(g);

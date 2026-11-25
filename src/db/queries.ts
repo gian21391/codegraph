@@ -5257,6 +5257,138 @@ export class QueryBuilder {
   }
 
   /**
+   * The MATLAB rows, failed or dormant, of a call recorded under a dispatch
+   * name that carries the `argClass` fact (`gadget::disp` for `disp(g)` after
+   * `g = gadget();`: see isMatlabBuiltinDispatchCall in
+   * ../resolution/matlab-failures), as references to judge. One scan of the
+   * MATLAB call rows; the caller keeps the ones of the names it asks about.
+   * `pending`: pending ones too (a carrier step's own wake puts rows back to
+   * pending before it writes a file's rows again: see runMatlabCarrierStep).
+   */
+  /**
+   * The constructions an on-object call was read on (the `ctor` fact: see
+   * ctorRefs in ../extraction/languages/matlab) of MATLAB files whose name,
+   * or its last segment after `::` (`Cls::gadget` for `gadget(obj)`),
+   * lowered, is one of `keys`, with their files and the names written: every
+   * row of one, of any status, and every call edge from a MATLAB node into a
+   * MATLAB node of the name, or a `.m` file's of it (`gadget.m`), lowered,
+   * with the edge's `refName` (or, with none, the target's name). A scan of
+   * the MATLAB rows, and a probe of idx_nodes_lower_name for the edges.
+   */
+  getMatlabCallsOfLowerNames(keys: Iterable<string>): Array<{ filePath: string; name: string }> {
+    const unique = [...new Set([...keys].map((k) => k.toLowerCase()))];
+    if (unique.length === 0) return [];
+    const json = JSON.stringify(unique);
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT r.file_path AS file_path, r.reference_name AS name FROM unresolved_refs r
+          WHERE r.language = 'matlab' AND r.reference_kind = 'calls' AND r.candidates LIKE '%"ctor"%'
+            AND EXISTS (SELECT 1 FROM json_each(?) k
+                         WHERE lower(r.reference_name) = k.value OR substr(lower(r.reference_name), -length(k.value) - 2) = '::' || k.value)`
+      )
+      .all(json) as Array<{ file_path: string; name: string }>;
+    const targets = JSON.stringify([...unique, ...unique.map((k) => `${k}.m`)]);
+    const edges = this.db
+      .prepare(
+        `SELECT DISTINCT src.file_path AS file_path,
+                COALESCE(CASE WHEN json_valid(e.metadata) THEN json_extract(e.metadata, '$.refName') END, tgt.name) AS name
+           FROM nodes tgt
+           JOIN edges e ON e.target = tgt.id AND e.kind = 'calls'
+           JOIN nodes src ON src.id = e.source
+          WHERE lower(tgt.name) IN (SELECT value FROM json_each(?)) AND tgt.language = 'matlab' AND src.language = 'matlab'
+            AND e.metadata LIKE '%"ctor"%'`
+      )
+      .all(targets) as Array<{ file_path: string; name: unknown }>;
+    return [...rows, ...edges].map((r) => ({ filePath: r.file_path, name: String(r.name) }));
+  }
+
+  /**
+   * The names a MATLAB class may hold a method under: of every MATLAB method
+   * node (a classdef's, and a class folder's method file: `@C/f.m`) and class
+   * node. (A function of a class folder's `private/` is no method: a call
+   * takes `Cls::f` only through one.) A probe of idx_nodes_kind (`+language`
+   * keeps the planner off idx_nodes_language, every MATLAB node).
+   */
+  getMatlabClassMemberNames(): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT name FROM nodes WHERE kind IN ('method', 'class') AND +language = 'matlab'`)
+      .all() as Array<{ name: string }>;
+    return rows.map((r) => r.name);
+  }
+
+  /**
+   * The MATLAB calls of one of `names`, failed rows and resolution edges,
+   * whose candidates carry a fact with `tag` (`"keptBy:` …: see the keptBy
+   * fact in ../extraction/languages/matlab-ref-facts), as references to judge
+   * and edges to resurrect: the rows by their name's tail
+   * (idx_unresolved_failed_tail), the edges by their target's name, or a
+   * file's (`f.m`: a script or a stub), through idx_nodes_name and
+   * idx_edges_target_kind; the caller keeps the facts it asks about.
+   */
+  getMatlabCallsWithCandidateNamed(tag: string, names: Iterable<string>): {
+    rows: MatlabCallRow[];
+    edges: Array<Edge & { edgeId: number; sourceFilePath: string; sourceLanguage: Language }>;
+  } {
+    const unique = [...new Set(names)];
+    if (unique.length === 0) return { rows: [], edges: [] };
+    const like = `%"${tag}%`;
+    const rows = (this.db
+      .prepare(
+        `SELECT * FROM unresolved_refs
+          WHERE status = 'failed' AND name_tail IN (SELECT value FROM json_each(?))
+            AND language = 'matlab' AND reference_kind IN ('calls', 'function_ref') AND candidates LIKE ?`
+      )
+      .all(JSON.stringify(unique), like) as UnresolvedRefRow[]).map(matlabCallRow);
+    const edgeRows = this.db
+      .prepare(
+        `SELECT e.*, src.file_path AS source_file_path, src.language AS source_language
+           FROM nodes tgt
+           JOIN edges e ON e.target = tgt.id
+           JOIN nodes src ON src.id = e.source
+          WHERE tgt.name IN (SELECT value FROM json_each(?)) AND tgt.language = 'matlab'
+            AND e.metadata LIKE ? AND src.language = 'matlab' AND ${RESOLUTION_EDGE_SQL}`
+      )
+      .all(JSON.stringify([...unique, ...unique.map((n) => `${n}.m`)]), like) as Array<EdgeRow & { source_file_path: string; source_language: Language }>;
+    const edges = edgeRows.map((row) => ({ ...rowToEdge(row), edgeId: row.id, sourceFilePath: row.source_file_path, sourceLanguage: row.source_language }));
+    return { rows, edges };
+  }
+
+  getMatlabArgClassDispatchRows(pending = false): MatlabCallRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM unresolved_refs
+          WHERE status IN ('failed', '${DORMANT_REF_STATUS}'${pending ? ", 'pending'" : ''}) AND language = 'matlab' AND reference_kind = 'calls'
+            AND instr(reference_name, '::') > 0 AND candidates LIKE '%"argClass:%'`
+      )
+      .all() as UnresolvedRefRow[];
+    return rows.map(matlabCallRow);
+  }
+
+  /**
+   * Of `keys`, lowered names, the ones a MATLAB class or enum is named (in
+   * any case), with the files holding one. (A file whose text was read as no
+   * MATLAB code holds its file node alone, never a class: see
+   * NodeFilter.readable.) Chunked probe over idx_nodes_lower_name.
+   */
+  getMatlabClassFilesByLowerName(keys: Iterable<string>): Map<string, Set<string>> {
+    const unique = [...new Set(keys)];
+    const found = new Map<string, Set<string>>();
+    for (let i = 0; i < unique.length; i += SQLITE_PARAM_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
+      const rows = this.db
+        .prepare(`SELECT DISTINCT lower(name) AS k, file_path FROM nodes
+                   WHERE lower(name) IN (${chunk.map(() => 'lower(?)').join(',')}) AND kind IN ('class', 'enum') AND language = 'matlab'`)
+        .all(...chunk) as Array<{ k: string; file_path: string }>;
+      for (const row of rows) {
+        const files = found.get(row.k);
+        if (files) files.add(row.file_path);
+        else found.set(row.k, new Set([row.file_path]));
+      }
+    }
+    return found;
+  }
+
+  /**
    * Dormant rows back to pending, for the sync's sweep to resolve, with the
    * empty tail of a row never attempted; and failed rows to dormant (see
    * DORMANT_REF_STATUS), keeping their tail. By id; returns the rows changed.
@@ -5780,20 +5912,20 @@ export class QueryBuilder {
   }
 
   /**
-   * The names of the MATLAB methods whose qualified name is `qualifiedName`
-   * and one more segment (`Mid::step` for `Mid`), in any file: every copy of
-   * the class, its classdef files and class folders alike. One range of
-   * idx_nodes_qualified_name (`Mid::` up to `Mid:;`, ';' follows ':').
+   * The MATLAB methods whose qualified name is `qualifiedName` and one more
+   * segment (`Mid::step` for `Mid`), in any file, by name and file: every
+   * copy of the class, its classdef files and class folders alike. One range
+   * of idx_nodes_qualified_name (`Mid::` up to `Mid:;`, ';' follows ':').
    */
-  getMatlabMethodNamesOfClass(qualifiedName: string): string[] {
+  getMatlabMethodsOfClass(qualifiedName: string): Array<{ name: string; filePath: string }> {
     const prefix = `${qualifiedName}::`;
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT name, qualified_name FROM nodes
+        `SELECT DISTINCT name, qualified_name, file_path FROM nodes
           WHERE qualified_name >= ? AND qualified_name < ? AND kind = 'method' AND language = 'matlab'`
       )
-      .all(prefix, `${qualifiedName}:;`) as Array<{ name: string; qualified_name: string }>;
-    return rows.filter((r) => r.qualified_name === prefix + r.name).map((r) => r.name);
+      .all(prefix, `${qualifiedName}:;`) as Array<{ name: string; qualified_name: string; file_path: string }>;
+    return rows.filter((r) => r.qualified_name === prefix + r.name).map((r) => ({ name: r.name, filePath: r.file_path }));
   }
 
   /**

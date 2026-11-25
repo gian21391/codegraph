@@ -1,0 +1,20 @@
+{
+  "why": "`clear zr` and `clearvars zs` remove the variable, so the later `zr(3)` / `zs(3)` in `run1.m` call the functions (MATLAB doc 'clear', 'Function Precedence Order'; text order: the user's ruling, step 11), and in `use.m` `clear zl` removes what the `load` may have made, so `zl(2)` calls `zl.m`. `clear zq*` keeps `zp` and `clearvars -except zw` keeps `zw` (doc 'clear', 'clearvars'): both still index the variable, no call (a pattern or `-except` may keep any one name: project rule).",
+  "truth": {
+    "edges": [
+      "run1.m run1.m -calls-> zr @ zr.m",
+      "run1.m run1.m -calls-> zs @ zs.m",
+      "use.m use -calls-> zl @ zl.m"
+    ],
+    "noEdges": [
+      {
+        "from": "run2.m",
+        "at": "zp.m"
+      },
+      {
+        "from": "run2.m",
+        "at": "zw.m"
+      }
+    ]
+  }
+}

@@ -37,11 +37,13 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
-import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, MATLAB_NODES } from '../resolution/matlab-failures';
+import { MATLAB_CALLABLE_NODES, MATLAB_MEMBER_NODES, MATLAB_NODES, isMatlabBuiltinDispatchCall, matlabDispatchClassKey } from '../resolution/matlab-failures';
+import { matlabRefFacts } from './languages/matlab-ref-facts';
 import {
   applyMatlabCarrierRows,
   matlabCarrierChanges,
   matlabDormancyFlips,
+  matlabFilesConstructing,
   matlabFilesNaming,
   readMatlabCarrierInputs,
   readMatlabCarrierStep,
@@ -4118,6 +4120,13 @@ export class ExtractionOrchestrator {
    * pending, woken and put to sleep, its files extracted again. Returns the
    * files it extracted. `fromInputs`: the step was worked out from the
    * recorded MatlabCarrierInputs, whose record the step's own replaces.
+   * `gained`, `classKeys`: the built-ins' names given a first carrier or
+   * reach (MatlabCarrierChange.gained) and the lowered names given a first
+   * class (classGained), whose calls each file is to hold written again on
+   * their own where it can (see matlabBuiltinRowsPlan); `classFiles`, the
+   * files that may hold a call on an object of such a class
+   * (matlabFilesConstructing). Without them (a step replayed from a record)
+   * every file is extracted again in full.
    */
   private async runMatlabCarrierStep(
     step: MatlabCarrierStep,
@@ -4125,6 +4134,8 @@ export class ExtractionOrchestrator {
     backpressure: (() => Promise<void> | null) | undefined,
     fromInputs = false,
     gained: readonly string[] = [],
+    classKeys: readonly string[] = [],
+    classFiles: ReadonlySet<string> = new Set(),
   ): Promise<{ extracted: string[]; failed: string[]; nodes: number; rows: number[]; written: number; skipped: number }> {
     this.queries.runInTransaction(() => {
       writeMatlabCarrierStep(this.queries, step);
@@ -4137,12 +4148,25 @@ export class ExtractionOrchestrator {
     // The rows of the gained names each file holds now, by file: the ones a
     // file's calls of them are written again over (see addMatlabBuiltinRows).
     const names = new Set(gained);
+    const keys = new Set(classKeys);
     const held = new Map<string, number[]>();
+    // And, apart, its calls on an object under those names (`gadget::disp`), or on an object of a class of
+    // those keys, which a `parse` plan writes again too and a `skip` one leaves (see addMatlabBuiltinRows).
+    const heldOnObjects = new Map<string, number[]>();
     if (names.size > 0) {
       for (const row of this.queries.getMatlabCallRowsNamed(names)) {
         const ids = held.get(row.filePath);
         if (ids) ids.push(row.id);
         else held.set(row.filePath, [row.id]);
+      }
+    }
+    if (names.size > 0 || keys.size > 0) {
+      // Pending ones too: the step's wake (applyMatlabCarrierRows, above) may have put them back to pending.
+      for (const ref of this.queries.getMatlabArgClassDispatchRows(true)) {
+        if (!isMatlabBuiltinDispatchCall(ref) || !(names.has(matlabRefFacts(ref).dispatch!) || keys.has(matlabDispatchClassKey(ref)))) continue;
+        const ids = heldOnObjects.get(ref.filePath);
+        if (ids) ids.push(ref.rowId);
+        else heldOnObjects.set(ref.filePath, [ref.rowId]);
       }
     }
     if (step.files.length > 0) {
@@ -4158,7 +4182,7 @@ export class ExtractionOrchestrator {
     // a window of files at a time; every write is in the files' order.
     let pool: ParseWorkerPool | null = null;
     try {
-      if (names.size > 0 && step.files.length >= CARRIER_POOL_MIN_FILES && fs.existsSync(path.join(__dirname, 'parse-worker.js'))) {
+      if ((names.size > 0 || keys.size > 0) && step.files.length >= CARRIER_POOL_MIN_FILES && fs.existsSync(path.join(__dirname, 'parse-worker.js'))) {
         const size = resolveParsePoolSize(process.env.CODEGRAPH_PARSE_WORKERS, Math.max(3, os.availableParallelism()));
         pool = new ParseWorkerPool({
           languages: ['matlab'],
@@ -4180,7 +4204,7 @@ export class ExtractionOrchestrator {
             content = undefined;
           }
           onFileChange?.(filePath, content);
-          const plan = names.size > 0 && content !== undefined ? this.matlabBuiltinRowsPlan(filePath, content, names) : null;
+          const plan = (names.size > 0 || keys.size > 0) && content !== undefined ? this.matlabBuiltinRowsPlan(filePath, content, names, keys, classFiles.has(filePath)) : null;
           const frameworks = this.frameworksForFile(filePath, this.ensureDetectedFrameworks());
           const parsed: Promise<ExtractionResult | null> | null = plan?.kind !== 'parse' || content === undefined ? null
             : pool ? pool.requestParse({ filePath, content, language: 'matlab', frameworkNames: frameworks }).catch(() => null)
@@ -4190,7 +4214,7 @@ export class ExtractionOrchestrator {
         for (const { filePath, plan, parsed } of files) {
           const extracted = parsed ? await parsed : null;
           const rows = plan === null || (plan.kind === 'parse' && extracted === null) ? null
-            : this.addMatlabBuiltinRows(filePath, names, plan, extracted, held.get(filePath) ?? []);
+            : this.addMatlabBuiltinRows(filePath, names, keys, plan, extracted, held.get(filePath) ?? [], heldOnObjects.get(filePath) ?? []);
           if (rows) {
             out.rows.push(...rows);
             if (plan?.kind === 'skip') out.skipped++;
@@ -4214,27 +4238,40 @@ export class ExtractionOrchestrator {
 
   /**
    * Whether `filePath`'s calls of `names`, built-ins' names the sync gave a
-   * first carrier or reach (MatlabCarrierChange.gained), can be written again
-   * on their own (see addMatlabBuiltinRows), and how: `skip` when no `.m`
-   * file reaches any of them (the extraction's discard drops every call of
-   * them: `plot` carried by a method of a class alone), so the file, read and
-   * hashed to get here, is not parsed; `parse` when its extraction is to be
-   * read. Null when the file has to
-   * be extracted again in full: its text is not the stored one, it imports a
-   * name or defines one of `names` (its calls of them were never dropped), or
-   * one of its edges was resolved from a call of them.
+   * first carrier or reach (MatlabCarrierChange.gained), and its calls on an
+   * object of a class of `keys`, lowered names the sync gave a first class
+   * (classGained: `gadget::disp`), can be written again on their own (see
+   * addMatlabBuiltinRows), and how: `skip` when no `.m` file reaches any of
+   * the names (the extraction's discard drops every call of them: `plot`
+   * carried by a method of a class alone) and the file holds no call on such
+   * an object (`onObjects`: see matlabFilesConstructing), so the file, read
+   * and hashed to get here, is not parsed; `parse` when its extraction is to
+   * be read. Null when the file has to be extracted again in full: its text
+   * is not the stored one, it imports a name or defines one of `names` (its
+   * calls of them were never dropped), or one of its edges was resolved from
+   * a call of them, or from one on an object of such a class.
    */
-  private matlabBuiltinRowsPlan(filePath: string, content: string, names: ReadonlySet<string>): { kind: 'skip' | 'parse'; nodeIds: Set<string> } | null {
+  private matlabBuiltinRowsPlan(
+    filePath: string,
+    content: string,
+    names: ReadonlySet<string>,
+    keys: ReadonlySet<string> = new Set(),
+    onObjects = false,
+  ): { kind: 'skip' | 'parse'; nodeIds: Set<string> } | null {
     const file = this.queries.getFileByPath(filePath);
     if (!file || file.language !== 'matlab' || file.contentHash !== hashContent(content)) return null;
     const nodes = this.queries.getNodesByFiles([filePath]);
     if (nodes.some((n) => (n.kind === 'import' && !isJavaImport(n.name)) || names.has(n.name))) return null;
     for (const e of this.queries.getResolutionEdgesFromFiles('matlab', [filePath])) {
       const refName = e.metadata?.refName;
-      if (typeof refName === 'string' && names.has(refName)) return null;
+      if (typeof refName !== 'string') continue;
+      if (names.has(refName)) return null;
+      // A call on an object under one of the names, or of a class of one of the keys (`gadget::disp`).
+      const cut = refName.lastIndexOf('::');
+      if (cut >= 0 && (names.has(refName.slice(cut + 2)) || keys.has(refName.slice(0, cut).toLowerCase()))) return null;
     }
     const nodeIds = new Set(nodes.map((n) => n.id));
-    return { kind: [...names].some((name) => this.matlabFilter.reaches(name)) ? 'parse' : 'skip', nodeIds };
+    return { kind: onObjects || [...names].some((name) => this.matlabFilter.reaches(name)) ? 'parse' : 'skip', nodeIds };
   }
 
   /**
@@ -4254,9 +4291,11 @@ export class ExtractionOrchestrator {
   private addMatlabBuiltinRows(
     filePath: string,
     names: ReadonlySet<string>,
+    keys: ReadonlySet<string>,
     plan: { kind: 'skip' | 'parse'; nodeIds: Set<string> },
     extracted: ExtractionResult | null,
     held: readonly number[],
+    heldOnObjects: readonly number[] = [],
   ): number[] | null {
     if (plan.kind === 'skip' || !extracted) {
       if (held.length > 0) this.queries.deleteReferencesByRowIds([...held]);
@@ -4266,24 +4305,30 @@ export class ExtractionOrchestrator {
     const result = this.matlabFilter.filter(materializeKernelResult(extracted, filePath, 'matlab'), filePath, 'matlab');
     const stored = plan.nodeIds;
     if (result.nodes.length !== stored.size || result.nodes.some((n) => !stored.has(n.id))) return null;
+    // A call on an object under one of the names (`gadget::disp`), which a fresh index keeps while a plain call of the
+    // name is kept, as well, and one on an object of a class of one of the keys, kept while such a class exists (see
+    // matlabBuiltinDispatchKept in ../resolution/matlab-failures).
+    const named = (ref: UnresolvedReference): boolean => names.has(ref.referenceName) ||
+      (isMatlabBuiltinDispatchCall({ ...ref, language: 'matlab' }) && (names.has(matlabRefFacts(ref).dispatch!) || keys.has(matlabDispatchClassKey(ref))));
     const refs = result.unresolvedReferences
-      .filter((ref) => callsByName(ref.referenceKind) && names.has(ref.referenceName) && stored.has(ref.fromNodeId))
+      .filter((ref) => callsByName(ref.referenceKind) && named(ref) && stored.has(ref.fromNodeId))
       .map((ref) => ({ ...ref, filePath: ref.filePath ?? filePath, language: ref.language ?? ('matlab' as const) }));
-    if (held.length > 0) this.queries.deleteReferencesByRowIds([...held]);
+    if (held.length > 0 || heldOnObjects.length > 0) this.queries.deleteReferencesByRowIds([...held, ...heldOnObjects]);
     return refs.length > 0 ? this.queries.replaceResolutionEdgesWithUnresolvedRefIds([], refs) : [];
   }
 
   /**
    * The carrier step `change` calls for (see resolution/matlab-builtin-carriers):
    * the built-ins' rows to delete, the dormant and failed rows to wake, put
-   * to sleep and reopen, and the files naming a gained built-in, but
-   * `skip`, to extract again.
+   * to sleep and reopen, and the files, but `skip`, to write again: the
+   * files naming a gained built-in, and the ones that may hold a call on an
+   * object of a class of a name given its first class (`classFiles`).
    */
   private matlabCarrierStepOf(
     change: MatlabCarrierChange,
     skip: ReadonlySet<string>,
     unchangedOnly = false,
-  ): { step: MatlabCarrierStep; flipMs: number; scanMs: number } {
+  ): { step: MatlabCarrierStep; flipMs: number; scanMs: number; classFiles: Set<string> } {
     const drop = uncarriedMatlabRowIds(this.queries, change);
     const tFlips = Date.now();
     const { wake, sleep, reopen } = matlabDormancyFlips(this.queries, change);
@@ -4291,14 +4336,18 @@ export class ExtractionOrchestrator {
     const dropped = new Set(drop);
     let scanMs = 0;
     let files: string[] = [];
+    // The files that may hold a call on an object of a class of a name given its first class, from the calls the
+    // index holds (see matlabFilesConstructing): no file is read for them.
+    const classFiles = new Set<string>();
+    for (const f of matlabFilesConstructing(this.queries, change.classGained, skip)) if (!unchangedOnly || this.storedAsOnDisk(f)) classFiles.add(f);
     if (change.gained.length > 0) {
       const tScan = Date.now();
-      files = matlabFilesNaming(this.queries, this.rootDir, change.gained, skip)
-        .filter((f) => !unchangedOnly || this.storedAsOnDisk(f.filePath, f.content))
-        .map((f) => f.filePath);
+      const keep = (f: { filePath: string; content: string }): boolean => !unchangedOnly || this.storedAsOnDisk(f.filePath, f.content);
+      files = matlabFilesNaming(this.queries, this.rootDir, change.gained, skip).filter(keep).map((f) => f.filePath);
       scanMs = Date.now() - tScan;
     }
-    return { step: { drop, reopen: reopen.filter((id) => !dropped.has(id)), wake, sleep, files }, flipMs, scanMs };
+    files = [...new Set([...files, ...classFiles])];
+    return { step: { drop, reopen: reopen.filter((id) => !dropped.has(id)), wake, sleep, files }, flipMs, scanMs, classFiles };
   }
 
   /**
@@ -4841,9 +4890,9 @@ export class ExtractionOrchestrator {
     let extractedAgain = 0;
     let writtenAgain = 0;
     let readOnly = 0;
-    const { step: carrierStep, flipMs, scanMs } = this.matlabCarrierStepOf(carriers, new Set(filesToIndex));
+    const { step: carrierStep, flipMs, scanMs, classFiles } = this.matlabCarrierStepOf(carriers, new Set(filesToIndex));
     if (ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep)) {
-      const done = await this.runMatlabCarrierStep(carrierStep, onFileChange, backpressure, carrierInputsRecorded, carriers.gained);
+      const done = await this.runMatlabCarrierStep(carrierStep, onFileChange, backpressure, carrierInputsRecorded, carriers.gained, carriers.classGained, classFiles);
       changedFilePaths.push(...done.extracted);
       matlabBuiltinRows.push(...done.rows);
       extractedAgain = done.extracted.length;
@@ -4856,7 +4905,7 @@ export class ExtractionOrchestrator {
     }
     if (process.env.CODEGRAPH_SYNTH_TIMINGS && (carriers.gained.length > 0 || carriers.judged.length > 0 || ExtractionOrchestrator.hasMatlabCarrierWork(carrierStep))) {
       const { drop, reopen, wake, sleep } = carrierStep;
-      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; ${carriers.judged.length} names judged in ${flipMs}ms: ${wake.length} rows woken, ${sleep.length} put to sleep, ${reopen.length} resolved again; word scan ${scanMs}ms; ${extractedAgain} files extracted again; ${writtenAgain} files' calls of them parsed and written again, ${matlabBuiltinRows.length} rows; ${readOnly} files read and hashed, not parsed (no .m file reaches the names); ${drop.length} rows dropped)`);
+      console.error(`[phase-timing] sync-matlab-builtin-carriers: ${Date.now() - tCarriers}ms (${carriers.gained.join(', ')} gained; classes of ${carriers.classGained.length} names gained, ${carriers.classLost.length} lost, ${classFiles.size} files calling a lower-case callee of them; ${carriers.judged.length} names judged in ${flipMs}ms: ${wake.length} rows woken, ${sleep.length} put to sleep, ${reopen.length} resolved again; word scan ${scanMs}ms; ${extractedAgain} files extracted again; ${writtenAgain} files' calls of them parsed and written again, ${matlabBuiltinRows.length} rows; ${readOnly} files read and hashed, not parsed (no .m file reaches the names); ${drop.length} rows dropped)`);
     }
 
     // Modified ES modules whose `export … from` statements changed (#2978): a

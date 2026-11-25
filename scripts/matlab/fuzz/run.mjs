@@ -22,7 +22,7 @@
  *   --baseline-dist dir a mutant hunt: a failure the case also has on this build is the baseline's, logged and passed over,
  *                       and the shrinker keeps only candidates this build passes
  *   --profile p         default, or classes: every project gets a class-folder guess motif, and edits favour class files
- *   --generator-version V  the generator version a reproduce line was printed by: a warning when it is not this one's
+ *   --generator-version V  the generator version to draw cases with (3 or 4; default 4), as a reproduce line names it
  *                       (the seed then draws another case)
  *
  * Every failure prints the line that reproduces it from its seed, and (shrunk)
@@ -34,7 +34,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ORACLES, runCase } from './fuzz.mjs';
 import { DEFAULT_DIST, loadLibrary, renderDiff } from './harness.mjs';
-import { GENERATOR_VERSION } from './generate.mjs';
+import { GENERATOR_VERSION, GENERATOR_VERSIONS } from './generate.mjs';
 import { shrinkFailure, writeFinding } from './shrink.mjs';
 
 export function parseArgs(argv) {
@@ -79,12 +79,12 @@ function capDiff(diff, n = 100) {
   return Object.fromEntries(Object.entries(diff).map(([s, { onlyA, onlyB }]) => [s, { onlyA: onlyA.slice(0, n), onlyB: onlyB.slice(0, n), ...(onlyA.length > n || onlyB.length > n ? { counts: [onlyA.length, onlyB.length] } : {}) }]));
 }
 
-/** The command line that reproduces case `k` of a run with options `o`. */
-export function reproduceCommand(o, k) {
+/** The command line that reproduces case `k` of a run with options `o`, drawn with generator version `version`. */
+export function reproduceCommand(o, k, version = o.generatorVersion ?? GENERATOR_VERSION) {
   const oracle = o.oracles.length === ORACLES.length ? '' : ` --oracle ${o.oracles.join(',')}`;
   const dist = path.resolve(o.dist) === path.resolve(DEFAULT_DIST) ? '' : ` --dist ${o.dist}`;
   const prof = o.profile && o.profile !== 'default' ? ` --profile ${o.profile}` : '';
-  return `node scripts/matlab/fuzz/run.mjs --generator-version ${GENERATOR_VERSION} --seed ${o.seed} --case ${k} --steps ${o.steps} --big-every ${o.bigEvery}${prof}${oracle}${o.budgetMs !== 20_000 ? ` --budget-ms ${o.budgetMs}` : ''}${dist}`;
+  return `node scripts/matlab/fuzz/run.mjs --generator-version ${version} --seed ${o.seed} --case ${k} --steps ${o.steps} --big-every ${o.bigEvery}${prof}${oracle}${o.budgetMs !== 20_000 ? ` --budget-ms ${o.budgetMs}` : ''}${dist}`;
 }
 
 /**
@@ -92,17 +92,18 @@ export function reproduceCommand(o, k) {
  * progress line. Resolves to the summary it also writes to <out>/summary.json.
  */
 export async function runFuzz(o, log = (s) => console.log(s)) {
-  if (o.generatorVersion !== undefined && o.generatorVersion !== GENERATOR_VERSION) {
-    log(`warning: this line was printed by generator version ${o.generatorVersion}, and this is version ${GENERATOR_VERSION}: the seed draws another case, so it does not reproduce what was printed`);
+  if (o.generatorVersion !== undefined && !GENERATOR_VERSIONS.includes(o.generatorVersion)) {
+    log(`warning: this line was printed by generator version ${o.generatorVersion}, and this one draws versions ${GENERATOR_VERSIONS.join(', ')}: the seed draws another case, so it does not reproduce what was printed`);
   }
+  const version = o.generatorVersion !== undefined && GENERATOR_VERSIONS.includes(o.generatorVersion) ? o.generatorVersion : GENERATOR_VERSION;
   const lib = await loadLibrary(o.dist);
   const baseLib = o.baselineDist ? await loadLibrary(o.baselineDist) : null;
   const out = path.resolve(o.out);
   const work = path.join(out, 'work');
   fs.mkdirSync(work, { recursive: true });
-  const opts = { steps: o.steps, oracles: o.oracles, work, bigEvery: o.bigEvery, profile: o.profile, budgetMs: o.budgetMs, shrinkEvals: o.shrinkEvals, shrinkMs: o.shrinkMin * 60_000, baseLib };
+  const opts = { steps: o.steps, oracles: o.oracles, work, bigEvery: o.bigEvery, profile: o.profile, generatorVersion: version, budgetMs: o.budgetMs, shrinkEvals: o.shrinkEvals, shrinkMs: o.shrinkMin * 60_000, baseLib };
   const t0 = Date.now();
-  const summary = { generatorVersion: GENERATOR_VERSION, seed: o.seed, steps: o.steps, oracles: o.oracles, dist: o.dist, cases: 0, edits: 0, failures: [], baselineFailures: [], ms: 0 };
+  const summary = { generatorVersion: version, seed: o.seed, steps: o.steps, oracles: o.oracles, dist: o.dist, cases: 0, edits: 0, failures: [], baselineFailures: [], ms: 0 };
   // Shrinking and baseline replays, left out of when a failure was found.
   let overheadMs = 0;
   for (let k = o.firstCase; k < o.firstCase + o.cases; k++) {
@@ -129,7 +130,7 @@ export async function runFuzz(o, log = (s) => console.log(s)) {
       }
     }
     const id = `s${o.seed}-c${k}-${f.oracle}`;
-    const command = reproduceCommand(o, k);
+    const command = reproduceCommand(o, k, version);
     log(`${head}: FAIL ${f.oracle}${f.spec ? ` (${f.spec.kind})` : ''} at step ${f.step}${f.where && f.oracle === 'robust' ? ` in ${f.where}: ${f.message}` : ''}`);
     log(`  reproduce: ${command}`);
     if (f.step > 0) log(`  last edit: ${run.edits[f.step - 1]?.desc}`);
@@ -139,7 +140,7 @@ export async function runFuzz(o, log = (s) => console.log(s)) {
     const entry = { id, case: k, oracle: f.oracle, variant: f.spec?.kind, step: f.step, where: f.where, message: f.message, command, lastEdit: f.step > 0 ? run.edits[f.step - 1]?.desc : undefined, diff: capDiff(f.diff), warnings: f.warnings, atRunMs: Date.now() - t0 - overheadMs, atRunEdits: summary.edits, caseMs: run.stats.ms };
     if (o.shrink) {
       const shrunk = await shrinkFailure(lib, run, opts);
-      const dir = writeFinding(path.join(out, 'findings'), id, run, shrunk, command);
+      const dir = writeFinding(path.join(out, 'findings'), id, run, shrunk, command, version);
       overheadMs += shrunk.ms;
       Object.assign(entry, { finding: dir, shrunkFiles: Object.keys(shrunk.files).length, shrunkEdits: shrunk.edits.length, reproduced: shrunk.reproduced, shrinkMs: shrunk.ms });
       log(`  shrunk to ${entry.shrunkFiles} files and ${entry.shrunkEdits} edits in ${Math.round(shrunk.ms / 1000)} s${shrunk.reproduced ? '' : ' (did not reproduce)'}: ${dir}`);

@@ -10,12 +10,5 @@
     "dormant": [
       "v.m:3 calls:a"
     ]
-  },
-  "pendingBug": {
-    "id": "S11-variables-2",
-    "fails": [
-      "index: missing row user.m:2 calls:a",
-      "index: unwanted dormant row user.m:2 calls:a"
-    ]
   }
 }

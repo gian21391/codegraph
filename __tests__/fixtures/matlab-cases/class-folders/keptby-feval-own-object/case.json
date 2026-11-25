@@ -1,0 +1,15 @@
+{
+  "why": "`numel` gives a double for an object whose class has no `numel` (MATLAB R2026a), and the class's own otherwise, which by the project rule gives the object back: `x = numel(x)` then `feval('sum', x)` (doc 'feval': the function a name names, dispatched as a call is) is `Cel::sum` in `@Cel/`, which has `numel.m`, and MATLAB's `sum` in `@Bare/`, which has none.",
+  "truth": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> zt @ zt.m",
+      "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Bare/all.m",
+        "to": "Bare::sum"
+      }
+    ]
+  }
+}

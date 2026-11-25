@@ -1,0 +1,34 @@
+{
+  "why": "Review 5 finding 6. In a method of `@Gizmo`, `obj = [1, 2]` makes `obj` a double, `obj = s.p` with `s = struct('p', 1)` a double too, and so do the writes that hold the object but give no object of it: `obj = [obj.n, 1]` (a field's value concatenated with a number), `obj = obj.n` (a field's value) and `obj = {obj}` (a cell): `tidy(obj)` is the plain `tidy` (doc 'Function Precedence Order').",
+  "truth": {
+    "edges": [
+      "@Gizmo/use1.m Gizmo::use1 -calls-> tidy @ tidy.m",
+      "@Gizmo/use2.m Gizmo::use2 -calls-> tidy @ tidy.m",
+      "@Gizmo/use3.m Gizmo::use3 -calls-> tidy @ tidy.m",
+      "@Gizmo/use4.m Gizmo::use4 -calls-> tidy @ tidy.m",
+      "@Gizmo/use5.m Gizmo::use5 -calls-> tidy @ tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/use1.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use2.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use3.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use4.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "@Gizmo/use5.m",
+        "to": "Gizmo::tidy"
+      }
+    ]
+  }
+}

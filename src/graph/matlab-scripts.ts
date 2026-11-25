@@ -5,8 +5,8 @@
  * name of one asks for) and by the viewer's steps (a call into a script's file
  * is a step), so the three never disagree about what a script is.
  *
- * A script is a MATLAB file on the path — outside every package (`+pkg/`),
- * class folder (`@Cls/`) and `private/` folder, its name an identifier — that
+ * A script is a MATLAB file on the path — outside every package (`+pkg/`)
+ * and class folder (`@Cls/`), its name an identifier — that
  * defines no function, method or class, with code in it — or with nothing in
  * it at all: an empty file, or one of block comments only, is a script of
  * nothing (the user's rulings, step 11). A file of `%` help-text lines only
@@ -101,7 +101,9 @@ function plainFileVerdict(file: Node, lookup: MatlabScriptLookup): MatlabFileVer
 
 /** Whether `file` is the file node of a script MATLAB runs by its name (see the top of this file). */
 export function isMatlabScriptFile(file: Node, lookup: MatlabScriptLookup): boolean {
-  return plainFileVerdict(file, lookup) === 'script' && !/(?:^|\/)private\//.test(file.filePath);
+  // One in a `private/` folder is one too, run by its name from the folder's parent and the folder itself
+  // (private functions before the path: MATLAB doc 'Function Precedence Order'), as a private function is.
+  return plainFileVerdict(file, lookup) === 'script';
 }
 
 /**

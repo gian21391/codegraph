@@ -1,0 +1,46 @@
+{
+  "index": {
+    "edges": [
+      "step.m step.m -instantiates-> widget @ widget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "step.m step.m -calls-> widget @ private/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -instantiates-> widget @ widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -calls-> widget @ private/widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [
+        "step.m:1 calls:widget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "step.m step.m -instantiates-> widget @ widget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

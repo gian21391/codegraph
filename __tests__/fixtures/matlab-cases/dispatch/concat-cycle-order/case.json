@@ -1,0 +1,20 @@
+{
+  "why": "Concatenating objects of one class gives that class (doc 'Concatenating Objects'): `k = [k, w]` and `w = [w, k]`, in a loop or in sequence, keep both Gizmo arrays, so every `tidy` is `Gizmo::tidy`, whichever of the two calls a file asks about first (step 15 round 7: an answer does not depend on the order reads are asked in).",
+  "truth": {
+    "edges": [
+      "use5.m use5 -calls-> zt @ zt.m",
+      "use5.m use5 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "use6.m use6 -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use5.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use6.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

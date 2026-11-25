@@ -1,0 +1,15 @@
+{
+  "why": "The old-style copy constructor (the documented old-style constructor shape: an `isa` test on the input, then a copy): `s = varargin{1}` after an `isa` test is the object, and `class(struct(…), 'Bolt')` makes one, so `tidy(s)` is `Bolt::tidy` on both paths (step 15 round 7: of the method's own object only a write whose value is clearly something else ends the hint, and `varargin{…}` is not one).",
+  "truth": {
+    "edges": [
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> zt @ zt.m",
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> Bolt::tidy @ @Bolt/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Bolt/Bolt.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

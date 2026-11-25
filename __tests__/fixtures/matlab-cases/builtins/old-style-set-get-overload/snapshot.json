@@ -9,8 +9,6 @@
     "rows": [
       "useAcc.m:6 calls:notdefined"
     ],
-    "dormant": [
-      "@Acc/Acc.m:3 calls:Acc::class"
-    ]
+    "dormant": []
   }
 }

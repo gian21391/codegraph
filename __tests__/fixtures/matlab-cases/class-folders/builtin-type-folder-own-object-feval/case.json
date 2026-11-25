@@ -1,0 +1,15 @@
+{
+  "why": "In `@double/helper.m`, a method of MATLAB's own class `double` (no class `double` in the project), `x` is the method's own object (MATLAB doc 'Methods in Separate Files'), so `feval('tidy', x)` and `f = @tidy; f(x)` dispatch to `@double/tidy.m` before the root `tidy.m` (doc 'feval', 'Function Precedence Order': object functions before the path), as `tidy(x)` does.",
+  "truth": {
+    "edges": [
+      "@double/helper.m double::helper -calls-> double::tidy @ @double/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@double/helper.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

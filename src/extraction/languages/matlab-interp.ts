@@ -197,25 +197,87 @@ export function loadMakesUnlisted(items: readonly (string | null)[]): boolean {
 }
 
 /**
- * The variables a `clear` / `clearvars` statement (`name`) removes, from its
- * arguments as text (null for one that is not literal): the names it lists,
- * none for an item type that removes no variable (`clear functions`, `mex`,
- * `import`), and null when it may remove more than it names — none listed
- * (`clear`, `clearvars`), an item type that removes variables (`all`,
- * `variables`, `global`, `classes`, `java`, in any case), an option
- * (`-regexp`, `-except`, `-global`), a wildcard, or anything else that is no
- * plain name. For a script's made names (see matlab.ts's scanScope); the
- * interpreter's own reading of `clear` (sideEffects) forgets more.
+ * What a `clear` / `clearvars` statement (`name`) removes of the variables,
+ * from its arguments as text (null for one that is not literal), by MATLAB's
+ * doc 'clear' and 'clearvars':
+ *   - `all`: every name. `clear` and `clearvars` alone; an item type that
+ *     removes every variable (`clear all`, `variables`, `classes`, `java`,
+ *     in any case); and a statement with an item that is not literal, or a
+ *     pattern that is no regular expression, which may remove any name.
+ *   - `globals`: global variables only, with a test of the names among
+ *     them it removes (`clear global` and `clearvars -global` alone: all;
+ *     `clear global zg`, `clear global xa*`, `clear global -regexp ^xa`,
+ *     `clearvars -global -except gz`, `clearvars -global qzv qzw`: as the
+ *     items say): the names the scope declared `global` before the
+ *     statement, in text order (MATLAB R2026a: a non-global variable of a
+ *     matching name stays). Not `clearvars qzx -global`: a flag after an item
+ *     is ignored (MATLAB R2026a warns), so it is `clearvars qzx`.
+ *   - `names`: the names it lists, plainly (`clear x y`, `clear('x')`,
+ *     `clear global zg`, `clearvars x`); none for an item type that removes
+ *     no variable (`clear functions`, `mex`, `import`).
+ *   - `removes`: a test of a name, for one with a pattern: a wildcard
+ *     (`clear xa*`: the names it matches), `-regexp` (`clear -regexp ^xb`:
+ *     the names a regular expression after it matches, anywhere in the
+ *     name), `-except` (`clearvars -except y`, `clearvars x* -except xk`:
+ *     what is listed before it, or every name, but those listed after it,
+ *     patterns too).
  */
-export function matlabClearedNames(name: string, items: readonly (string | null)[]): string[] | null {
-  if (items.length === 0) return null;
-  if (name === 'clear' && items.every((t) => t !== null && /^(?:functions|mex|import)$/.test(t))) return [];
-  const names: string[] = [];
-  for (const t of items) {
-    if (t === null || !/^[A-Za-z]\w*$/.test(t) || (name === 'clear' && /^(?:all|variables|global|classes|java)$/i.test(t))) return null;
-    names.push(t);
+export type MatlabClear = 'all' | { names: string[] } | { globals: (v: string) => boolean } | { removes: (v: string) => boolean };
+
+/** Reads a `clear` / `clearvars` statement (see MatlabClear). */
+export function matlabClearOf(name: string, items: readonly (string | null)[]): MatlabClear {
+  if (items.length === 0 || items.some((t) => t === null)) return 'all';
+  const texts = items as readonly string[];
+  if (name === 'clear') {
+    if (texts.every((t) => /^(?:functions|mex|import)$/.test(t))) return { names: [] };
+    if (texts.some((t) => /^(?:all|variables|classes|java)$/i.test(t))) return 'all';
   }
-  return names;
+  // `clearvars x -global`: a flag after an item is ignored, with a warning (MATLAB R2026a): `clearvars x`.
+  const flagAt = texts.findIndex((t) => /^-global$/i.test(t));
+  const global = name === 'clear' ? /^global$/i.test(texts[0]!) : flagAt >= 0 && texts.slice(0, flagAt).every((t) => t.startsWith('-'));
+  const rest = (name === 'clear' && global ? texts.slice(1) : texts).filter((t) => !(name === 'clearvars' && /^-global$/i.test(t)));
+  if (global && rest.length === 0) return { globals: () => true };
+  const tests: Array<(v: string) => boolean> = [];
+  const kept: Array<(v: string) => boolean> = [];
+  let names: string[] | null = [];
+  let regexp = false;
+  let except = false;
+  for (const t of rest) {
+    if (/^-regexp$/i.test(t)) {
+      regexp = true;
+      names = null;
+      continue;
+    }
+    if (name === 'clearvars' && /^-except$/i.test(t)) {
+      except = true;
+      regexp = false;
+      names = null;
+      continue;
+    }
+    let test: (v: string) => boolean;
+    if (regexp) {
+      let re: RegExp;
+      try {
+        re = new RegExp(t);
+      } catch {
+        return 'all';
+      }
+      test = (v) => re.test(v);
+    } else if (/^[A-Za-z]\w*$/.test(t)) {
+      test = (v) => v === t;
+      names?.push(t);
+    } else if (/^[A-Za-z*][\w*]*$/.test(t)) {
+      const re = new RegExp(`^${t.replace(/\*/g, '.*')}$`);
+      test = (v) => re.test(v);
+      names = null;
+    } else return 'all';
+    (except ? kept : tests).push(test);
+  }
+  const removes = (v: string): boolean => (tests.length === 0 || tests.some((t) => t(v))) && !kept.some((t) => t(v));
+  if (global) return { globals: removes };
+  if (tests.length === 0 && kept.length === 0) return 'all';
+  if (names !== null) return { names };
+  return { removes };
 }
 
 /** Code given as text, parsed, with a host that reads it. */

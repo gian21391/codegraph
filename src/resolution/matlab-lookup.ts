@@ -11,17 +11,26 @@
  *      nested in another — or a class the file itself defines, unless the
  *      file is a package's (`+util/size.m` is `util.size` from itself too);
  *   4. a member of a package the calling function imports (`import pkg.*`);
- *   5. a function in a `private/` folder beside the calling file;
+ *   5. a function in a `private/` folder beside the calling file, or a script
+ *      there, which a call of a form that runs one (see below) runs and any
+ *      other call of the name finds first and reaches nothing by;
  *   6. a method of the class of the call's first argument, when the extractor
  *      knows it (`m(obj, …)` on a method's own object, `area(c)` after
  *      `c = Shape(…)`: the ref is `Cls::m`, the written name in `candidates`);
  *   7. a class kept in a class folder (`@Cls/`), then a function file's
  *      function or a class on the path — outside every `+package` folder: a
  *      package member is reached by its full name even from its own package.
- *      A call written as a statement of its own (`setup_paths`, `run
- *      setup_paths`) reaches a script on the path too: its file node — and
- *      so does a callback given as text that is one (`'Callback',
- *      'refresh_plots'`), a reference to the script it runs.
+ *      A call of a form that runs a script reaches a script on the path too:
+ *      its file node. Those forms are a statement of its own (`setup_paths`,
+ *      `run setup_paths`), a callback given as text that is one
+ *      (`'Callback', 'refresh_plots'`), a call with an empty argument list as
+ *      a statement (`setup_paths();`, `feval('setup_paths');`) and a handle
+ *      (`@setup_paths`, which names the script): see runsScript. A call of
+ *      any other form (`f(2)`, `x = f;`, `feval('f', 2)`) whose first file
+ *      of the name, by the same rules, is a script reaches nothing: MATLAB
+ *      runs the first `f` it finds, and a script called so is an error
+ *      ('Execution of script f as a function is not supported'), not a call
+ *      of a farther function.
  *   8. Last, when nothing above answers: a stub, the help text of a MEX
  *      function of the name (`chanGet.m`, `%` help text only, beside the
  *      `chanGet.mexa64` the index never reads; see ../graph/matlab-scripts),
@@ -32,12 +41,12 @@
  *      folder before a function file in a later one, but the index sees no
  *      MEX file, and a help text with none beside it is an empty script:
  *      last is the side that adds no wrong edge. Never a built-in's name.
- *      The two forms rank a stub against a script differently: a statement
- *      takes a script at step 7, however far, before any stub, however near
- *      (the rule before stubs, the conservative side); a call with
- *      arguments takes the stub only when the path rules pick it over
- *      every script of the name, and else nothing (MATLAB would run the
- *      script, and the call would error). A nearer `.m` of the name that the
+ *      Every form of a call ranks a stub against a script the same way, as
+ *      MATLAB finds the same first file of the name for `f`, `f()` and
+ *      `f(1)`: the stub when the path rules pick it over every script of
+ *      the name; else the script, which a form that runs one runs, and any
+ *      other reaches nothing by (MATLAB runs the script, and the call
+ *      errors). A nearer `.m` of the name that the
  *      index reads as no MATLAB (Octave, binary) blocks no farther stub,
  *      though MATLAB would find that file first; an empty one is a script.
  *
@@ -86,7 +95,7 @@
 import type { Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { matlabFileNames, matlabFileStem, matlabPathScope } from '../extraction/languages/matlab-path';
-import { matlabRefFacts } from '../extraction/languages/matlab-ref-facts';
+import { matlabRefFacts, type MatlabRefFacts } from '../extraction/languages/matlab-ref-facts';
 import { MATLAB_BUILTINS, MATLAB_METHOD_ONLY_NAMES } from '../extraction/languages/matlab-builtins';
 import { MATLAB_DOCUMENTED_METHOD_NAMES } from '../extraction/languages/matlab-builtin-names';
 import { isMatlabScriptFile, isMatlabStubFile } from '../graph/matlab-scripts';
@@ -96,6 +105,8 @@ const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'enum']);
 const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method']);
 const NAMED_KINDS: ReadonlySet<string> = new Set([...CALLABLE_KINDS, ...TYPE_KINDS]);
 const METHOD_KINDS: ReadonlySet<string> = new Set(['method']);
+/** What a qualified name names directly: a package's function or class (a method goes through its class: see qualifiedMethod). */
+const MEMBER_KINDS: ReadonlySet<string> = new Set(['function', ...TYPE_KINDS]);
 
 /** `pkg::sub` for `pkg::sub::f`, `pkg::Cls` for its method `pkg::Cls::m`; '' for a top-level name. */
 export function ownerOf(n: Pick<Node, 'qualifiedName'>): string {
@@ -124,6 +135,25 @@ export function isConstructor(n: Pick<Node, 'name' | 'qualifiedName'>): boolean 
 /** Whether a node sits in a class folder (`…/@Cls/x.m`). */
 function inClassFolder(n: Node): boolean {
   return /(?:^|\/)@[^/]+\/[^/]+$/.test(n.filePath);
+}
+
+/**
+ * Whether `n` is a class written in a file of another name, with its case
+ * (`classdef Gadget` in `gadget.m`), or in a class folder's file of another
+ * name than the folder's (`@Gadget/gadget.m`): MATLAB finds a class by the
+ * file of its name, and a class folder's class by the file named after the
+ * folder (doc 'Class Folders'; a classdef's name must match its file's), so
+ * this one is no class it knows: no superclass, no subclass of the classes
+ * it lists (its own `extends` link nothing, and the override synthesizer
+ * reads no hierarchy through it: ./matlab-override-synthesizer), no home of
+ * its folder's methods, nor what a call of its name makes.
+ */
+export function isMatlabMisnamedClass(n: Pick<Node, 'kind' | 'name' | 'filePath'>): boolean {
+  if (!TYPE_KINDS.has(n.kind)) return false;
+  const stem = matlabFileStem(n.filePath);
+  if (stem !== n.name) return true;
+  const folder = matlabPathScope(n.filePath).classFolder;
+  return folder !== undefined && stem !== folder;
 }
 
 /** The function or class a package file defines (`+util/size.m` → `util::size`); its local functions are not. */
@@ -373,10 +403,16 @@ function seenFrom(candidates: Node[], callerFile: string, context: ResolutionCon
   return candidates.filter((n) => searchPath.isVisible(n.filePath));
 }
 
-/** A path-visible definition by exact qualified name: a package function, a class, a class's method. */
+/**
+ * A path-visible definition by exact qualified name: a package function, a
+ * class, a class's method. Never a file's local function, even from its own
+ * file: one is reached by its bare name there alone (step 3 of resolveBare;
+ * doc 'Local Functions'), and `pkg.f` names the package's `f.m` even from a
+ * file of the package that has a local `f` (doc 'Namespaces').
+ */
 function byQualifiedName(qn: string, callerFile: string, context: ResolutionContext, kinds: ReadonlySet<string>): Node | undefined {
   const hits = matlab(context.getNodesByQualifiedName(qn)).filter(
-    (n) => kinds.has(n.kind) && (n.kind !== 'function' || n.isExported || n.filePath === callerFile) && privateInReach(n, callerFile),
+    (n) => kinds.has(n.kind) && (n.kind !== 'function' || n.isExported) && !isMatlabMisnamedClass(n) && privateInReach(n, callerFile),
   );
   return choose(preferBodies(hits), callerFile, context);
 }
@@ -436,10 +472,25 @@ export function matlabAncestorClasses(bases: readonly string[], filePath: string
     for (const sup of superclassesOf(cls, context)) walk(sup);
   };
   for (const name of bases) {
-    const cls = resolveType(name, { file: filePath, imports: NO_IMPORTS }, context);
+    const cls = superclassNamed(name, filePath, context);
     if (cls) walk(cls);
   }
   return [...seen.values()];
+}
+
+/**
+ * The class a name in a classdef's superclass list, written in `filePath`,
+ * resolves to (a superclass list sees no import: it is outside every
+ * function). None when that is an old-style class (an `@Cls` folder's
+ * constructor, no classdef): MATLAB refuses such a superclass (R2026a:
+ * "The specified superclass … cannot be found on MATLAB's search path, or
+ * is shadowed"), so the classdef inherits nothing from it, and its
+ * `extends` reaches nothing; nor a farther classdef of the name, which the
+ * first one shadows.
+ */
+function superclassNamed(name: string, filePath: string, context: ResolutionContext): Node | undefined {
+  const sup = resolveType(name, { file: filePath, imports: NO_IMPORTS }, context);
+  return sup && !isOldStyleClass(sup) ? sup : undefined;
 }
 
 /**
@@ -456,8 +507,7 @@ function superclassesOf(cls: Node, context: ResolutionContext): Node[] {
   if (hit) return hit;
   const out: Node[] = [];
   for (const name of matlabSuperclassNames(cls)) {
-    // A superclass list sees no import: it is outside every function.
-    const sup = resolveType(name, { file: cls.filePath, imports: NO_IMPORTS }, context);
+    const sup = superclassNamed(name, cls.filePath, context);
     if (sup && sup.id !== cls.id) out.push(sup);
   }
   memo.set(cls.id, out);
@@ -465,24 +515,137 @@ function superclassesOf(cls: Node, context: ResolutionContext): Node[] {
 }
 
 /**
- * Method `name` on class `cls` or the first superclass (depth-first, as MATLAB
- * lists them) that defines it: the one `cls` itself holds (in its classdef
- * file or its class folder) when another copy of the class defines it too,
- * else the one nearest `callerFile`.
+ * The methods `name` that the class definition `cls` has itself: MATLAB's
+ * class is the one definition its name resolves to (doc 'Class Precedence
+ * and MATLAB Path': of same-named classes the first on the path is the
+ * class; 'Function Precedence Order'), so its methods are the ones in that
+ * definition's file or, in a class folder, in that folder (doc 'Class
+ * Folders'); another copy of the class elsewhere is another class, whichever
+ * file holds its method. An old-style class (an `@Cls` folder whose `Cls.m`
+ * is a constructor function, no classdef) also has the methods of every
+ * other `@Cls` folder that is no classdef's folder, one that holds a
+ * constructor of its own too: the legacy class's methods are the functions
+ * of every `@Cls` folder on the path, its constructor the first on the path
+ * (MATLAB R2026a: `methods(g)` lists the methods of three `@gadget` folders,
+ * two of them with a constructor, and each one runs), the one the path
+ * rules pick of those (see choose).
  */
-function methodOnHierarchy(cls: Node, name: string, callerFile: string, context: ResolutionContext, seen = new Set<string>()): Node | undefined {
-  if (seen.has(cls.id)) return undefined;
-  seen.add(cls.id);
-  const own = preferBodies(matlab(context.getNodesByQualifiedName(`${cls.qualifiedName}::${name}`)).filter((n) => n.kind === 'method'));
-  if (own.length > 0) {
-    const held = own.filter((n) => n.filePath === cls.filePath || (inClassFolder(cls) && dirOf(n.filePath) === dirOf(cls.filePath)));
-    return held.length > 0 ? nearest(held, callerFile) : choose(own, callerFile, context);
+function heldMethods(cls: Node, name: string, callerFile: string, context: ResolutionContext): Node | undefined {
+  const all = preferBodies(matlab(context.getNodesByQualifiedName(`${cls.qualifiedName}::${name}`)).filter((n) => n.kind === 'method'));
+  if (all.length === 0) return undefined;
+  const held = all.filter((n) => matlabMethodHeldBy(cls, n));
+  if (held.length > 0) return nearest(held, callerFile);
+  if (!isOldStyleClass(cls)) return undefined;
+  const classdefs = matlabClassdefFolders(matlab(context.getNodesByQualifiedName(cls.qualifiedName)));
+  const loose = all.filter((n) => inClassFolder(n) && !classdefs.has(dirOf(n.filePath)));
+  return loose.length > 0 ? choose(loose, callerFile, context) : undefined;
+}
+
+/**
+ * The class folders among `copies` (the nodes of one qualified name) that
+ * hold a classdef of it: a classdef's methods are its own folder's alone, so
+ * an old-style class of the name takes none of them (see heldMethods).
+ */
+export function matlabClassdefFolders(copies: readonly Pick<Node, 'kind' | 'filePath' | 'signature'>[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of copies) {
+    if (TYPE_KINDS.has(c.kind) && /(?:^|\/)@[^/]+\/[^/]+$/.test(c.filePath) && (c.signature ?? '').startsWith('classdef')) out.add(dirOf(c.filePath));
   }
-  for (const sup of superclassesOf(cls, context)) {
-    const hit = methodOnHierarchy(sup, name, callerFile, context, seen);
-    if (hit) return hit;
-  }
-  return undefined;
+  return out;
+}
+
+/** Whether method node `m` (`Cls::m`) is one class definition `cls` holds: in its file, or in its class folder (see heldMethods). */
+export function matlabMethodHeldBy(cls: Pick<Node, 'filePath'>, m: Pick<Node, 'filePath'>): boolean {
+  return m.filePath === cls.filePath || (/(?:^|\/)@[^/]+\/[^/]+$/.test(cls.filePath) && dirOf(m.filePath) === dirOf(cls.filePath));
+}
+
+/**
+ * Method `name` on class `cls` or the first superclass (depth-first, as MATLAB
+ * lists them) that defines it, each class the definition its name resolves
+ * to and its methods its own (see heldMethods). Never through a superclass
+ * chain that comes back to a class on it (see inCycle): MATLAB defines no
+ * class there, so no method is inherited along it. (MATLAB defines none of
+ * the classes in or below such a chain at all; their own methods are still
+ * linked, as a sync can only follow a chain upwards: see
+ * MatlabSuperclassChange in ./matlab-sync.)
+ */
+function methodOnHierarchy(cls: Node, name: string, callerFile: string, context: ResolutionContext): Node | undefined {
+  const own = heldMethods(cls, name, callerFile, context);
+  if (own) return own;
+  if (inCycle(cls, context)) return undefined;
+  const seen = new Set<string>();
+  const walk = (c: Node): Node | undefined => {
+    if (seen.has(c.id)) return undefined;
+    seen.add(c.id);
+    const own = heldMethods(c, name, callerFile, context);
+    if (own) return own;
+    for (const sup of superclassesOf(c, context)) {
+      const hit = walk(sup);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+  return walk(cls);
+}
+
+/**
+ * Whether class `cls`'s superclass chain, each superclass resolved as MATLAB
+ * would (superclassesOf), comes back to a class on it: `A < B`, `B < A`.
+ * MATLAB refuses such a definition (a class cannot be its own superclass,
+ * however far up), and a class below it, which needs it defined, with it
+ * (see methodOnHierarchy for what is linked there).
+ */
+function inCycle(cls: Node, context: ResolutionContext): boolean {
+  const onPath = new Set<string>();
+  const done = new Set<string>();
+  const walk = (c: Node): boolean => {
+    if (onPath.has(c.id)) return true;
+    if (done.has(c.id)) return false;
+    onPath.add(c.id);
+    for (const sup of superclassesOf(c, context)) if (walk(sup)) return true;
+    onPath.delete(c.id);
+    done.add(c.id);
+    return false;
+  };
+  return walk(cls);
+}
+
+/**
+ * A method by its qualified name (`Cls::m`, `pkg::Cls::m`) where `caller` is:
+ * on the class the owner resolves to there, or a superclass of it (see
+ * methodOnHierarchy). When the project defines no class of the owner's name
+ * at all (methods of a built-in type's class folder, `@double/f.m`), the
+ * method by its name, as the path rules pick it.
+ */
+function qualifiedMethod(owner: string, member: string, caller: Pick<Caller, 'file' | 'imports'>, context: ResolutionContext): Node | undefined {
+  const cls = resolveType(owner, caller, context);
+  if (cls) return methodOnHierarchy(cls, member, caller.file, context);
+  if (matlab(context.getNodesByQualifiedName(owner)).some((n) => TYPE_KINDS.has(n.kind))) return undefined;
+  return byQualifiedName(`${owner}::${member}`, caller.file, context, METHOD_KINDS);
+}
+
+/**
+ * The class an object the extractor says is of class `cls` (`Gizmo`,
+ * `pkg::Gizmo`, `gadget`: the dispatch and argClass facts) is of, where
+ * `caller` is: what a call of the name there makes (MATLAB doc 'Function
+ * Precedence Order'), its qualified name, when that is a class (a classdef,
+ * or an old-style class's constructor in an `@gadget` folder) — `Gizmo`
+ * imported from a package is that package's. None when a function wins the
+ * lookup (a local, a private or a plain function of the name: `g =
+ * gadget();` then makes no object, and `tidy(g)` dispatches on no class), or
+ * nothing answers it, even in the class's own folder (`@gadget/helper.m`
+ * with no constructor: `gadget()` there runs a function of the name, and a
+ * legacy object is made by its folder's constructor alone, doc 'class').
+ * Which copy of the class answers is the method lookup's (qualifiedMethod).
+ * `own`: the object is the method's own (the selfArg fact), of the caller's
+ * class as written, whether or not the project defines that class where a
+ * call of its name reaches (`@double/f.m`, a class folder with no
+ * constructor).
+ */
+function constructedClass(cls: string, caller: Caller, context: ResolutionContext, own: boolean): string | undefined {
+  if (own) return cls;
+  const made = cls.includes('::') ? resolveQualified(cls, caller, context) : resolveBare(cls, caller, context);
+  return made && TYPE_KINDS.has(made.kind) ? made.qualifiedName : undefined;
 }
 
 /**
@@ -492,15 +655,34 @@ function methodOnHierarchy(cls: Node, name: string, callerFile: string, context:
  */
 function dispatchedMethod(cls: string, name: string, caller: Caller, context: ResolutionContext): Node | undefined {
   if (cls === name || cls.endsWith(`::${name}`)) return undefined;
-  const direct = byQualifiedName(`${cls}::${name}`, caller.file, context, METHOD_KINDS);
-  if (direct) return direct;
-  const owner = resolveType(cls, caller, context);
-  return owner && methodOnHierarchy(owner, name, caller.file, context);
+  return qualifiedMethod(cls, name, caller, context);
+}
+
+/**
+ * Whether class `cls` has a method `f` an object of it gets from a call of
+ * the name where `caller` makes it: its own or inherited (qualifiedMethod),
+ * or, for a caller in the class's folder itself, a function of that folder's
+ * `private/` (MATLAB R2026a: `x ~= 0` and `ne(x, 0)` in a method of `@Qpv`
+ * run `@Qpv/private/ne.m`; `numel(k)` in a function outside `@Qpz` runs
+ * MATLAB's `numel`, not `@Qpz/private/numel.m`: doc 'Private Functions').
+ * See the keptBy fact in ../extraction/languages/matlab-ref-facts.
+ */
+function classHasMethod(cls: string, f: string, caller: Caller, context: ResolutionContext): boolean {
+  if (qualifiedMethod(cls, f, caller, context) !== undefined) return true;
+  const name = cls.includes('::') ? cls.slice(cls.lastIndexOf('::') + 2) : cls;
+  // The caller's own folder (a private function of the folder is in reach of it too: see privateInReach).
+  const at = caller.file.lastIndexOf('/');
+  let dir = `/${at < 0 ? '' : caller.file.slice(0, at + 1)}`;
+  if (dir.endsWith(`/@${name}/private/`)) dir = dir.slice(0, -'private/'.length);
+  if (!dir.endsWith(`/@${name}/`)) return false;
+  const priv = `${dir.slice(1)}private/`;
+  return matlab(context.getNodesByName(f)).some((n) => n.kind === 'function' && n.filePath.startsWith(priv) && !n.filePath.slice(priv.length).includes('/'));
 }
 
 /** `pkg::sub::f`, `Cls::m`, `pkg::Cls`, `pkg::Cls::m`. */
 function resolveQualified(name: string, caller: Caller, context: ResolutionContext): Node | undefined {
-  const direct = byQualifiedName(name, caller.file, context, NAMED_KINDS);
+  // A package's function or class; a method only on the class its owner resolves to (see qualifiedMethod).
+  const direct = byQualifiedName(name, caller.file, context, MEMBER_KINDS);
   if (direct) return direct;
   const cut = name.lastIndexOf('::');
   const owner = name.slice(0, cut);
@@ -510,13 +692,13 @@ function resolveQualified(name: string, caller: Caller, context: ResolutionConte
     const expansions = [caller.imports.exact.get(owner), ...caller.imports.wildcards.map((p) => `${p}::${owner}`)];
     for (const qn of expansions) {
       if (!qn) continue;
-      const hit = byQualifiedName(`${qn}::${member}`, caller.file, context, NAMED_KINDS);
+      const hit = byQualifiedName(`${qn}::${member}`, caller.file, context, MEMBER_KINDS) ?? qualifiedMethod(qn, member, caller, context);
       if (hit) return hit;
     }
   }
-  // An inherited method: the owner is a class that does not define it itself.
+  // A method of the class, its own or inherited.
   const cls = resolveType(owner, caller, context);
-  if (!cls) return undefined;
+  if (!cls) return qualifiedMethod(owner, member, caller, context);
   const method = methodOnHierarchy(cls, member, caller.file, context);
   if (method) return method;
   // `obj@Base(…)` names Base's constructor (`Base::Base`); a class that
@@ -533,9 +715,21 @@ function resolveQualified(name: string, caller: Caller, context: ResolutionConte
  * A bare `f` in MATLAB's precedence order (see the top of this file).
  * `dispatch`: the class of the call's first argument (`pkg::Cls`), whose
  * method `f` comes after the caller's own, imported and private functions
- * and before the path.
+ * and before the path (`ownObject`: the method's own object, the selfArg
+ * fact: see constructedClass), when that class has a method of each of
+ * `keptBy`'s names (the keptBy fact: see ../extraction/languages/matlab-ref-facts). `runs`: the call is of a form that runs a
+ * script MATLAB finds first for the name (see runsScript); any other form
+ * that finds one first reaches nothing.
  */
-function resolveBare(name: string, caller: Caller, context: ResolutionContext, dispatch?: string, statement = false): Node | undefined {
+function resolveBare(
+  name: string,
+  caller: Caller,
+  context: ResolutionContext,
+  dispatch?: string,
+  runs = false,
+  ownObject = false,
+  keptBy: readonly string[] = [],
+): Node | undefined {
   const from = caller.file;
   const { imports, scopes } = caller;
   // 1. An explicit import.
@@ -575,24 +769,38 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
   }
   // 5. Private functions in reach — and what is on the path, outside every package.
   const onPath = matlab(context.getNodesByName(name)).filter(
-    (n) => ((n.kind === 'function' && n.isExported) || TYPE_KINDS.has(n.kind)) && privateInReach(n, from) && ownerOf(n) === '',
+    (n) => ((n.kind === 'function' && n.isExported) || (TYPE_KINDS.has(n.kind) && !isMatlabMisnamedClass(n))) && privateInReach(n, from) && ownerOf(n) === '',
   );
   const priv = onPath.filter((n) => /(?:^|\/)private\//.test(n.filePath));
-  if (priv.length > 0) return nearest(priv, from);
-  // 6. The first argument's class's own method.
+  // A private script in reach comes as early as a private function does (doc 'Function Precedence Order': private
+  // functions, before the path): one that is first runs for a call of a form that runs it, and any other reaches nothing.
+  const privScripts = scriptsNamed(name, context).filter((f) => /(?:^|\/)private\//.test(f.filePath) && privateInReach(f, from));
+  if (priv.length > 0 || privScripts.length > 0) {
+    const first = nearest(privScripts.length > 0 ? [...priv, ...privScripts] : priv, from);
+    return first?.kind === 'file' && !runs ? undefined : first;
+  }
+  // 6. The first argument's class's own method, when its constructor's call reaches that class from here, and the
+  // object is still one of it: a write the call reads it through passed it to a MATLAB function the class has a
+  // method of (`x = x ~= 0`, the class's `ne`: the `keptBy` fact), every one.
   if (dispatch) {
-    const method = dispatchedMethod(dispatch, name, caller, context);
+    const cls = constructedClass(dispatch, caller, context, ownObject);
+    const method = cls && keptBy.every((f) => classHasMethod(cls, f, caller, context)) && dispatchedMethod(cls, name, caller, context);
     if (method) return method;
   }
   // 7. A class-folder class, then the path. Never a method otherwise: one
   // called with function syntax on an object of a known class arrives with
   // `dispatch`, and any other `char(s, …)` is the built-in even inside a
   // class that overloads it. A script on the path is a file of it like a
-  // function's, but runs only as a statement of its own (`setup_paths`,
-  // `run setup_paths`): it takes no argument and returns nothing.
+  // function's, but runs only for a call of a form that runs it (`setup_paths`,
+  // `run setup_paths`, `setup_paths();`, `@setup_paths`: `runs`): it takes no
+  // argument and returns nothing. MATLAB takes the first file of the name on
+  // the path all the same, and a call of any other form that finds a script
+  // there is an error ('Execution of script … as a function is not
+  // supported'): it reaches no farther function, and no edge. A private
+  // script out of the caller's reach is none of its (step 5 took those in it).
   const folderClasses = onPath.filter((n) => TYPE_KINDS.has(n.kind) && inClassFolder(n));
   let target: Node | undefined;
-  const scriptsHere = (): Node[] => (statement ? scriptsNamed(name, context) : []);
+  const scriptsHere = (): Node[] => scriptsNamed(name, context).filter((f) => privateInReach(f, from));
   if (searchPathOf(context)) {
     // A class folder's class on the path comes before any function; one the
     // caller cannot see leaves the functions and scripts it can.
@@ -609,7 +817,17 @@ function resolveBare(name: string, caller: Caller, context: ResolutionContext, d
     target = nearest(scripts.length > 0 ? [...onPath, ...scripts] : onPath, from);
   }
   // 8. A stub, when nothing above answers (one it found and a nearer case
-  // variant beat answers no call, nor does a stub then).
+  // variant beat answers no call, nor does a stub then); and when the first
+  // file of the name is a script, a stub the path rules pick before every
+  // script (stubTarget): MATLAB finds the same first file of the name for
+  // every form of the call (`f`, `f()`, `f(1)`), and only what it does then
+  // differs. A script there runs for a call of a form that runs it, and
+  // answers no other (the call is an error): nothing does then.
+  if (target && target.kind === 'file' && isMatlabScriptFile(target, context)) {
+    const stub = stubTarget(name, from, context);
+    if (stub) return !nearerInexactMatch(name, stub, from, context) ? stub : undefined;
+    if (!runs) return undefined;
+  }
   target ??= stubTarget(name, from, context);
   return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
 }
@@ -627,7 +845,7 @@ function stubTarget(name: string, from: string, context: ResolutionContext): Nod
   if (stubs.length === 0) return undefined;
   const priv = stubs.filter((file) => /(?:^|\/)private\//.test(file.filePath));
   if (priv.length > 0) return nearest(priv, from);
-  const scripts = files.filter((file) => isMatlabScriptFile(file, context));
+  const scripts = files.filter((file) => isMatlabScriptFile(file, context) && privateInReach(file, from));
   const all = scripts.length > 0 ? [...stubs, ...scripts] : stubs;
   const picked = searchPathOf(context) ? choose(all, from, context) : nearest(all, from);
   return picked && stubs.includes(picked) ? picked : undefined;
@@ -759,8 +977,9 @@ const NO_VARIABLE_METHODS: VariableMethods = { method: null, roots: [] };
 function variableMethod(member: string, callerFile: string, context: ResolutionContext): VariableMethods {
   const named = matlab(context.getNodesByName(member));
   if (named.some((n) => n.kind === 'property' || n.kind === 'constant')) return NO_VARIABLE_METHODS;
-  // A constructor (`PathA::PathA`) is called through its class, never on an object.
-  const all = named.filter((n) => n.kind === 'method' && !isConstructor(n));
+  // A constructor (`PathA::PathA`) is called through its class, never on an object; a misnamed class has none
+  // (MATLAB knows no such class: see isMatlabMisnamedClass).
+  const all = named.filter((n) => n.kind === 'method' && !isConstructor(n) && !context.getNodesInFile(n.filePath).some(isMatlabMisnamedClass));
   // A class-folder method's `Static` is on its classdef's declaration.
   const statics = new Set(all.filter((n) => n.isStatic).map((n) => n.qualifiedName));
   // With a search path, a caller it runs sees only the classes on it.
@@ -860,7 +1079,7 @@ const DOCUMENTED_METHODS: ReadonlySet<string> = new Set(MATLAB_DOCUMENTED_METHOD
 /** The copy of class `cls` the caller's class folder holds (`@C/C.m`, a classdef or an old-style constructor), if any. */
 function homeClass(cls: string, callerFile: string, context: ResolutionContext): Node | undefined {
   const dir = dirOf(callerFile);
-  return matlab(context.getNodesByQualifiedName(cls)).find((n) => TYPE_KINDS.has(n.kind) && dirOf(n.filePath) === dir);
+  return matlab(context.getNodesByQualifiedName(cls)).find((n) => TYPE_KINDS.has(n.kind) && dirOf(n.filePath) === dir && !isMatlabMisnamedClass(n));
 }
 
 /**
@@ -877,7 +1096,7 @@ function homeMethod(cls: string, name: string, caller: Caller, home: Node | unde
   const own = preferBodies(matlab(context.getNodesByQualifiedName(`${cls}::${name}`)).filter((n) => n.kind === 'method' && dirOf(n.filePath) === dir));
   if (own.length > 0) return choose(own, caller.file, context);
   if (matlabFileNames(name).some((f) => context.getNodesInFile(`${dir}/${f}`).length > 0)) return undefined;
-  if (!home) return undefined;
+  if (!home || inCycle(home, context)) return undefined;
   for (const sup of superclassesOf(home, context)) {
     const hit = methodOnHierarchy(sup, name, caller.file, context);
     if (hit) return hit;
@@ -982,8 +1201,12 @@ function foundByVariable(found: VariableMethod | undefined, via: string): Found 
 function matlabTarget(ref: UnresolvedRef, context: ResolutionContext): Found | null {
   const name = ref.referenceName;
   switch (ref.referenceKind) {
-    case 'extends':
-      return foundBy(resolveType(name, { file: ref.filePath, imports: NO_IMPORTS }, context), name);
+    case 'extends': {
+      // A misnamed class is no class MATLAB knows (see isMatlabMisnamedClass): it extends nothing.
+      const from = fileFacts(ref.filePath, context).byId.get(ref.fromNodeId);
+      if (from && isMatlabMisnamedClass(from)) return null;
+      return foundBy(superclassNamed(name, ref.filePath, context), name);
+    }
     case 'imports':
       return foundBy(byQualifiedName(name, ref.filePath, context, NAMED_KINDS), name);
     case 'calls':
@@ -1003,6 +1226,22 @@ function handleTarget(target: Node, context: ResolutionContext): Node {
   return matlab(context.getNodesByQualifiedName(`${target.qualifiedName}::${target.name}`)).find((n) => n.kind === 'method') ?? target;
 }
 
+/**
+ * Whether a bare name's reference is of a form that runs a script MATLAB
+ * finds first for the name (MATLAB R2026a, a script first on the path and a
+ * function farther: `probe` as a statement, `probe()`, `feval('probe')`
+ * and a handle `@probe`, called with nothing, run the script; `probe(2)`,
+ * `feval('probe', 2)`, `h(2)` and `v = probe;` are errors): a statement of
+ * its own, a call so with an empty argument list (the `emptyCall` fact), a
+ * callback given as text that is a statement, and a handle (`@probe`,
+ * `str2func('probe')`), which names the script. Not a call with arguments
+ * in a callback given as text (`'probe(1)'`, a reference with the `runtime`
+ * fact): MATLAB runs that text as a call.
+ */
+function runsScript(ref: UnresolvedRef, facts: MatlabRefFacts): boolean {
+  return facts.form === 'statement' || facts.emptyCall === true || (ref.referenceKind === 'function_ref' && !facts.runtime);
+}
+
 /** A call's or a handle's target (see the top of this file for the order MATLAB looks a name up in). */
 function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | null {
   const name = ref.referenceName;
@@ -1017,8 +1256,8 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
       if (facts.form === 'bare') return null;
       return foundByVariable(resolveVariableMethod(name, ref.filePath, context, facts.param === true), name);
     }
-    // A statement runs a script: a call written as one, or a callback given as text that is one (`'Callback', 'refresh_plots'`).
-    const hit = resolveBare(name, callerHere(), context, undefined, facts.form === 'statement');
+    // `tidy(g)` after `g = gadget();`: the class's method at step 6 when `gadget` is a class (the `argClass` fact).
+    const hit = resolveBare(name, callerHere(), context, ref.referenceKind === 'calls' ? facts.argClass : undefined, runsScript(ref, facts), false, facts.keptBy);
     if (hit || !facts.objectArg || ref.referenceKind !== 'calls') return foundBy(hit, name);
     const guess = classMethodGuess(name, callerHere(), context);
     return guess ? { target: guess, via: name, byCallerClass: true } : null;
@@ -1041,7 +1280,7 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
   }
   // `m(obj, …)`: `Cls::m`, looked up by the name as written, the class's method in its place.
   if (ref.referenceKind === 'calls' && facts.dispatch !== undefined) {
-    return foundBy(resolveBare(facts.dispatch, callerHere(), context, owner), name);
+    return foundBy(resolveBare(facts.dispatch, callerHere(), context, owner, false, facts.selfArg === true, facts.keptBy), name);
   }
   return foundBy(resolveQualified(name, callerHere(), context), name);
 }

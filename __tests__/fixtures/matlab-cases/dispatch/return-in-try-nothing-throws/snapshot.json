@@ -1,0 +1,17 @@
+{
+  "index": {
+    "edges": [
+      "u1.m u1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "u1.m u1 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "u2.m u2 -calls-> tidy @ tidy.m",
+      "u2.m u2 -calls-> zt @ zt.m",
+      "u2.m u2 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "u3.m u3 -calls-> tidy @ tidy.m",
+      "u3.m u3 -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "u4.m u4 -calls-> tidy @ tidy.m",
+      "u4.m u4 -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

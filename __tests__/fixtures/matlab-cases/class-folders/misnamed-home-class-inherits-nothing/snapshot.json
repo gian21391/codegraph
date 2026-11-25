@@ -1,0 +1,12 @@
+{
+  "index": {
+    "edges": [
+      "@vane/helper.m vane::helper -calls-> zt @ zt.m"
+    ],
+    "rows": [
+      "@vane/VANE.m:1 extends:Spinner",
+      "@vane/helper.m:2 calls:turn"
+    ],
+    "dormant": []
+  }
+}

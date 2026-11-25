@@ -1,0 +1,23 @@
+{
+  "why": "`app/probe.m` is a script and first on the path, `lib/probe.m` a function farther. MATLAB R2026a: the statement `probe`, `probe()`, `feval('probe')` and a handle `@probe` (which names the script; `h()` runs it) run the script; `probe(2)`, `feval('probe', 2)` and `v = probe;` are errors ('Execution of script probe as a function is not supported'), no call of `lib/probe.m`, and their rows stay (the user's ruling, step 15).",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> zt @ lib/zt.m",
+      "app/main.m runs -calls-> app/probe.m @ app/probe.m",
+      "app/main.m empty -calls-> app/probe.m @ app/probe.m",
+      "app/main.m byname -calls-> app/probe.m @ app/probe.m",
+      "app/main.m handle -references-> app/probe.m @ app/probe.m"
+    ],
+    "rows": [
+      "app/main.m:2 calls:probe",
+      "app/main.m:3 calls:probe",
+      "app/main.m:4 calls:probe"
+    ],
+    "noEdges": [
+      {
+        "from": "app/main.m",
+        "at": "lib/probe.m"
+      }
+    ]
+  }
+}

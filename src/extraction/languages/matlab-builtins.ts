@@ -185,6 +185,17 @@ export const MATLAB_BUILTINS: ReadonlySet<string> = new Set([
 export const MATLAB_METHOD_ONLY_NAMES: ReadonlySet<string> = new Set(MATLAB_METHOD_NAMES.filter((n) => !MATLAB_BUILTINS.has(n)));
 
 /**
+ * Whether a callee written `name` may be an old-style class's constructor,
+ * when no variable holds the name (`g = gadget();`, `@gadget/gadget.m`): a
+ * lower-case name that is none of MATLAB's (no built-in's, none MATLAB has
+ * only as a method). What a call on the object it makes may dispatch to is
+ * the resolver's to tell (see the argClass fact in ./matlab-ref-facts).
+ */
+export function isMatlabLowerConstructorName(name: string): boolean {
+  return /^[a-z]/.test(name) && !MATLAB_BUILTINS.has(name) && !MATLAB_METHOD_ONLY_NAMES.has(name);
+}
+
+/**
  * MATLAB functions whose first argument may name a function as text
  * (`cellfun('myfun', c)`, `fzero('fbase', x0)`, `ode45('rhs', …)`): that
  * text references the function. Not the deprecated `quad`, `quadl` and
@@ -406,4 +417,57 @@ export class MatlabInsertFilter {
     }
     return this.reachable;
   }
+}
+
+/**
+ * MATLAB's functions that error on an object whose class defines no method
+ * of the name (measured in MATLAB R2026a on a classdef with no methods and
+ * on an old-style class; `~=`, `kron`, `sort`, `unique` by the same check;
+ * `<=`, `>` and `>=`, `le`, `gt`, `ge`, by the same check, step 15 round 7b):
+ * a write `v = f(…, v, …)` through one of them either runs the class's own
+ * `f` (which, by the project rule, gives the object back) or stops there, so
+ * no path through it reaches a later call with anything but the object (see
+ * keepsObject in ./matlab). `&&` and `||` error the same way (keepsObject reads them).
+ */
+export const ERRORING_ON_OBJECTS: ReadonlySet<string> = new Set([
+  'and', 'or', 'not', 'eq', 'ne', 'lt', 'le', 'gt', 'ge', 'plus', 'uminus', 'kron', 'sort', 'unique', 'sum', 'abs', 'max',
+  'any', 'all', 'isnan', 'double', 'num2str', 'mat2str', 'ismember',
+]);
+
+/**
+ * MATLAB's functions that give a value of another class for an object whose
+ * class defines no method of the name (measured in MATLAB R2026a): a write
+ * through one of them keeps the object only when the class has such a
+ * method (the `keptBy` fact). So does any MATLAB function not measured
+ * (see keepsObject). Of the method's own object, these alone end the hint
+ * among MATLAB's functions (see ownWriteKind).
+ */
+export const VALUE_RETURNING_ON_OBJECTS: ReadonlySet<string> = new Set([
+  'numel', 'size', 'isempty', 'length', 'class', 'isequal', 'ndims', 'isa', 'isstruct', 'struct', 'fieldnames', 'isfield',
+  'isobject',
+]);
+
+/**
+ * MATLAB's functions whose value is the object they are given: when a class
+ * overloads them, an old-style class's `set` (doc 'set', the class's own
+ * returns the object it changes), `subsasgn`, and the arithmetic operators'
+ * functions (doc 'Implementing Operators for Your Class'); and, for any
+ * class, overloaded or not, the built-ins that rearrange an array (measured
+ * in MATLAB R2026a on a classdef with no methods and on an old-style class:
+ * each gives an array of the object's class). See keepsObject in ./matlab.
+ */
+export const OBJECT_RETURNING_BUILTINS: ReadonlySet<string> = new Set([
+  'set', 'subsasgn', 'plus', 'minus', 'uminus', 'uplus', 'times', 'mtimes', 'rdivide', 'ldivide', 'mrdivide', 'mldivide',
+  'power', 'mpower', 'transpose', 'ctranspose',
+  'reshape', 'repmat', 'permute', 'ipermute', 'cat', 'horzcat', 'vertcat', 'circshift', 'flip', 'fliplr', 'flipud', 'rot90',
+  'squeeze', 'shiftdim', 'repelem', 'resize',
+]);
+
+/**
+ * Whether a `keptBy` fact may name `name` (see ../../resolution/matlab-sync's
+ * reopenMatlabKeptByCalls): one of MATLAB's names that neither keeps an object
+ * unconditionally nor errors on one.
+ */
+export function isMatlabKeptByName(name: string): boolean {
+  return MATLAB_BUILTINS.has(name) && !OBJECT_RETURNING_BUILTINS.has(name) && !ERRORING_ON_OBJECTS.has(name);
 }

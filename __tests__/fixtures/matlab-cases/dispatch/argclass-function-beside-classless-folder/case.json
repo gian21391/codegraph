@@ -1,0 +1,15 @@
+{
+  "why": "No class `gadget` is defined anywhere: `gadget()` is the function `gadget.m`, which returns a struct (a legacy object is made only by its class folder's constructor: MATLAB doc 'class'), so `tidy(g)` calls `tidy.m`; `ext/@gadget/tidy.m` is a method of no object here (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> tidy @ tidy.m",
+      "use.m use -calls-> gadget @ gadget.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "at": "ext/@gadget/tidy.m"
+      }
+    ]
+  }
+}

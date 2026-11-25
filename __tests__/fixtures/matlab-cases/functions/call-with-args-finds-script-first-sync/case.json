@@ -1,0 +1,121 @@
+{
+  "why": "MATLAB runs the first file of a name it finds; a statement runs a script, and a call with arguments that finds a script first is an error ('Attempt to execute SCRIPT probe as a function'; MATLAB doc 'Scripts vs. Functions', 'Function Precedence Order'), not a call of a farther function: it links nowhere and stays a live row (the user's ruling (step 15)). The anchor: with no nearer script, `probe(1)` and `probe` in `app/main.m` both call `lib/probe.m`. With a script `app/probe.m` added, the statement runs it and the call links nowhere; turned to Octave, which the index does not read (step 4), it blocks nothing and both call `lib/probe.m` again; a script again; binary, which holds no code, blocks nothing either; a script again, and deleted. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "app/main.m main -calls-> probe @ lib/probe.m"
+    ],
+    "noRows": [
+      {
+        "file": "app/main.m"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/probe.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> app/probe.m @ app/probe.m"
+        ],
+        "rows": [
+          "app/main.m:2 calls:probe"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib/probe.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/probe.m": "function probe(n)\n  n = 2;\nendfunction\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> probe @ lib/probe.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "app/probe.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/probe.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> app/probe.m @ app/probe.m"
+        ],
+        "rows": [
+          "app/main.m:2 calls:probe"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib/probe.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/probe.m": {
+          "base64": "AAECA//+AAcICQAACww="
+        }
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> probe @ lib/probe.m"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "app/probe.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/probe.m": "x = 1;\n"
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> app/probe.m @ app/probe.m"
+        ],
+        "rows": [
+          "app/main.m:2 calls:probe"
+        ],
+        "noEdges": [
+          {
+            "from": "app/main.m",
+            "at": "lib/probe.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/probe.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/main.m main -calls-> probe @ lib/probe.m"
+        ],
+        "noRows": [
+          {
+            "file": "app/main.m"
+          }
+        ]
+      }
+    }
+  ]
+}

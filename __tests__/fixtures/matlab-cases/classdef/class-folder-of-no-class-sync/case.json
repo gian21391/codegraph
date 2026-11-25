@@ -1,0 +1,36 @@
+{
+  "why": "A class folder that no class of the project defines (as a built-in type's, `@double/f.m`) holds methods reached by their qualified name, the path rules picking the copy (project rule, qualifiedMethod in matlab-lookup.ts): `Crate.fluff(1)` calls `lib/@Crate/fluff.m`. Once a classdef `Crate.m` is added, `Crate` is that class, whose methods are those of its own file (MATLAB doc 'Class Precedence and MATLAB Path', 'Methods in Separate Files'): it has no `fluff`, and the call links nowhere; with the classdef deleted, the folder's method answers again. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "main.m main -calls-> Crate::fluff @ lib/@Crate/fluff.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "Crate.m": "classdef Crate\n  methods\n    function obj = Crate()\n    end\n  end\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "main.m:2 calls:Crate::fluff"
+        ],
+        "noEdges": [
+          {
+            "from": "main.m",
+            "to": "fluff"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "Crate.m": null
+      },
+      "truth": {
+        "edges": [
+          "main.m main -calls-> Crate::fluff @ lib/@Crate/fluff.m"
+        ]
+      }
+    }
+  ]
+}

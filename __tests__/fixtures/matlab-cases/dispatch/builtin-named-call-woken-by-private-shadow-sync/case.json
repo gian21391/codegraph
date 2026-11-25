@@ -1,0 +1,33 @@
+{
+  "why": "`disp(g)` after `g = gadget()` calls `lib/@gadget/disp.m` while `gadget()` reaches the class (MATLAB doc 'Method Invocation'); a private `app/private/gadget.m` added comes first (doc 'Function Precedence Order'), `g` is a struct and MATLAB's own `disp` runs (no edge); it removed, the class's method again. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "app/use.m use -calls-> gadget::disp @ lib/@gadget/disp.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "app/private/gadget.m": "function s = gadget()\ns = struct('n', 1);\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "app/use.m",
+            "at": "lib/@gadget/disp.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "app/private/gadget.m": null
+      },
+      "truth": {
+        "edges": [
+          "app/use.m use -calls-> gadget::disp @ lib/@gadget/disp.m"
+        ]
+      }
+    }
+  ]
+}

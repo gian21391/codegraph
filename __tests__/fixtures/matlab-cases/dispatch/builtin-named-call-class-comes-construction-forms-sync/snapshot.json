@@ -1,0 +1,120 @@
+{
+  "index": {
+    "edges": [
+      "use3.m use3 -calls-> zt @ zt.m",
+      "use3.m use3 -instantiates-> Holder @ Holder.m",
+      "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+    ],
+    "rows": [
+      "use3.m:3 calls:Holder::gadget"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": [
+        "use3.m:4 calls:gadget::disp",
+        "use5.m:4 calls:gadget::disp"
+      ]
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> disp @ disp.m",
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use4.m use4.m -calls-> disp @ disp.m",
+        "use5.m use5 -calls-> disp @ disp.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> disp @ disp.m",
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use4.m use4.m -calls-> disp @ disp.m",
+        "use5.m use5 -calls-> disp @ disp.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": [
+        "use3.m:4 calls:gadget::disp",
+        "use4.m:2 calls:disp",
+        "use5.m:4 calls:gadget::disp"
+      ]
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": [
+        "use3.m:4 calls:gadget::disp",
+        "use4.m:2 calls:disp",
+        "use5.m:4 calls:gadget::disp"
+      ]
+    },
+    {
+      "edges": [
+        "use3.m use3 -calls-> zt @ zt.m",
+        "use3.m use3 -instantiates-> Holder @ Holder.m",
+        "use5.m use5 -calls-> qpk::gadget @ +qpk/gadget.m"
+      ],
+      "rows": [
+        "use3.m:3 calls:Holder::gadget"
+      ],
+      "dormant": []
+    }
+  ]
+}

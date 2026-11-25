@@ -1,0 +1,18 @@
+{
+  "why": "A `private/` folder's files are visible only to the files of its parent folder and of itself (MATLAB doc 'Private Functions'): `app/sub/private/foo.m`, a script, is out of `app/t.m`'s reach, however near, so the first `foo` `app/t.m` finds is the MEX function `lib/bin/foo.m` documents (a stub, step 8): `foo(1)` reaches the stub. From `app/sub/u.m` the private script is first: `foo(1)` there is an error (a script called with an argument, the user's ruling, step 15), a live row.",
+  "truth": {
+    "edges": [
+      "app/t.m t -calls-> zt @ lib/zt.m",
+      "app/t.m t -calls-> lib/bin/foo.m @ lib/bin/foo.m"
+    ],
+    "rows": [
+      "app/sub/u.m:3 calls:foo"
+    ],
+    "noEdges": [
+      {
+        "from": "app/sub/u.m",
+        "to": "foo"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "why": "Every legitimate class layout (MATLAB doc 'Class Folders', 'Namespaces'): `@Vane/Vane.m`, `+pkg/@Reed/Reed.m`, an old-style `@weir/weir.m` with a method file (`flow(c)`: the argument's class's method comes before MATLAB's `flow`, doc 'Function Precedence Order'), and a classdef `@Sluice/Sluice.m` with a method file. None is a misnamed class (the step 15 review's probe).",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> Vane::turn @ @Vane/Vane.m",
+      "use.m use -calls-> pkg::Reed::bend @ +pkg/@Reed/Reed.m",
+      "use.m use -calls-> weir::flow @ @weir/flow.m",
+      "use.m use -calls-> Sluice::open @ @Sluice/open.m",
+      "use.m use -instantiates-> Sluice @ @Sluice/Sluice.m",
+      "use.m use -instantiates-> weir @ @weir/weir.m"
+    ]
+  }
+}

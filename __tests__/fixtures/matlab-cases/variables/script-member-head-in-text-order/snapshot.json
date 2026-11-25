@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "run1.m run1.m -calls-> Gyro::spin @ Gyro.m",
+      "run1.m run1.m -instantiates-> Gyro @ Gyro.m",
+      "run2.m run2.m -calls-> pkg::f @ +pkg/f.m"
+    ],
+    "rows": [
+      "run1.m:1 calls:h::spin"
+    ],
+    "dormant": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "why": "`load(fn, 'disp')` in a function may make a variable `disp`, so `disp(g)` after it may index that variable rather than call anything (MATLAB doc 'load'): the call carries the runtime fact and its row is kept dormant whatever answers its name (project rule, MatlabRefFacts.runtime), not judged as a call on an object under a built-in's name, which with no class `gadget` and no project `disp` would be dropped.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "dormant": [
+      "use.m:4 calls:gadget::disp"
+    ]
+  }
+}

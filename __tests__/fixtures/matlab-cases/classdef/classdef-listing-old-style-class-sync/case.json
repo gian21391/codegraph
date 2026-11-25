@@ -1,0 +1,104 @@
+{
+  "why": "MATLAB R2026a refuses a classdef whose superclass is an old-style class ('The specified superclass \u2026 cannot be found on MATLAB's search path, or is shadowed'): `W < gadget`, with `lib/@gadget/gadget.m` a constructor function, inherits nothing, and its `extends` reaches nothing (a live row). Once `gadget` is a classdef, `W` inherits its folder's `spin` (doc 'Class Folders'; never `ext/@gadget/tidy.m`, another folder's, which a classdef does not take). The steps list the old-style class, turn it into a classdef and back, and list `handle` again; each must end where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "use.m",
+        "to": "tidy"
+      },
+      {
+        "from": "use.m",
+        "to": "spin"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "W.m": "classdef W < gadget\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "W.m:1 extends:gadget"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "tidy"
+          },
+          {
+            "from": "use.m",
+            "to": "spin"
+          },
+          {
+            "from": "W.m",
+            "to": "gadget"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/@gadget/gadget.m": "classdef gadget\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "W.m W -extends-> gadget @ lib/@gadget/gadget.m",
+          "use.m use -calls-> gadget::spin @ lib/@gadget/spin.m"
+        ],
+        "noRows": [
+          "W.m:1 extends:gadget"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "tidy"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/@gadget/gadget.m": "function obj = gadget()\nobj = class(struct('n', 0), 'gadget');\nend\n"
+      },
+      "truth": {
+        "rows": [
+          "W.m:1 extends:gadget"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "spin"
+          },
+          {
+            "from": "W.m",
+            "to": "gadget"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "W.m": "classdef W < handle\nend\n"
+      },
+      "truth": {
+        "noRows": [
+          "W.m:1 extends:gadget"
+        ],
+        "noEdges": [
+          {
+            "from": "use.m",
+            "to": "tidy"
+          },
+          {
+            "from": "use.m",
+            "to": "spin"
+          }
+        ]
+      }
+    }
+  ]
+}

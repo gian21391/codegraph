@@ -1,0 +1,36 @@
+{
+  "why": "A write that passes the object to a MATLAB function runs the class's own method of that name when the class defines or inherits one (doc 'Method Invocation', 'Operator Overloading'), which by the project rule gives the object back; MATLAB's otherwise. `x ~= 0` calls `ne`, which errors on an object whose class has none (MATLAB R2026a), so that write never ends the class (step 15 round 7): `x = x ~= 0` in `@Cel/all.m` leaves `x` a `Cel` and `sum(x)` is `Cel::sum`, as `k ~= 0` in `use1.m`. `numel`, `size` give a value of another class when the class has no such method (MATLAB R2026a): `x = numel(x)` in `@Bare/all.m` and `k = numel(k)` in `use2.m` (no `numel` in `@Bare/`) make doubles, so `sum(x)` is MATLAB's and `tidy(k)` the root `tidy.m`; `p = size(p)` keeps a `Pak`, which defines `size` (`use6.m`), and a `Kid < Pak`, which inherits it (`use7.m`), and not a `Plain`, which has none (`use8.m`). MATLAB's built-ins that rearrange an array keep an object array's class with no method of the class (MATLAB R2026a: `reshape`, `repmat`, `permute`, `cat`, `flip`, …): `fa = reshape(fa, 4, 1)` leaves `fa` an object of its class whether or not the class defines `reshape` (`@Fil/isodd.m`, `@Bare/isodd.m`, `use3.m`, `use4.m`, `use5.m`), so each `peek` is the class's.",
+  "truth": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m",
+      "@Fil/isodd.m Fil::isodd -calls-> Fil::peek @ @Fil/peek.m",
+      "use1.m use1 -calls-> Cel::tidy @ @Cel/tidy.m",
+      "use1.m use1 -calls-> zt @ zt.m",
+      "use2.m use2 -calls-> tidy @ tidy.m",
+      "use3.m use3 -calls-> Pak::peek @ Pak.m",
+      "use4.m use4 -calls-> Pak::peek @ Pak.m",
+      "@Bare/isodd.m Bare::isodd -calls-> Bare::peek @ @Bare/peek.m",
+      "use5.m use5 -calls-> Plain::peek @ Plain.m",
+      "use6.m use6 -calls-> Pak::peek @ Pak.m",
+      "use7.m use7 -calls-> Pak::peek @ Pak.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Bare/all.m",
+        "to": "Bare::sum"
+      },
+      {
+        "from": "use1.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "use2.m",
+        "to": "Bare::tidy"
+      },
+      {
+        "from": "use8.m",
+        "to": "Plain::peek"
+      }
+    ]
+  }
+}

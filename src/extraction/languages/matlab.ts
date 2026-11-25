@@ -5,9 +5,16 @@ import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 import { getParser } from '../grammars';
 import { matlabFileStem, matlabPathScope } from './matlab-path';
 import { MATLAB_LINE_END, hasMatlabKeywordPart, matlabParseText, matlabUnreadReason } from './matlab-syntax';
-import { MATLAB_BUILTINS, MATLAB_CELLFUN_NAMES } from './matlab-builtins';
+import {
+  ERRORING_ON_OBJECTS,
+  MATLAB_BUILTINS,
+  MATLAB_CELLFUN_NAMES,
+  OBJECT_RETURNING_BUILTINS,
+  VALUE_RETURNING_ON_OBJECTS,
+  isMatlabLowerConstructorName,
+} from './matlab-builtins';
 import { JAVA_PACKAGE_ROOTS, isJavaImport } from './matlab-java';
-import { COMPUTED_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
+import { COMPUTED_TAG, CTOR_TAG, MATLAB_ARG_PLACES, RUNTIME_TAG, argItemsOf, isMatlabArgsCandidate, matlabRefCandidates, spreadItem, type MatlabArgValue, type MatlabCallArgs, type MatlabRefFacts } from './matlab-ref-facts';
 import { GuardScope, type MatlabGuard } from './matlab-guards';
 import { MATLAB_ANCHORED_BASE, MATLAB_ANCHORED_STRIDE } from './matlab-places';
 import {
@@ -44,7 +51,7 @@ import {
   isWasmMemoryError,
   loadMakesUnlisted,
   loadedNames,
-  matlabClearedNames,
+  matlabClearOf,
   sinkInputs,
   type InterpHost,
   type ParsedCode,
@@ -328,6 +335,13 @@ interface Self {
   name: string;
   /** Its class, `pkg::Cls`. */
   cls: string;
+  /**
+   * In an old-style class's constructor (`@Gizmo/Gizmo.m`): its output holds
+   * nothing on entry, and is the object only once the body makes it
+   * (`obj = class(s, 'Gizmo')`: see ownObjectKept). A classdef's
+   * constructor is given the object.
+   */
+  made?: true;
 }
 
 /**
@@ -347,6 +361,18 @@ interface Frame {
   locals: ReadonlySet<string>;
   /** Variable → the class its every constructor-shaped assignment here names (`c = pkg.Cls(…)` → `pkg::Cls`). */
   classHints: ReadonlyMap<string, ClassHint>;
+  /**
+   * Variable → the class its every assignment that may construct names, a
+   * lower-case callee's included (`g = gadget();` → `gadget`: an old-style
+   * class's constructor is named so, `@gadget/gadget.m`): read for a call's
+   * dispatch alone (see dispatchClass), where the resolver takes the
+   * class's method only when the name is a class that has one and the path
+   * otherwise. Never a member call's receiver: `s = load_cfg(); s.tol(1)`
+   * reads a field of what a function returned.
+   */
+  dispatchHints?: ReadonlyMap<string, ClassHint>;
+  /** A function's or a script's writes, for where a call's class hint holds (see hintHolds). */
+  hintWrites?: HintWrites;
   /**
    * In a method, variable → its class, for the method's own object when the
    * method never writes it whole and no write it cannot see may (see
@@ -392,6 +418,24 @@ interface Frame {
    */
   runtime?: ReadonlySet<string>;
   /**
+   * In a function, the names of `runtime` that a `load` name list alone makes
+   * (`load(f, 'a')`), with those loads, placed, and the function's clears: a
+   * read is of a name made at runtime only where one of the loads may have
+   * run before it (see loadReaches); a read before every one is a call,
+   * MATLAB doc 'load' (a variable is there once the load has run).
+   */
+  runtimeLoads?: { sites: ReadonlyMap<string, readonly Placed[]> } & ClearSites;
+  /**
+   * A script's top level: each of its variables written where the walk can
+   * place it (see ScopeFacts.writeSites), with its writes, placed, and the
+   * script's clears. A script's reads go in text order (the user's ruling,
+   * step 11): a read with no write of the name before it in text order (see
+   * writeReaches) reads no variable of the script's, and is a call.
+   * A name written where no place is known (by code `eval` runs) is a
+   * variable everywhere.
+   */
+  textOrder?: { sites: ReadonlyMap<string, readonly Placed[]> } & ClearSites;
+  /**
    * In a function, a script's top level or code `eval` runs where it is: the
    * `load`s there that may make names the code does not spell (see
    * LoadSites). A name no variable there read after one may be one it made:
@@ -434,6 +478,8 @@ const EMPTY: ReadonlySet<string> = new Set();
 interface ClassHint {
   cls: string;
   bare: boolean;
+  /** The assignments that construct it (`g = Gizmo(…)`), by node id: where a call's dispatch takes it (see hintHolds). */
+  sites?: ReadonlySet<number>;
 }
 
 const NO_HINTS: ReadonlyMap<string, ClassHint> = new Map();
@@ -500,18 +546,488 @@ function isLocal(f: Frame, name: string): boolean {
 /**
  * The class variable `v` holds where frame `f` reads it. A lambda's parameter
  * holds whatever the lambda is called with; a nested function goes by its own
- * assignments only (it may reassign its parent's variable).
+ * assignments only (it may reassign its parent's variable). `at`, for a
+ * call's dispatch: the argument read there, where the hint holds only if
+ * every write of `v` that may reach it constructs the class (see hintHolds).
  */
-function classHintOf(f: Frame, v: string): ClassHint | undefined {
+function classHintOf(f: Frame, v: string, dispatch = false, at?: SyntaxNode): ClassHint | undefined {
+  return classHintKept(f, v, dispatch, at)?.hint;
+}
+
+/** No condition on a hint (see Kept). */
+const NONE_KEPT: ReadonlySet<string> = new Set();
+
+/**
+ * A class hint where it is read, with what it holds on (see classHintOf):
+ * `kept`, the MATLAB functions the object went through on the way, by a
+ * write that may reach the read (`x = x ~= 0`: `ne`), which give an object
+ * of the class back only when the class defines or inherits a method of the
+ * name (see keepsObject): the resolver's to ask (the `keptBy` fact).
+ */
+interface Kept {
+  hint: ClassHint;
+  kept: ReadonlySet<string>;
+}
+
+/** classHintOf, with the hint's conditions (see Kept). */
+function classHintKept(f: Frame, v: string, dispatch = false, at?: SyntaxNode): Kept | undefined {
   let g = f;
+  let pos = at;
   while (g.kind === 'lambda' || g.kind === 'eval') {
     // What eval'd code assigns hides what the code around it said.
     const own = g.classHints.get(v);
-    if (own) return own;
+    if (own) return { hint: own, kept: NONE_KEPT };
     if (g.locals.has(v)) return undefined;
+    // Code `eval` runs reads at the `eval`'s place in the code around; a lambda where it is written.
+    if (g.kind === 'eval' && g.at) pos = g.at;
     g = g.parent!;
   }
-  return g.classHints.get(v);
+  const hint = g.classHints.get(v) ?? (dispatch ? g.dispatchHints?.get(v) : undefined);
+  if (!hint) {
+    // Constructed as two classes: the first, in the order of their first constructions in the text, that holds
+    // where the read is (hintHolds). Two may both hold (`k = gadget(); k = widget(k)`: keepsObject reads a
+    // lower-case callee's call through, so `gadget`'s construction reaches past `widget`'s): the earlier one,
+    // `gadget`, whichever read comes first, as the order is the text's.
+    const choices = hintChoices(g.classHints, v) ?? (dispatch ? hintChoices(g.dispatchHints, v) : undefined);
+    if (!choices || !pos || !g.hintWrites) return undefined;
+    for (const choice of choices) {
+      const kept = hintHolds(g.hintWrites, v, choice, pos);
+      if (kept) return { hint: choice, kept };
+    }
+    return undefined;
+  }
+  if (!pos || !g.hintWrites) return { hint, kept: NONE_KEPT };
+  const kept = hintHolds(g.hintWrites, v, hint, pos);
+  return kept ? { hint, kept } : undefined;
+}
+
+/**
+ * A function's or a script's writes, read for where a class hint holds (see
+ * hintHolds): its ScopeFacts.writeSites and clears, with what holds a value
+ * on entry (a parameter, a nested function's shared variable), and each
+ * name's whole writes, placed, once asked.
+ */
+interface HintWrites {
+  facts: Pick<ScopeFacts, 'writeSites' | 'clears' | 'clearedAt' | 'clearedBy'>;
+  scope: SyntaxNode;
+  source: string;
+  input: (v: string) => boolean;
+  /**
+   * The class a variable of the scope holds where `at` reads it, by the
+   * hints' reaching rule (a class hint's, or the method's own object: see
+   * classHintOf, isOwnObject), for keepsObject's elements; undefined when
+   * the code does not say.
+   */
+  classAt: (w: string, at: SyntaxNode) => string | undefined;
+  /** Each name's whole writes that do not keep its object, placed, by name and the hint's class (see hintWritesPlaced). */
+  placed: Map<string, PlacedWrites>;
+  /** The keys of `placed` being worked out: one asked again while it is holds no class (see hintWritesPlaced). */
+  computing: Set<string>;
+  /** How many times an ask found its key being worked out: an answer worked out past one is not kept (see hintWritesPlaced). */
+  cycles: number;
+  /** The method's own object's whole writes that do anything but keep it, placed, with what each does (see ownObjectKept). */
+  own: Map<string, Array<{ at: Placed; kind: string }>>;
+  clears?: ClearSites;
+}
+
+/** A hint's class when it holds with no condition (see Kept): an element of a concatenation asks no method of its class. */
+function heldWithoutCondition(held: Kept | undefined): string | undefined {
+  return held && held.kept.size === 0 ? held.hint.cls : undefined;
+}
+
+/** HintWrites for `scope`. */
+function hintWritesOf(facts: ScopeFacts, scope: SyntaxNode, source: string, input: (v: string) => boolean, classAt: HintWrites['classAt']): HintWrites {
+  return { facts, scope, source, input, classAt, placed: new Map(), computing: new Set(), cycles: 0, own: new Map() };
+}
+
+/**
+ * Whether write site `site` of `v` (see ScopeFacts.writeSites) writes it
+ * whole: an assignment to `v` itself (`v = …`, `[v, w] = …`), a loop's or a
+ * `catch`'s variable, a `global` / `persistent` declaration, a `load` that
+ * lists it. Not one into it (`v.f = …`, `v(k) = …`), which keeps what it is,
+ * nor the array evidence that makes a function's name a variable.
+ */
+function writesWhole(site: SyntaxNode, v: string, source: string): boolean {
+  switch (site.type) {
+    case 'assignment': {
+      const left = childField(site, 'left');
+      if (left?.type === 'identifier') return getNodeText(left, source) === v;
+      return left?.type === 'multioutput_variable' && namedChildren(left).some((o) => o.type === 'identifier' && getNodeText(o, source) === v);
+    }
+    case 'function_call':
+      return getNodeText(childField(site, 'name') ?? site, source) === 'load';
+    case 'command': {
+      const cmd = namedChildren(site).find((a) => a.type === 'command_name');
+      return cmd !== undefined && getNodeText(cmd, source) === 'load';
+    }
+    default:
+      return true;
+  }
+}
+
+/** The operators whose value is their function's (see keepsObject): the class's own method of the name, or MATLAB's. */
+const OPERATOR_FUNCTIONS: ReadonlyMap<string, string> = new Map([
+  ['==', 'eq'], ['~=', 'ne'], ['!=', 'ne'], ['<', 'lt'], ['<=', 'le'], ['>', 'gt'], ['>=', 'ge'],
+  ['&', 'and'], ['|', 'or'], ['~', 'not'], ['!', 'not'],
+]);
+
+/**
+ * Whether assignment `site` gives `v`, which holds an object of class `cls`
+ * (a class hint's), a value of that class again, so that the hint is read
+ * through it; parentheses around the right side are read through. MATLAB:
+ * indexing an object array with parentheses (`v = v(1)`, `v = v(2:end)`)
+ * gives an array of its class, and so does its transpose (`v = v'`, `v =
+ * v(end:-1:1)'`). A concatenation with `v` among its elements (or `v(…)`, a
+ * transpose of either) keeps it: MATLAB gives the class, or the class's own
+ * concatenation runs (project rule), or it errors (R2026a: `[k, 1]`,
+ * objects of two classes) and the path reaches nothing; one without `v`
+ * keeps it as concatenationHolds tells (`[w, Gizmo()]`, `[w, 5]`).
+ * Not `v = v{1}` nor `v = v.prop`, whose
+ * values the code does not state, nor `[]`, a double. A construction of
+ * another class with `v` passed (`k = Widget(k)`) keeps it, as the update
+ * idiom below (step 15 round 8b: whether `Widget` is a class is the
+ * resolver's to tell; S18). And a project rule for what a call returns,
+ * which the index does not follow: a call that is passed `v` (`v = f(…, v,
+ * …)`) gives it back when `f` is the project's (no MATLAB function has its
+ * name: the value object's update idiom, `report = update(report, x)`,
+ * `obj = Zconf(obj)`, whatever the callee's case), or one of
+ * OBJECT_RETURNING_BUILTINS (`a = set(a, 'v', 2)`), or an operator's form
+ * of one (`a = a + 1`, `a = -a`), or a method called on `v` itself (`obj =
+ * obj.scale(2)`), or a function of MATLAB's name the file defines itself
+ * (see matlabNameKeeps). Any other of MATLAB's functions, and a
+ * comparison's or a logical operator's form (`x = x ~= 0` is `ne`, `~x`
+ * `not`, `x & y` `and`, `x && y`), calls the class's own method of the name
+ * when the class defines or inherits one (doc 'Method Invocation',
+ * 'Operator Overloading'), and MATLAB's otherwise: one that errors on an
+ * object (ERRORING_ON_OBJECTS, MATLAB R2026a) ends no hint, since no path
+ * through it reaches a later call with anything else; one that gives a
+ * value of another class (VALUE_RETURNING_ON_OBJECTS: `n = numel(v)`, `c =
+ * class(v)`), or any name not measured, keeps the object on the condition
+ * that the class has the method, the function's name returned for the
+ * resolver to ask (the `keptBy` fact: see Kept). True when the write keeps
+ * it, false when it does not.
+ */
+function keepsObject(site: SyntaxNode, v: string, cls: string, hw: HintWrites): boolean | string {
+  if (site.type !== 'assignment') return false;
+  const source = hw.source;
+  const right = unparenthesised(childField(site, 'right'));
+  const isV = (n: SyntaxNode | null | undefined): boolean => n?.type === 'identifier' && getNodeText(n, source) === v;
+  if (right?.type === 'function_call' && !bracesIndex(right)) {
+    const callee = childField(right, 'name');
+    if (callee?.type !== 'identifier') return false;
+    const f = getNodeText(callee, source);
+    if (f === v) return true;
+    const args = callArgs(right);
+    if (!args.some(isV)) return false;
+    // `k = Zconf(k)`, `k = update(k, 2)`: a project rule, the update idiom, whatever the callee's case: a call that is
+    // passed the variable itself gives back its class (step 15 round 8b). Whether `Widget` in `k = Widget(k)` is a
+    // class is the resolver's to tell, and a sync would have to follow it turning between a function and a class
+    // (a re-open keyed by the construction's name, not built: S18), so the write keeps the class `k` had.
+    if (!MATLAB_BUILTINS.has(f)) return true;
+    if (OBJECT_RETURNING_BUILTINS.has(f)) return true;
+    return matlabNameKeeps(f, cls, args, isV);
+  }
+  if (right && OPERATOR_FORMS.has(right.type)) {
+    if (!namedChildren(right).some(isV)) return false;
+    // `x && y`, `x || y`: an error on an object (MATLAB R2026a), so no path through it reaches a later call.
+    if (right.type === 'boolean_operator') return true;
+    const op = right.type === 'not_operator' ? '~' : (right.children.find((c) => !c.isNamed)?.type ?? '');
+    const f = OPERATOR_FUNCTIONS.get(op);
+    // An arithmetic operator's form keeps it (project rule, step 15 round 3).
+    if (f === undefined) return right.type !== 'comparison_operator';
+    return ERRORING_ON_OBJECTS.has(f) ? true : f;
+  }
+  if (right?.type === 'postfix_operator') return isObjectOfClass(right, v, cls, hw);
+  if (right?.type === 'matrix') {
+    const elements = bracketParts(right).filter((r) => r.type === 'row').flatMap(bracketParts);
+    if (elements.length === 0) return false;
+    // `v` among the elements: MATLAB gives its class, or the class's own concatenation runs, or it errors (MATLAB
+    // R2026a: `[k, 1]`, objects of two classes) and reaches nothing: the object either way (step 15 round 7).
+    if (elements.some((e) => isSelfExpression(e, v, source))) return true;
+    return concatenationHolds(elements, v, cls, hw);
+  }
+  if (right?.type === 'field_expression') {
+    const parts = namedChildren(right);
+    const last = parts[parts.length - 1];
+    if (parts.length < 2 || last?.type !== 'function_call' || bracesIndex(last)) return false;
+    // `obj = obj.scale(2)`; `v = pkg.update(v)`, `v = s.step(v)`: a package's function, another object's method.
+    if (parts.length === 2 && isV(parts[0])) return true;
+    return parts[0]!.type === 'identifier' && !MATLAB_BUILTINS.has(getNodeText(parts[0]!, source)) && callArgs(last).some(isV);
+  }
+  return false;
+}
+
+/** Whether assignment `site` constructs class `cls` (see constructedClassOf): a hint of that class's own write. */
+function constructsClass(site: SyntaxNode, cls: string, source: string): boolean {
+  const right = site.type === 'assignment' ? unparenthesised(childField(site, 'right')) : null;
+  return right !== null && constructedClassOf(right, source) === cls;
+}
+
+/** The operator forms keepsObject reads (see OPERATOR_FUNCTIONS). */
+const OPERATOR_FORMS: ReadonlySet<string> = new Set(['binary_operator', 'unary_operator', 'comparison_operator', 'not_operator', 'boolean_operator']);
+
+/** `e` with the parentheses around it read through (`x = (x ~= 0)`: doc 'Operator Precedence'). */
+function unparenthesised(e: SyntaxNode | null): SyntaxNode | null {
+  let n = e;
+  while (n?.type === 'parenthesis') {
+    const parts = bracketParts(n);
+    if (parts.length !== 1) return n;
+    n = parts[0]!;
+  }
+  return n;
+}
+
+/** Whether `e` is `v` itself, an element of it (`v(k)`), or a transpose or a parenthesised form of those (see keepsObject). */
+function isSelfExpression(e: SyntaxNode, v: string, source: string): boolean {
+  const n = unparenthesised(e);
+  if (!n) return false;
+  if (n.type === 'identifier') return getNodeText(n, source) === v;
+  if (n.type === 'function_call') {
+    const callee = childField(n, 'name');
+    return !bracesIndex(n) && callee?.type === 'identifier' && getNodeText(callee, source) === v && !namedChildren(n).some((c) => c.type === 'superclass');
+  }
+  if (n.type === 'postfix_operator') {
+    const parts = bracketParts(n);
+    return parts.length === 1 && isSelfExpression(parts[0]!, v, source);
+  }
+  return false;
+}
+
+/**
+ * Whether `v = f(…, v, …)`, `f` one of MATLAB's names off the allow-list, keeps
+ * `v`'s class `cls` (see keepsObject): a function of the file's own (a local
+ * function, which MATLAB calls before its own; the file's main function,
+ * unless it is a method file's own name called on an object of another class:
+ * MATLAB R2026a runs its own function there), a method of the file's classdef
+ * called on an object of its class, or one of ERRORING_ON_OBJECTS (the
+ * class's own runs, or the path stops): true; otherwise `f`, the method the
+ * class must have (VALUE_RETURNING_ON_OBJECTS, and any name not measured).
+ */
+function matlabNameKeeps(f: string, cls: string, args: readonly SyntaxNode[], isV: (n: SyntaxNode | null | undefined) => boolean): boolean | string {
+  if (fileFunctions.has(f) && !(classFile && f === fileStem && cls !== fileFolderClass)) return true;
+  if (cls === fileClass && fileMethods.has(f) && isV(args.find((a) => !PLAIN_VALUE_ARGS.has(a.type)))) return true;
+  return ERRORING_ON_OBJECTS.has(f) ? true : f;
+}
+
+/** A matrix's or a bracket's parts, less the line continuations and comments written in it, which are no elements. */
+function bracketParts(n: SyntaxNode): SyntaxNode[] {
+  return namedChildren(n).filter((c) => c.type !== 'line_continuation' && c.type !== 'comment');
+}
+
+/**
+ * Whether expression `e`, in a write of `v` (which holds an object of class
+ * `cls`), is an object of that class (see keepsObject), as MATLAB gives one:
+ * `v` itself, or another variable of the scope whose class where `e` reads
+ * it is `cls` by the hints' own rule (HintWrites.classAt); an element of
+ * either taken with parentheses (`v(k)`, `w(2:end)`); a construction of the
+ * class (`Gizmo()`, `pkg.Gizmo(…)`, a lower-case callee's `gadget()`, as
+ * the hint's own: the resolver takes the class only where a call of that
+ * name reaches it, see constructedClass in ../../resolution/matlab-lookup);
+ * a transpose of one (`v'`, `v.'`), one in parentheses, and a concatenation
+ * concatenationHolds takes for one. Not `v{k}`, `v.prop`, a number, nor any
+ * other call's value.
+ */
+function isObjectOfClass(e: SyntaxNode, v: string, cls: string, hw: HintWrites): boolean {
+  const source = hw.source;
+  /** Whether `w`, read at `at`, is `v` or a variable of the class there. */
+  const variableOfClass = (w: string, at: SyntaxNode): boolean => w === v || hw.classAt(w, at) === cls;
+  switch (e.type) {
+    case 'identifier': {
+      const w = getNodeText(e, source);
+      // Any variable the hints answer for, the method's own object (which the scope need not write) too.
+      return variableOfClass(w, e) || (!hw.facts.writeSites.has(w) && constructedClassOf(e, source) === cls);
+    }
+    case 'function_call': {
+      if (bracesIndex(e) || namedChildren(e).some((c) => c.type === 'superclass')) return false;
+      const callee = childField(e, 'name');
+      if (callee?.type !== 'identifier') return false;
+      const w = getNodeText(callee, source);
+      return variableOfClass(w, callee) || (!hw.facts.writeSites.has(w) && constructedClassOf(e, source) === cls);
+    }
+    case 'field_expression': {
+      const head = namedChildren(e)[0];
+      return head?.type === 'identifier' && !hw.facts.writeSites.has(getNodeText(head, source)) && constructedClassOf(e, source) === cls;
+    }
+    case 'postfix_operator':
+    case 'parenthesis': {
+      const parts = bracketParts(e);
+      return parts.length === 1 && isObjectOfClass(parts[0]!, v, cls, hw);
+    }
+    case 'matrix':
+      return concatenationHolds(bracketParts(e).filter((r) => r.type === 'row').flatMap(bracketParts), v, cls, hw);
+  }
+  return false;
+}
+
+/**
+ * Whether a concatenation of `elements` (`[a, 5]`), in a write of `v` (which
+ * holds an object of class `cls`), is an object of that class: when at least
+ * one element is one (isObjectOfClass) and no element is known to hold an
+ * object of another class (heldClassOf). MATLAB R2026a gives one of three:
+ * an array of the class, the class's own `horzcat` or `vertcat` run (which,
+ * by the project rule, gives the object back), or an error (`[k, 5]`, `[5,
+ * k]` and `[k, w]` with `w` of another class, for a classdef and an
+ * old-style class alike), past which the path reaches nothing. Two known
+ * classes (`[a, b]`, a `Gizmo` and a `Widget`) give no class: which one
+ * MATLAB's precedence takes the index does not tell (step 15 round 7b).
+ */
+function concatenationHolds(elements: readonly SyntaxNode[], v: string, cls: string, hw: HintWrites): boolean {
+  if (!elements.some((x) => isObjectOfClass(x, v, cls, hw))) return false;
+  return !elements.some((x) => {
+    const held = heldClassOf(x, v, hw);
+    return held !== null && held !== cls;
+  });
+}
+
+/**
+ * The class element `e` of a concatenation in a write of `v` is known to
+ * hold an object of (see concatenationHolds), or null: another variable's
+ * class where `e` reads it (HintWrites.classAt), an element of it taken with
+ * parentheses, a construction's (constructedClassOf), through a transpose,
+ * parentheses or an inner concatenation (the one class its elements are
+ * known to hold; '' for two). `v` itself is asked about by the caller.
+ */
+function heldClassOf(e: SyntaxNode, v: string, hw: HintWrites): string | null {
+  const source = hw.source;
+  const named = (w: string, at: SyntaxNode, n: SyntaxNode): string | null => {
+    if (w === v) return null;
+    return hw.classAt(w, at) ?? (hw.facts.writeSites.has(w) ? null : constructedClassOf(n, source));
+  };
+  switch (e.type) {
+    case 'identifier':
+      return named(getNodeText(e, source), e, e);
+    case 'function_call': {
+      if (bracesIndex(e) || namedChildren(e).some((c) => c.type === 'superclass')) return null;
+      const callee = childField(e, 'name');
+      return callee?.type === 'identifier' ? named(getNodeText(callee, source), callee, e) : null;
+    }
+    case 'field_expression': {
+      const head = namedChildren(e)[0];
+      return head?.type === 'identifier' && !hw.facts.writeSites.has(getNodeText(head, source)) ? constructedClassOf(e, source) : null;
+    }
+    case 'postfix_operator':
+    case 'parenthesis': {
+      const parts = bracketParts(e);
+      return parts.length === 1 ? heldClassOf(parts[0]!, v, hw) : null;
+    }
+    case 'matrix': {
+      const held = new Set<string>();
+      for (const x of bracketParts(e).filter((r) => r.type === 'row').flatMap(bracketParts)) {
+        const c = heldClassOf(x, v, hw);
+        if (c !== null) held.add(c);
+      }
+      // Two known classes: no one class it holds, '' (another than any).
+      return held.size === 0 ? null : held.size === 1 ? [...held][0]! : '';
+    }
+  }
+  return null;
+}
+
+/**
+ * The whole writes of `v` (see writesWhole) that do not give back its object
+ * of class `cls` (see keepsObject), placed: the writes a hint of `v` stops
+ * at. Worked out once per name and class; one asked for again while it is
+ * worked out (a cycle of variables, `k = [w]; w = [k]` round a loop) is null:
+ * the asker's element holds no class it can tell, whichever read asked first,
+ * and no answer worked out past such an ask is kept (HintWrites.cycles), so
+ * the next read works it out again rather than take one an earlier read's
+ * order made. (A concatenation with the variable itself among its elements
+ * asks no other variable: see keepsObject.)
+ */
+function hintWritesPlaced(hw: HintWrites, v: string, cls: string): PlacedWrites | null {
+  const key = `${v}\0${cls}`;
+  const known = hw.placed.get(key);
+  if (known) return known;
+  if (hw.computing.has(key)) {
+    hw.cycles++;
+    return null;
+  }
+  hw.computing.add(key);
+  const cyclesBefore = hw.cycles;
+  try {
+    const writes: Placed[] = [];
+    const kept: Array<{ at: Placed; name: string }> = [];
+    for (const s of hw.facts.writeSites.get(v) ?? []) {
+      if (!writesWhole(s, v, hw.source)) continue;
+      const keeps = keepsObject(s, v, cls, hw);
+      // A construction of the class is one of the hint's own writes, whatever it is passed (`k = Gizmo(k)`).
+      if (keeps === false || constructsClass(s, cls, hw.source)) writes.push(placed(s, hw.scope));
+      else if (typeof keeps === 'string') kept.push({ at: placed(s, hw.scope), name: keeps });
+    }
+    const out = Object.assign(writes, { kept });
+    // Kept only when no ask inside it met a key being worked out: an answer that depends on which read asked first
+    // is worked out again for each read, the same whichever comes first.
+    if (hw.cycles === cyclesBefore) hw.placed.set(key, out);
+    return out;
+  } finally {
+    hw.computing.delete(key);
+  }
+}
+
+/**
+ * The writes a hint stops at (see hintWritesPlaced), with `kept`: the writes
+ * that pass the object to a MATLAB function, which give it back only when
+ * the class has a method of the name (see keepsObject).
+ */
+type PlacedWrites = Placed[] & { kept: ReadonlyArray<{ at: Placed; name: string }> };
+
+/** The names of the `kept` writes (see PlacedWrites) that may reach `p` past `enders` and `clears`. */
+function keptReaching(
+  writes: PlacedWrites,
+  p: SyntaxNode,
+  enders: readonly Placed[],
+  clears: readonly Placed[],
+  makes: (site: SyntaxNode) => boolean = () => false,
+): ReadonlySet<string> {
+  if (writes.kept.length === 0) return NONE_KEPT;
+  const out = new Set<string>();
+  // (One that makes the object, `obj = class(s, 'Gizmo')` for the own object, asks nothing: see makesOwnObject.)
+  for (const { at, name } of writes.kept) if (!makes(at.node) && loadReaches(at, p, [...clears, ...enders], true) && !returnsAfter(at, p)) out.add(name);
+  return out.size > 0 ? out : NONE_KEPT;
+}
+
+/**
+ * Whether class hint `hint` of `v` holds where `p` reads it (MATLAB doc
+ * 'Method Invocation': a method of the class of the argument's value at the
+ * call): every whole write of `v` that may reach `p` is one of the hint's
+ * constructions (one that gives `v` back from a call on it is read through:
+ * see keepsObject), at least one does, and when `v` holds something on entry,
+ * one comes before `p` whenever `p` runs. A write may reach `p` as a load
+ * may (see loadReaches, a `try` body's reaching its `catch` clause as in
+ * writeReaches), each other whole write of `v` and each clear of it ending
+ * it as a clear ends a load: `g = gadget(); g = 5; tidy(g)` dispatches on a
+ * double, and so does `if c, g = 5; end` between. One a `return` follows in
+ * its block reaches nothing after the block (see returnsAfter).
+ */
+function hintHolds(hw: HintWrites, v: string, hint: ClassHint, p: SyntaxNode): ReadonlySet<string> | null {
+  if (!hint.sites) return NONE_KEPT;
+  const writes = hintWritesPlaced(hw, v, hint.cls);
+  if (!writes) return null;
+  const clears = clearsOf((hw.clears ??= clearSitesOf(hw.facts, hw.scope)), v);
+  let reached = false;
+  for (const s of writes) {
+    if (!loadReaches(s, p, [...clears, ...writes.filter((w) => w !== s)], true) || returnsAfter(s, p)) continue;
+    if (!hint.sites.has(s.node.id)) return null;
+    reached = true;
+  }
+  if (!reached) return null;
+  if (hw.input(v) && !writes.some((w) => w.node.endIndex <= p.startIndex && runsWith(w, p))) return null;
+  return keptReaching(writes, p, writes, clears);
+}
+
+/**
+ * The class a call's first argument `arg` may be an object of, from
+ * Frame.dispatchHints alone, where dispatchClass says nothing: a variable
+ * a lower-case callee made (`g = gadget(); tidy(g)`), whose callee only the
+ * resolver can tell a class from a function (see MatlabRefFacts.argClass).
+ */
+function argumentClassHint(arg: SyntaxNode | null | undefined, source: string): { cls: string; kept: ReadonlySet<string> } | undefined {
+  const f = frame();
+  const first = arg?.type === 'identifier' ? getNodeText(arg, source) : null;
+  // (The method's own object never comes here: dispatchClass answers for it first.)
+  if (!first) return undefined;
+  const held = classHintKept(f, first, true, arg!);
+  return held && !isJavaClass(held.hint.cls) ? { cls: held.hint.cls, kept: held.kept } : undefined;
 }
 
 /**
@@ -589,16 +1105,71 @@ function readsStructField(f: Frame, v: string, member: string): boolean {
   return false;
 }
 
-/** Whether `name` is one code run at runtime made where frame `f` reads it (see Frame.runtime), and no variable there. */
-function isRuntimeName(f: Frame, name: string): boolean {
-  if (isLocal(f, name)) return false;
-  for (let g: Frame | null = f; g; g = g.parent) if (g.runtime?.has(name)) return true;
+/**
+ * Whether `name` is one code run at runtime made where frame `f` reads it,
+ * at `at` (see Frame.runtime and Frame.runtimeLoads), and no variable there.
+ * Code `eval` runs reads at the `eval`'s place in the code around.
+ */
+function isRuntimeName(f: Frame, name: string, at: SyntaxNode): boolean {
+  if (isVariableAt(f, name, at)) return false;
+  let pos = at;
+  for (let g: Frame | null = f; g; g = g.parent) {
+    if (g.runtime?.has(name)) {
+      const listed = g.runtimeLoads?.sites.get(name);
+      if (!listed) return true;
+      const p = pos;
+      const clears = clearsOf(g.runtimeLoads!, name);
+      return listed.some((s) => loadReaches(s, p, clears));
+    }
+    if (g.kind === 'eval' && g.at) pos = g.at;
+  }
   return false;
 }
 
-/** The facts of a bare reference to `name` from frame `f`: `runtime` when code run at runtime made the name (see Frame.runtime). */
-function runtimeFact(f: Frame, name: string): MatlabRefFacts {
-  return isRuntimeName(f, name) ? { runtime: true } : {};
+/** The facts of a bare reference to `name` from frame `f`, at `at`: `runtime` when code run at runtime made the name (see Frame.runtime). */
+function runtimeFact(f: Frame, name: string, at: SyntaxNode): MatlabRefFacts {
+  return isRuntimeName(f, name, at) ? { runtime: true } : {};
+}
+
+/**
+ * Whether `name` is a variable where frame `f` reads it, at `at`: as
+ * isLocal, but in a script's top level only where a write of it comes before
+ * (see Frame.textOrder). Code `eval` runs reads at the `eval`'s
+ * place in the code around; a lambda where it is written (it takes what is
+ * a variable when it is made).
+ */
+function isVariableAt(f: Frame, name: string, at: SyntaxNode): boolean {
+  let pos = at;
+  for (let g: Frame | null = f; g; g = g.parent) {
+    if (g.locals.has(name)) {
+      const sites = g.textOrder?.sites.get(name);
+      if (!sites) return true;
+      const p = pos;
+      const clears = clearsOf(g.textOrder!, name);
+      return sites.some((s) => writeReaches(s, p, clears));
+    }
+    if (g.kind === 'eval' && g.at) pos = g.at;
+  }
+  return false;
+}
+
+/**
+ * Whether write `s` of a script's variable comes before what is read at `p`
+ * in text order, with the name still a variable there: `s` ends before `p`
+ * (a read in the write itself, `x = x(2)`, comes first), in no clause of an
+ * `if` / `switch` that `p` is in another clause of, nor in a `catch` clause
+ * read from its `try` body (a `try` body's write may have run before the
+ * statement that erred, and the `catch` clause runs after it: MATLAB doc
+ * 'try, catch'), and no clear of the name that runs whenever either does
+ * comes between them (as for a load: see loadReaches). Not round a loop: a read before the write in the loop's body
+ * is a call on the loop's first pass, a real call, even when later passes
+ * read the variable.
+ */
+function writeReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boolean {
+  if (s.node.endIndex > p.startIndex) return false;
+  if (s.clauses.some((c) => within(p, c.parent!) && !within(p, c) && !isTryBody(c))) return false;
+  const ends = (c: Placed): boolean => runsWith(c, p) || runsWith(c, s.node);
+  return !clears.some((c) => s.node.endIndex <= c.node.startIndex && c.node.endIndex <= p.startIndex && ends(c));
 }
 
 /**
@@ -631,12 +1202,42 @@ function placed(node: SyntaxNode, scope: SyntaxNode): Placed {
  * The `load`s of a scope that may make names its code does not spell (see
  * loadMakesUnlisted), and code an `eval` there runs that holds one: each
  * statement (the `eval` call for code it runs). And the scope's `clear` /
- * `clearvars` statements that may remove every variable (see
- * matlabClearedNames), which end what a load before them made.
+ * `clearvars` statements (see ClearSites), each of which ends what a load
+ * before it made of the names it removes.
  */
-interface LoadSites {
+interface LoadSites extends ClearSites {
   sites: readonly Placed[];
+}
+
+/**
+ * A scope's clears, placed: the `clear` / `clearvars` statements that remove
+ * every variable (ScopeFacts.clears), and by name those that name one
+ * (`clear x`, `clearvars x`, `clear('x')`: ScopeFacts.clearedAt), MATLAB doc
+ * 'clear'. Each ends what a write or a load before it made of the names it
+ * removes (see writeReaches, loadReaches).
+ */
+interface ClearSites {
   clears: readonly Placed[];
+  named?: ReadonlyMap<string, readonly Placed[]>;
+  /** Those with a pattern (ScopeFacts.clearedBy), each with the test of the names it removes. */
+  matched?: ReadonlyArray<{ at: Placed; removes: (v: string) => boolean }>;
+}
+
+/** The clears among `c` that remove `name` (see ClearSites). */
+function clearsOf(c: ClearSites, name: string): readonly Placed[] {
+  const named = c.named?.get(name);
+  const matched = c.matched?.filter((m) => m.removes(name)).map((m) => m.at) ?? [];
+  return named || matched.length > 0 ? [...c.clears, ...(named ?? []), ...matched] : c.clears;
+}
+
+/** A scope's clears, placed (see ClearSites). */
+function clearSitesOf(facts: Pick<ScopeFacts, 'clears' | 'clearedAt' | 'clearedBy'>, scope: SyntaxNode): ClearSites {
+  const clears = facts.clears.map((c) => placed(c, scope));
+  const matched = facts.clearedBy.length > 0 ? facts.clearedBy.map((m) => ({ at: placed(m.at, scope), removes: m.removes })) : undefined;
+  if (facts.clearedAt.size === 0) return { clears, ...(matched ? { matched } : {}) };
+  const named = new Map<string, Placed[]>();
+  for (const [v, at] of facts.clearedAt) named.set(v, at.map((c) => placed(c, scope)));
+  return { clears, named, ...(matched ? { matched } : {}) };
 }
 
 /**
@@ -652,10 +1253,15 @@ function inParallelBlock(node: SyntaxNode, scope: SyntaxNode): boolean {
 }
 
 /** The load sites and clears of `scope`, placed (see LoadSites), less sites in a parallel block (see inParallelBlock); undefined when no site is left. */
-function loadSitesOf(sites: readonly SyntaxNode[], clears: readonly SyntaxNode[], scope: SyntaxNode): LoadSites | undefined {
+function loadSitesOf(sites: readonly SyntaxNode[], facts: Pick<ScopeFacts, 'clears' | 'clearedAt' | 'clearedBy'>, scope: SyntaxNode): LoadSites | undefined {
   const kept = sites.filter((s) => !inParallelBlock(s, scope));
   if (kept.length === 0) return undefined;
-  return { sites: kept.map((s) => placed(s, scope)), clears: clears.map((c) => placed(c, scope)) };
+  return { sites: kept.map((s) => placed(s, scope)), ...clearSitesOf(facts, scope) };
+}
+
+/** Whether clause `c` (see Placed) is the body of a `try` statement, whose `catch` clause runs after part of it may have. */
+function isTryBody(c: SyntaxNode): boolean {
+  return c.type === 'block' && c.parent?.type === 'try_statement';
 }
 
 /** Whether `inner` lies within `outer`'s text. */
@@ -678,9 +1284,11 @@ function runsWith(c: Placed, n: SyntaxNode): boolean {
  * it failed). Either way, no clear may come between them, on the way round
  * the loop for a read before the load in it, that runs whenever `p` does or
  * whenever the load does (one in a clause or a loop body neither is in may
- * not have run).
+ * not have run). `tryBodyReachesCatch`: for a write rather than a load, which
+ * a `try` body may have run before the statement that erred (see
+ * writeReaches).
  */
-function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boolean {
+function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[], tryBodyReachesCatch = false): boolean {
   if (within(p, s.node)) return false;
   const ends = (c: Placed): boolean => runsWith(c, p) || runsWith(c, s.node);
   const loop = s.loops.find((l) => within(p, l));
@@ -688,7 +1296,7 @@ function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boole
     return !clears.some((c) => within(c.node, loop) && (c.node.startIndex >= s.node.endIndex || c.node.endIndex <= p.startIndex) && ends(c));
   }
   if (s.node.endIndex > p.startIndex) return false;
-  if (!loop && s.clauses.some((c) => within(p, c.parent!) && !within(p, c))) return false;
+  if (!loop && s.clauses.some((c) => within(p, c.parent!) && !within(p, c) && !(tryBodyReachesCatch && isTryBody(c)))) return false;
   return !clears.some((c) => s.node.endIndex <= c.node.startIndex && c.node.endIndex <= p.startIndex && ends(c));
 }
 
@@ -701,12 +1309,13 @@ function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boole
  * the code does not spell (see addRuntimeNames), and another function of the
  * file is another workspace.
  */
-function loadMayMake(f: Frame, at: SyntaxNode): boolean {
+function loadMayMake(f: Frame, at: SyntaxNode, name: string): boolean {
   let pos = at;
   for (let g: Frame | null = f; g; g = g.parent) {
     const loads = g.loads;
     const p = pos;
-    if (loads?.sites.some((s) => loadReaches(s, p, loads.clears))) return true;
+    const clears = loads ? clearsOf(loads, name) : [];
+    if (loads?.sites.some((s) => loadReaches(s, p, clears))) return true;
     if (g.kind === 'function') return false;
     if (g.kind === 'eval' && g.at) pos = g.at;
   }
@@ -752,7 +1361,15 @@ interface ScopeFacts {
    * head (which must be no variable), the class it names, and whether it is
    * a bare name.
    */
-  constructions: Array<{ v: string; head: string; cls: string; bare: boolean }>;
+  constructions: Array<{ v: string; head: string; cls: string; bare: boolean; at: SyntaxNode }>;
+  /**
+   * `v = name(…)` / `v = name` for a lower-case `name` that is no variable and
+   * no built-in's: a call whose value may be an object of a class of that
+   * name (`g = gadget();`, an old-style class's constructor, `@gadget/
+   * gadget.m`) or anything a function returns. Read for a call's dispatch
+   * alone (see Frame.dispatchHints), in the shape of `constructions`.
+   */
+  lowerConstructions: Array<{ v: string; head: string; cls: string; bare: boolean; at: SyntaxNode }>;
   /**
    * `v = w`, `v = w(…)` (parentheses), `for v = w`: the variable and the one it
    * takes a copy of, or an element (`element`: the last two) — an object of
@@ -774,10 +1391,27 @@ interface ScopeFacts {
   evalCodes: Array<{ callee: string; arg: SyntaxNode; call: SyntaxNode }>;
   /** The names `load(f, 'a', 'b')` / `load f a b` statements here make (in a script, variables too). */
   loaded: Set<string>;
+  /** Each of those names, with the `load` statements that list it. */
+  loadedAt: Map<string, SyntaxNode[]>;
+  /**
+   * Each name written here (see `locals`), with the statements that write it:
+   * an assignment of any form, a loop's, a `catch`'s, a `global` or
+   * `persistent` declaration, a `load` that lists it. Read for a script's
+   * top level, whose reads go in text order (see Frame.textOrder).
+   */
+  writeSites: Map<string, SyntaxNode[]>;
   /** The `load` statements here that may make names they do not spell (`load f`, `load(f)`: see loadMakesUnlisted), in text order. */
   loads: SyntaxNode[];
-  /** The `clear` / `clearvars` statements here that may remove every variable (see matlabClearedNames), in text order. */
+  /**
+   * The `clear` / `clearvars` statements here that remove every variable
+   * (`clear`, `clear all`, or one whose names are not known: see
+   * matlabClearOf), in text order.
+   */
   clears: SyntaxNode[];
+  /** Each name a `clear` / `clearvars` here names (`clear x`, `clear('x')`), with those statements: each ends what wrote the name. */
+  clearedAt: Map<string, SyntaxNode[]>;
+  /** The `clear` / `clearvars` statements here with a pattern (`clear xa*`, `-regexp`, `-except`), each with the test of the names it removes. */
+  clearedBy: Array<{ at: SyntaxNode; removes: (v: string) => boolean }>;
   /** Every name written here: assigned, indexed or field-assigned into, a loop's, a `catch`'s, a global. */
   assigned: Set<string>;
   /** The names written here from a value the interpreter may know of itself: a text, a handle, a cell, a struct, a text built. */
@@ -800,9 +1434,10 @@ interface ScopeFacts {
   /**
    * In a script: the names it leaves in the workspace that runs it, read in
    * text order. Those assigned, declared `global` or `load`ed since the last
-   * `clear` that may remove more than it names (see matlabClearedNames), less
-   * every name a `clear` names; a `persistent` declaration (refused outside a
-   * function) makes none. Unused in a function.
+   * `clear` that removes them (see matlabClearOf: every variable, the names
+   * it lists, the ones its pattern matches, the globals declared before
+   * it); a `persistent` declaration (refused outside a function) makes none.
+   * Unused in a function.
    */
   made: Set<string>;
 }
@@ -815,6 +1450,53 @@ const HIDDEN_WRITER = /^(?:eval|evalc|evalin|assignin|run)$/;
 
 /** Calls whose value the interpreter computes (see evaluateCall in matlab-values.ts). */
 const VALUE_CALLS = /^(?:struct|strcat|sprintf|upper|lower|strtrim|deblank|char|func2str|str2func|mfilename)$/;
+
+/**
+ * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
+ * class] — a capitalised callee that is no variable reads as a constructor.
+ * So does a bare `Cls` (`aa = VaultStore;`), the constructor called with
+ * no arguments. Not a built-in's name, either way (`x = NaN;`, `x = NaN(n,
+ * 1)`, `e = MException(…)`): what it makes is MATLAB's, none of whose
+ * methods is the project's. (Whether the head is a variable is the
+ * caller's to ask.)
+ */
+function constructorShape(rhs: SyntaxNode | null, source: string): [string, string] | null {
+  if (rhs?.type === 'identifier') {
+    const text = getNodeText(rhs, source);
+    return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
+  }
+  if (rhs?.type === 'function_call') {
+    const name = childField(rhs, 'name');
+    const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
+    return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
+  }
+  if (rhs?.type === 'field_expression') {
+    const parts = namedChildren(rhs);
+    const last = parts[parts.length - 1];
+    if (parts.length < 2 || last?.type !== 'function_call') return null;
+    const path: string[] = [];
+    for (const p of parts.slice(0, -1)) {
+      if (p.type !== 'identifier') return null;
+      path.push(getNodeText(p, source));
+    }
+    const name = childField(last, 'name');
+    const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
+    return /^[A-Z]/.test(text) ? [path[0]!, [...path, text].join('::')] : null;
+  }
+  return null;
+}
+
+/** A lower-case `name(…)` / `name` that may be a constructor (see ScopeFacts.lowerConstructions): the name. */
+function lowerConstructorShape(rhs: SyntaxNode | null, source: string): string | null {
+  const name = rhs?.type === 'identifier' ? rhs : rhs?.type === 'function_call' && !bracesIndex(rhs) ? childField(rhs, 'name') : null;
+  const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
+  return isMatlabLowerConstructorName(text) ? text : null;
+}
+
+/** The class a construction-shaped expression names, a lower-case callee's too (see constructorShape, lowerConstructorShape): for keepsObject. */
+function constructedClassOf(n: SyntaxNode, source: string): string | null {
+  return constructorShape(n, source)?.[1] ?? lowerConstructorShape(n, source);
+}
 
 /**
  * The variables of `scope` (a function_definition or a script's source_file)
@@ -832,6 +1514,7 @@ const VALUE_CALLS = /^(?:struct|strcat|sprintf|upper|lower|strtrim|deblank|char|
 function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): ScopeFacts {
   const locals = new Set<string>();
   const constructions: ScopeFacts['constructions'] = [];
+  const lowerConstructions: ScopeFacts['lowerConstructions'] = [];
   const objectCopies: ScopeFacts['objectCopies'] = [];
   const writes = new Map<string, number>();
   const opaque = new Set<string>();
@@ -845,11 +1528,26 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const structFields = new Set<string>();
   const evalCodes: ScopeFacts['evalCodes'] = [];
   const loaded = new Set<string>();
+  const loadedAt = new Map<string, SyntaxNode[]>();
+  const writeSites = new Map<string, SyntaxNode[]>();
+  /** The statement the walk is at (see writeSites). */
+  let site: SyntaxNode = scope;
+  const wrote = (v: string, at: SyntaxNode): void => {
+    const list = writeSites.get(v);
+    if (list) list.push(at);
+    else writeSites.set(v, [at]);
+  };
   const loads: SyntaxNode[] = [];
   const clears: SyntaxNode[] = [];
   /** A `load` statement with these arguments: the names it lists, and whether it may make more (a text with a part nothing here knows says no name). */
   const loadStatement = (at: SyntaxNode, items: readonly (string | null)[]): void => {
-    for (const v of loadedNames(items)) loadedName(v);
+    for (const v of loadedNames(items)) {
+      loadedName(v);
+      const list = loadedAt.get(v);
+      if (list) list.push(at);
+      else loadedAt.set(v, [at]);
+      wrote(v, at);
+    }
     if (loadMakesUnlisted(items.map((s) => (s !== null && s.includes(PLACEHOLDER) ? null : s)))) loads.push(at);
   };
   const assigned = new Set<string>();
@@ -860,24 +1558,46 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   let hiddenWrites = false;
   let nested = false;
   const scriptNames = new Set<string>();
-  const clearedByName = new Set<string>();
+  /** The names declared `global` so far, in walk order: the ones a `clear global` removes (see MatlabClear). */
+  const globals = new Set<string>();
+  const clearedAt = new Map<string, SyntaxNode[]>();
+  const clearedBy: ScopeFacts['clearedBy'] = [];
   /** `v` is one of the scope's variables, made here (see ScopeFacts.made). */
   const local = (v: string): void => {
     locals.add(v);
     scriptNames.add(v);
+    wrote(v, site);
   };
   const loadedName = (v: string): void => {
     loaded.add(v);
     scriptNames.add(v);
   };
-  /** A `clear` / `clearvars` statement with these arguments (see ScopeFacts.made). */
+  /**
+   * A `clear` / `clearvars` statement with these arguments (see matlabClearOf,
+   * ScopeFacts.clears, clearedAt, clearedBy, made). The names it removes are
+   * no longer made from here on, in walk order: MATLAB runs a script's
+   * statements in order, so an assignment after the clear makes its name
+   * again (`clear xb; xb = 5;`, `clear xa*; xa1 = 5;`).
+   */
   const cleared = (at: SyntaxNode, name: string, items: readonly (string | null)[]): void => {
-    const names = matlabClearedNames(name, items);
-    if (names === null) {
+    const removed = matlabClearOf(name, items);
+    if (removed === 'all') {
       scriptNames.clear();
       clears.push(at);
+      return;
     }
-    else for (const v of names) clearedByName.add(v);
+    if ('removes' in removed) {
+      clearedBy.push({ at, removes: removed.removes });
+      for (const v of [...scriptNames]) if (removed.removes(v)) scriptNames.delete(v);
+      return;
+    }
+    // `clear global …`: the globals declared before it that it names, and no other variable.
+    for (const v of 'names' in removed ? removed.names : [...globals].filter(removed.globals)) {
+      scriptNames.delete(v);
+      const list = clearedAt.get(v);
+      if (list) list.push(at);
+      else clearedAt.set(v, [at]);
+    }
   };
 
   /**
@@ -920,39 +1640,12 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
     }
   };
 
-  /**
-   * `Cls(…)` / `pkg.Cls(…)` (MATLAB names classes in UpperCamelCase): [head,
-   * class] — a capitalised callee that is no variable reads as a constructor.
-   * So does a bare `Cls` (`aa = VaultStore;`), the constructor called with
-   * no arguments. Not a built-in's name, either way (`x = NaN;`, `x = NaN(n,
-   * 1)`, `e = MException(…)`): what it makes is MATLAB's, none of whose
-   * methods is the project's.
-   */
-  const constructed = (rhs: SyntaxNode | null): [string, string] | null => {
-    if (rhs?.type === 'identifier') {
-      const text = getNodeText(rhs, source);
-      return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
-    }
-    if (rhs?.type === 'function_call') {
-      const name = childField(rhs, 'name');
-      const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
-      return /^[A-Z]/.test(text) && !MATLAB_BUILTINS.has(text) ? [text, text] : null;
-    }
-    if (rhs?.type === 'field_expression') {
-      const parts = namedChildren(rhs);
-      const last = parts[parts.length - 1];
-      if (parts.length < 2 || last?.type !== 'function_call') return null;
-      const path: string[] = [];
-      for (const p of parts.slice(0, -1)) {
-        if (p.type !== 'identifier') return null;
-        path.push(getNodeText(p, source));
-      }
-      const name = childField(last, 'name');
-      const text = name?.type === 'identifier' ? getNodeText(name, source) : '';
-      return /^[A-Z]/.test(text) ? [path[0]!, [...path, text].join('::')] : null;
-    }
-    return null;
-  };
+  const constructed = (rhs: SyntaxNode | null): [string, string] | null => constructorShape(rhs, source);
+  // Only where the extraction reads a call of the name (a reference of it the index stores: see
+  // matlabFilesConstructing in ../../resolution/matlab-builtin-carriers): not an index read (`g = gadget(:)`),
+  // nor a bare name on a line of text the parser could not read (see inUnreadText).
+  const lowerConstructed = (rhs: SyntaxNode | null): string | null =>
+    (rhs?.type === 'function_call' && indexesLikeArray(rhs)) || (rhs?.type === 'identifier' && inUnreadText(rhs, source)) ? null : lowerConstructorShape(rhs, source);
 
   /** `x(k) = …` makes x a variable. */
   const indexAssigned = (left: SyntaxNode): void => {
@@ -974,6 +1667,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
 
   const walk = (n: SyntaxNode): void => {
     for (const c of namedChildren(n)) {
+      site = c;
       switch (c.type) {
         case 'function_definition':
           nested = true;
@@ -992,10 +1686,14 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           // A declaration writes the name whole: `global e` gives it the global's value, `persistent e` the last call's (`[]` at first).
           const declared = new Set<string>();
           identifiersIn(c, source, declared);
-          for (const v of declared) writes.set(v, (writes.get(v) ?? 0) + 1);
+          for (const v of declared) {
+            writes.set(v, (writes.get(v) ?? 0) + 1);
+            wrote(v, c);
+          }
           if (c.type === 'global_operator') {
             identifiersIn(c, source, scriptNames);
             identifiersIn(c, source, opaque);
+            identifiersIn(c, source, globals);
           }
           continue;
         }
@@ -1015,7 +1713,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
             local(v);
             const right = childField(c, 'right');
             const made = constructed(right);
-            if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier' });
+            const lower = made ? null : lowerConstructed(right);
+            if (made) constructions.push({ v, head: made[0], cls: made[1], bare: right?.type === 'identifier', at: c });
+            else if (lower) lowerConstructions.push({ v, head: lower, cls: lower, bare: right?.type === 'identifier', at: c });
             else if (right?.type === 'function_call' && /^(?:struct|load)$/.test(getNodeText(childField(right, 'name') ?? right, source))) {
               structFields.add(v);
             }
@@ -1045,7 +1745,11 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           // `catch ME` — the error variable is on the `catch` line. An
           // identifier on a later line is a statement (a command-syntax call).
           const v = errorVariable(c);
-          if (v) local(getNodeText(v, source));
+          if (v) {
+            // Written on the `catch` line: the clause's body reads it.
+            site = v;
+            local(getNodeText(v, source));
+          }
           written(v, null);
           break;
         }
@@ -1093,27 +1797,62 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   };
   walk(scope);
   if (!isFunction) for (const v of loaded) locals.add(v);
-  for (const v of clearedByName) scriptNames.delete(v);
-  return { locals, constructions, objectCopies, writes, opaque, structFields, evalCodes, loaded, loads, clears, assigned, valued, copies, passed, clobbers, hiddenWrites, nested, made: scriptNames };
+  return { locals, constructions, lowerConstructions, objectCopies, writes, opaque, structFields, evalCodes, loaded, loadedAt, writeSites, loads, clears, clearedAt, clearedBy, assigned, valued, copies, passed, clobbers, hiddenWrites, nested, made: scriptNames };
 }
 
 /**
  * The class a variable holds, where every constructor-shaped assignment to it
  * agrees. A Java class's (`m = javax.swing.JFrame()`) is one too, and says
- * that what is called on the variable is Java's: see isJavaClass.
+ * that what is called on the variable is Java's: see isJavaClass. Not one
+ * whose callee is a function of the file (`g = Gizmo();` beside a local
+ * function `Gizmo`, which comes before a class of the name: MATLAB doc
+ * 'Function Precedence Order'): that assignment constructs nothing.
  */
 function classHintsFrom(facts: ScopeFacts, isVariable: (name: string) => boolean): ReadonlyMap<string, ClassHint> {
   if (facts.constructions.length === 0) return NO_HINTS;
-  const hints = new Map<string, ClassHint>();
-  const conflicted = new Set<string>();
-  for (const { v, head, cls, bare } of facts.constructions) {
+  const byClass = new Map<string, Map<string, ClassHint & { sites: Set<number> }>>();
+  for (const { v, head, cls, bare, at } of facts.constructions) {
     if (isVariable(head)) continue; // `c = cfg.Make()` on a variable `cfg`: a field's value
-    const had = hints.get(v);
-    if (had && had.cls !== cls) conflicted.add(v);
-    else hints.set(v, { cls, bare: bare && (had?.bare ?? true) });
+    if (isFileFunctionHead(head)) continue;
+    let classes = byClass.get(v);
+    if (!classes) byClass.set(v, (classes = new Map()));
+    const had = classes.get(cls);
+    if (had) {
+      had.bare &&= bare;
+      had.sites.add(at.id);
+    } else classes.set(cls, { cls, bare, sites: new Set([at.id]) });
   }
-  for (const v of conflicted) hints.delete(v);
-  return hints;
+  // A variable constructed as two classes (`k = Gizmo(); k = Widget(k);`) has no hint of its own; where a read is
+  // placed, the one whose constructions alone reach it holds (see classHintKept).
+  const hints = new Map<string, ClassHint>();
+  const choices = new Map<string, ClassHint[]>();
+  for (const [v, classes] of byClass) {
+    if (classes.size === 1) hints.set(v, [...classes.values()][0]!);
+    else choices.set(v, [...classes.values()]);
+  }
+  return choices.size > 0 ? Object.assign(hints, { choices }) : hints;
+}
+
+/** The hints of each class a variable is constructed as, when it is two or more (see classHintsFrom). */
+function hintChoices(hints: ReadonlyMap<string, ClassHint> | undefined, v: string): readonly ClassHint[] | undefined {
+  return (hints as { choices?: ReadonlyMap<string, ClassHint[]> } | undefined)?.choices?.get(v);
+}
+
+/**
+ * Whether a constructor-shaped callee `head` is a function of the file being
+ * walked (see fileFunctions): a local or nested one, or the file's own, which
+ * a call of the name from the file reaches before any class (MATLAB doc
+ * 'Function Precedence Order'). Not a class folder's file's own (`@gadget/
+ * gadget.m`, an old-style class's constructor: its class's).
+ */
+function isFileFunctionHead(head: string): boolean {
+  return fileFunctions.has(head) && !(classFile && head === fileStem);
+}
+
+/** Frame.dispatchHints: classHintsFrom over every assignment that may construct, a lower-case callee's too; none when there is none of those. */
+function dispatchHintsFrom(facts: ScopeFacts, isVariable: (name: string) => boolean): ReadonlyMap<string, ClassHint> | undefined {
+  if (facts.lowerConstructions.length === 0) return undefined;
+  return classHintsFrom({ ...facts, constructions: [...facts.constructions, ...facts.lowerConstructions] }, isVariable);
 }
 
 /**
@@ -1227,10 +1966,10 @@ function addRef(
   facts: MatlabRefFacts = {},
   /** Where on `at`'s line the name starts, when not where `at` does; `anchored` for a name no text written at `at` spells (see unplacedRefs). */
   column: number | 'anchored' = at.startPosition.column,
-): void {
+): UnresolvedReference | undefined {
   const fromNodeId = ctx.nodeStack[ctx.nodeStack.length - 1];
   // A keyword is never a name (see hasMatlabKeywordPart).
-  if (!fromNodeId || !name || hasMatlabKeywordPart(name)) return;
+  if (!fromNodeId || !name || hasMatlabKeywordPart(name)) return undefined;
   const candidates = matlabRefCandidates(facts);
   const anchored = column === 'anchored';
   const ref: UnresolvedReference = {
@@ -1245,6 +1984,40 @@ function addRef(
   if (anchored) unplacedRefs.add(ref);
   ctx.addUnresolvedReference(ref);
   if (anchored && codeDepth === 0) refPlaces.push(ref);
+  return ref;
+}
+
+/**
+ * The calls the file's walk read as a lower-case callee's construction (`g =
+ * gadget(…)`, `g = gadget;`), by the callee's name lowered, and the names of
+ * the ones an on-object call under a built-in's name was read on (`disp(g)`:
+ * the A10 rows, see matlabBuiltinDispatchKept in
+ * ../../resolution/matlab-failures). Once the file is walked, those
+ * constructions carry the `ctor` fact: the evidence a class of the name
+ * arriving may give the file such rows to write (matlabFilesConstructing in
+ * ../../resolution/matlab-builtin-carriers). Set while extractFile walks
+ * the file.
+ */
+let ctorRefs: Array<{ key: string; ref: UnresolvedReference }> = [];
+let a10Keys: Set<string> = new Set();
+
+/** Notes `ref`, written at `node`, when `node` is the right side of `v = name(…)` / `v = name` a lower-case construction reads (see ctorRefs). */
+function noteConstruction(node: SyntaxNode, ref: UnresolvedReference | undefined, source: string): void {
+  const parent = node.parent;
+  if (!ref || parent?.type !== 'assignment' || childField(parent, 'right')?.id !== node.id || childField(parent, 'left')?.type !== 'identifier') return;
+  const name = lowerConstructorShape(node, source);
+  if (name) ctorRefs.push({ key: name.toLowerCase(), ref });
+}
+
+/** Gives the `ctor` fact to the constructions of ctorRefs an on-object call was read on (see ctorRefs). */
+function tagConstructions(): void {
+  for (const { key, ref } of ctorRefs) {
+    if (!a10Keys.has(key) || ref.candidates?.includes(CTOR_TAG)) continue;
+    // Before the `args` fact, which an edge keeps apart and a resurrected reference puts back last (see splitMatlabArgs).
+    const cands = ref.candidates ?? [];
+    const at = cands.findIndex(isMatlabArgsCandidate);
+    ref.candidates = at < 0 ? [...cands, CTOR_TAG] : [...cands.slice(0, at), CTOR_TAG, ...cands.slice(at)];
+  }
 }
 
 /**
@@ -1261,11 +2034,12 @@ function addRef(
  *     file imports `java.util.ArrayList`): nothing, and nothing either on a
  *     variable that holds a Java object (`m = javax.swing.JFrame(); m.show()`).
  */
-function memberRef(path: string[], member: string): MemberRef | null {
+function memberRef(path: string[], member: string, at: SyntaxNode): MemberRef | null {
   const f = frame();
   const head = path[0]!;
   if (f.self && head === f.self.name) return path.length === 1 ? { name: `${f.self.cls}::${member}`, self: true } : null;
-  if (isLocal(f, head)) {
+  // In a script, a head read before every write of it in text order is no variable there (see isVariableAt).
+  if (isVariableAt(f, head, at)) {
     if (path.length !== 1) return null;
     const hint = classHintOf(f, head);
     const field = readsStructField(f, head, member);
@@ -1328,10 +2102,10 @@ function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: Syn
     if (f.type !== 'function_call') return null;
     const callee = childField(f, 'name');
     if (callee?.type !== 'identifier' || indexesLikeArray(f)) return null;
-    const ref = memberRef(path, getNodeText(callee, source));
+    const ref = memberRef(path, getNodeText(callee, source), node);
     return ref ? { ...ref, at: f } : null;
   }
-  return path.length === 2 ? bareMemberRef(node, path[0]!, path[1]!) : null;
+  return path.length >= 2 ? bareMemberRef(node, path.slice(0, -1), path[path.length - 1]!) : null;
 }
 
 /**
@@ -1343,20 +2117,24 @@ function fieldChainRef(node: SyntaxNode, source: string): (MemberRef & { at: Syn
  * a callable symbol carries the name: see ../../resolution/matlab-failures).
  * Only where the head says whose member it is: the
  * method's own object, a variable the function says holds a class, or a name
- * that is no variable (a class or a package). On any other variable it is a
- * struct's field far more often than a method of one class (`data.smprate`):
- * nothing. Nor deeper (`obj.p.m`, a property's value), nor in a statement the
- * parser could not read whole (text that is no code: `core_dump_77413.log`
- * in a listing pasted into a file).
+ * that is no variable (a class or a package, at any depth: `b =
+ * pkg.sub.low;` calls `pkg.sub.low`, doc 'Namespaces'). On any other
+ * variable it is a struct's field far more often than a method of one class
+ * (`data.smprate`): nothing. Nor deeper on a variable (`obj.p.m`, a
+ * property's value), nor in a statement the parser could not read whole
+ * (text that is no code: `core_dump_77413.log` in a listing pasted into a
+ * file).
  */
-function bareMemberRef(node: SyntaxNode, head: string, member: string): (MemberRef & { at: SyntaxNode; bare: true }) | null {
+function bareMemberRef(node: SyntaxNode, path: string[], member: string): (MemberRef & { at: SyntaxNode; bare: true }) | null {
   if (inUnreadStatement(node)) return null;
   const f = frame();
+  const head = path[0]!;
   const own = f.self !== null && head === f.self.name;
-  if (!own && isLocal(f, head) && !classHintOf(f, head)) return null;
+  const variable = !own && isVariableAt(f, head, node);
+  if (variable && !classHintOf(f, head)) return null;
   // `gcf.Position`: a property of what a built-in returns.
-  if (!own && !isLocal(f, head) && MATLAB_BUILTINS.has(head)) return null;
-  const ref = memberRef([head], member);
+  if (!own && !variable && MATLAB_BUILTINS.has(head)) return null;
+  const ref = memberRef(path, member, node);
   if (!ref || ref.name.includes('.')) return null;
   return { ...ref, at: node, bare: true };
 }
@@ -1441,7 +2219,7 @@ function parseErrorRows(tree: Tree, source: string): Set<number> {
 function handleRef(node: SyntaxNode, source: string): MemberRef | null {
   const names = dottedName(node, source);
   if (!names) return null;
-  return names.length === 1 ? { name: names[0]! } : memberRef(names.slice(0, -1), names[names.length - 1]!);
+  return names.length === 1 ? { name: names[0]! } : memberRef(names.slice(0, -1), names[names.length - 1]!, node);
 }
 
 /**
@@ -1459,7 +2237,7 @@ function handleRef(node: SyntaxNode, source: string): MemberRef | null {
  * other call is a function call, even of a name the class overloads
  * (`char(s, '…')`).
  */
-function callRef(node: SyntaxNode, name: string, source: string): { name: string; dispatch: boolean } | null {
+function callRef(node: SyntaxNode, name: string, source: string): { name: string; dispatch: boolean; argClass?: string; selfArg?: boolean; keptBy?: string[] } | null {
   const f = frame();
   const children = namedChildren(node);
   const sup = children.find((c) => c.type === 'superclass');
@@ -1469,13 +2247,33 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
     const method = isLocal(f, name) ? base[base.length - 1]! : name;
     return { name: [...base, method].join('::'), dispatch: false };
   }
-  if (isLocal(f, name)) return null;
+  if (isVariableAt(f, name, node)) return null;
   // `ArrayList()` where the file imports `java.util.ArrayList`: Java's constructor.
   if (javaImported.has(name)) return null;
   const argList = children.find((c) => c.type === 'arguments');
-  const cls = dispatchClass(argList ? namedChildren(argList)[0] : undefined, source) ?? (MATLAB_BUILTINS.has(name) ? undefined : argumentDispatchClass(callArgs(node), source));
-  if (cls) return { name: `${cls}::${name}`, dispatch: true };
-  return { name, dispatch: false };
+  const first = argList ? namedChildren(argList)[0] : undefined;
+  const hinted = dispatchClassKept(first, source);
+  // The method's own object (dispatchClass's first answer), or what argumentDispatchClass reads, an object of it: `selfArg`.
+  const own = hinted !== undefined ? isOwnObject(first, source) : true;
+  const cls = hinted?.cls ?? (MATLAB_BUILTINS.has(name) ? undefined : argumentDispatchClass(callArgs(node), source));
+  if (cls) return { name: `${cls}::${name}`, dispatch: true, ...(own ? { selfArg: true } : {}), ...keptFact(hinted?.kept) };
+  // `tidy(g)` after `g = gadget();`: named as written, the class it may dispatch to carried (see argumentClassHint).
+  const argClass = argList ? argumentClassHint(namedChildren(argList)[0], source) : undefined;
+  // `disp(g)`, a built-in's name: `gadget::disp`, as `disp(k)` after `k = Gizmo();` is, the class's method
+  // coming before MATLAB's function (doc 'Function Precedence Order'), whose call the extraction otherwise drops.
+  // (The argClass fact rides along: a lower-case callee's construction, which may be any function's call.) Not
+  // through a write a method of the class must answer (`g = ne(g, 0)`): the plain built-in's call then, which
+  // the extraction drops as any (project rule: see matlabBuiltinDispatchKept in ../../resolution/matlab-failures).
+  if (argClass && MATLAB_BUILTINS.has(name)) {
+    if (argClass.kept.size === 0) a10Keys.add(argClass.cls.toLowerCase());
+    return argClass.kept.size === 0 ? { name: `${argClass.cls}::${name}`, dispatch: true, argClass: argClass.cls } : { name, dispatch: false };
+  }
+  return { name, dispatch: false, ...(argClass ? { argClass: argClass.cls, ...keptFact(argClass.kept) } : {}) };
+}
+
+/** The `keptBy` fact of a hint's conditions (see Kept), sorted, or nothing. */
+function keptFact(kept: ReadonlySet<string> | undefined): { keptBy?: string[] } {
+  return kept && kept.size > 0 ? { keptBy: [...kept].sort() } : {};
 }
 
 /**
@@ -1485,10 +2283,193 @@ function callRef(node: SyntaxNode, name: string, source: string): { name: string
  * …)` on one is the function as written: no class of the project's).
  */
 function dispatchClass(arg: SyntaxNode | null | undefined, source: string): string | undefined {
+  return dispatchClassKept(arg, source)?.cls;
+}
+
+/** dispatchClass, with the hint's conditions (see Kept). */
+function dispatchClassKept(arg: SyntaxNode | null | undefined, source: string): { cls: string; kept: ReadonlySet<string> } | undefined {
   const f = frame();
   const first = arg?.type === 'identifier' ? getNodeText(arg, source) : null;
-  const cls = !first ? undefined : f.self && first === f.self.name ? f.self.cls : classHintOf(f, first)?.cls;
-  return cls && !isJavaClass(cls) ? cls : undefined;
+  if (!first) return undefined;
+  const own = f.self !== null && first === f.self.name ? ownObjectKept(f, f.self, arg!) : null;
+  if (own) return { cls: f.self!.cls, kept: own };
+  const held = classHintKept(f, first, false, arg!);
+  return held && !isJavaClass(held.hint.cls) ? { cls: held.hint.cls, kept: held.kept } : undefined;
+}
+
+/**
+ * Whether `arg` is the method's own object (see dispatchClass), of the class
+ * of the method's file (the `selfArg` fact), where it is read: the variable
+ * that holds it, which no write that may reach `arg` has made something else
+ * (see ownObjectKept).
+ */
+function isOwnObject(arg: SyntaxNode | null | undefined, source: string): boolean {
+  const f = frame();
+  return f.self !== null && arg?.type === 'identifier' && getNodeText(arg, source) === f.self.name && ownObjectKept(f, f.self, arg) !== null;
+}
+
+/**
+ * Whether the method's own object `self` is what its variable holds where
+ * frame `f` reads it at `at`, with the conditions it holds on (see Kept), or
+ * null. MATLAB gives a method its object (doc 'Method Invocation'), so the
+ * hint ends only at a write whose value is clearly something else (see
+ * ownWriteKind: a literal, `[]`, a cell, a field's value, a cell's contents,
+ * a construction of another class) that may reach `at` by the reaching rule
+ * of every hint (see hintHolds); a write through one of MATLAB's
+ * functions that give a value of another class (VALUE_RETURNING_ON_OBJECTS)
+ * holds it on the condition the class has a method of the name; any other
+ * write keeps it (another variable, `varargin{…}`, a project call). One that
+ * makes an object of the class (see makesOwnObject) ends what came before
+ * it; in an old-style constructor, whose output holds nothing on entry
+ * (Self.made), one of those must reach `at` too. Code `eval` runs reads at
+ * the `eval`'s place, and a write it makes hides the object.
+ */
+function ownObjectKept(f: Frame, self: Self, at: SyntaxNode): ReadonlySet<string> | null {
+  let g = f;
+  let pos = at;
+  while (g.kind === 'lambda' || g.kind === 'eval') {
+    if (g.locals.has(self.name)) return null;
+    if (g.kind === 'eval' && g.at) pos = g.at;
+    g = g.parent!;
+  }
+  const hw = g.hintWrites;
+  if (!hw) return NONE_KEPT;
+  const key = `${self.name}\0#own`;
+  let writes = hw.own.get(key);
+  if (!writes) {
+    writes = [];
+    for (const site of hw.facts.writeSites.get(self.name) ?? []) {
+      if (!writesWhole(site, self.name, hw.source)) continue;
+      const kind = ownWriteKind(site, self, hw);
+      if (kind !== 'keeps') writes.push({ at: placed(site, hw.scope), kind });
+    }
+    hw.own.set(key, writes);
+  }
+  const enders = writes.filter((w) => w.kind === 'ends' || w.kind === 'makes').map((w) => w.at);
+  const clears = clearsOf((hw.clears ??= clearSitesOf(hw.facts, hw.scope)), self.name);
+  const reaches = (s: Placed): boolean => loadReaches(s, pos, [...clears, ...enders.filter((w) => w !== s)], true) && !returnsAfter(s, pos);
+  if (writes.some((w) => w.kind === 'ends' && reaches(w.at))) return null;
+  // An old-style constructor's output is the object only where a write that makes it reaches.
+  if (self.made && !writes.some((w) => w.kind === 'makes' && reaches(w.at))) return null;
+  const kept = new Set<string>();
+  for (const w of writes) if (w.kind !== 'ends' && w.kind !== 'makes' && reaches(w.at)) kept.add(w.kind);
+  return kept.size > 0 ? kept : NONE_KEPT;
+}
+
+/**
+ * What whole write `site` of the method's own object's variable does to it
+ * (see ownObjectKept): `makes` an object of the class (makesOwnObject),
+ * `ends` it with a value that is clearly something else (a number, a text, a
+ * logical literal, `[]`, a cell, a field's value `x.p`, a cell's contents
+ * `x{…}` but `varargin{…}`'s, a construction of another class, a `catch`'s
+ * error), holds it on a method of the class (the name: one of
+ * VALUE_RETURNING_ON_OBJECTS the file does not define), or `keeps` it. The
+ * update idiom (a call that gives back what it is passed) needs the object
+ * passed: a right side that does not hold the variable ends it (`obj =
+ * zt(3)`, `obj = zeros(2)`, `obj = -1`), but a copy of another variable or an
+ * element of one (`obj = other`, `obj = w(2)`, `obj = varargin{1}`), whose
+ * value the code does not state (step 15 round 8).
+ */
+function ownWriteKind(site: SyntaxNode, self: Self, hw: HintWrites): 'ends' | 'makes' | 'keeps' | string {
+  const source = hw.source;
+  if (site.type === 'catch_clause' || site.parent?.type === 'catch_clause') return 'ends';
+  if (site.type !== 'assignment') return 'keeps';
+  if (makesOwnObject(site, self, source)) return 'makes';
+  const right = unparenthesised(childField(site, 'right'));
+  if (!right) return 'keeps';
+  if (!mentionsName(right, self.name, source)) {
+    if (right.type === 'identifier') {
+      const w = getNodeText(right, source);
+      return w === 'true' || w === 'false' ? 'ends' : 'keeps';
+    }
+    if (right.type === 'function_call') {
+      const callee = childField(right, 'name');
+      const f = callee?.type === 'identifier' ? getNodeText(callee, source) : '';
+      if (bracesIndex(right)) return f === 'varargin' ? 'keeps' : 'ends';
+      // An element of another variable of the scope (`w(2)`), not a call.
+      if (f !== '' && (hw.facts.writeSites.has(f) || hw.input(f))) return 'keeps';
+    }
+    return 'ends';
+  }
+  // The right side holds the variable.
+  switch (right.type) {
+    case 'cell':
+      return 'ends';
+    case 'field_expression': {
+      const parts = namedChildren(right);
+      return parts[parts.length - 1]?.type === 'identifier' ? 'ends' : 'keeps';
+    }
+    case 'matrix': {
+      const keeps = keepsObject(site, self.name, self.cls, hw);
+      return keeps === false ? 'ends' : 'keeps';
+    }
+    case 'function_call': {
+      const callee = childField(right, 'name');
+      if (callee?.type !== 'identifier') return 'keeps';
+      const f = getNodeText(callee, source);
+      // `obj = obj{1}`, a cell's contents.
+      if (bracesIndex(right)) return 'ends';
+      if (MATLAB_BUILTINS.has(f)) {
+        if (!VALUE_RETURNING_ON_OBJECTS.has(f) || OBJECT_RETURNING_BUILTINS.has(f)) return 'keeps';
+        const keeps = matlabNameKeeps(f, self.cls, callArgs(right), (n) => n?.type === 'identifier' && getNodeText(n, source) === self.name);
+        return keeps === true ? 'keeps' : f;
+      }
+      // `obj = Zconf(obj)`: the update idiom keeps it (project rule, see keepsObject); a construction of another
+      // class that is not passed the object itself (`obj = Widget(obj.n)`) gives that class.
+      if (callArgs(right).some((a) => a.type === 'identifier' && getNodeText(a, source) === self.name)) return 'keeps';
+      const made = hw.facts.writeSites.has(f) ? null : constructorShape(right, source)?.[1];
+      return made && made !== self.cls ? 'ends' : 'keeps';
+    }
+  }
+  return 'keeps';
+}
+
+/**
+ * Whether write `s` is followed, in the block that holds it, by a `return`
+ * (which then runs whenever `s` does), and `p` lies after that block: the
+ * function, or the script, has returned before `p` could read what `s` wrote
+ * (`if isempty(a), a = val; return; end`, MATLAB doc 'return'). Inside a
+ * `try` body, only when nothing from the write (its own right side) to the
+ * `return` can throw: a call or an operator there may, and the write then
+ * reaches the `catch` clause and what follows (doc 'try, catch'); `k = 5;
+ * return` cannot (step 15 round 8).
+ */
+function returnsAfter(s: Placed, p: SyntaxNode): boolean {
+  const block = s.node.parent;
+  if (!block || block.type !== 'block' || within(p, block) || p.startIndex < block.endIndex) return false;
+  const ret = namedChildren(block).find((c) => c.type === 'return_statement' && c.startIndex >= s.node.endIndex);
+  if (!ret) return false;
+  if (!s.clauses.some(isTryBody) && !isTryBody(block)) return true;
+  const between = namedChildren(block).filter((c) => c.startIndex >= s.node.endIndex && c.endIndex <= ret.startIndex);
+  const right = s.node.type === 'assignment' ? childField(s.node, 'right') : s.node;
+  return ![right, ...between].some((n) => n !== null && mayThrow(n));
+}
+
+/** Whether running `n` may throw (see returnsAfter): it holds a call, a bare name (a command), or an operator. */
+function mayThrow(n: SyntaxNode): boolean {
+  if (n.type === 'function_call' || n.type === 'command' || n.type === 'identifier' || OPERATOR_FORMS.has(n.type) || n.type === 'postfix_operator') return true;
+  return namedChildren(n).some(mayThrow);
+}
+
+/** Whether expression `e` reads the name `v` anywhere in it (`f(2, v)`, `[v.x, 1]`, `-v`). */
+function mentionsName(e: SyntaxNode, v: string, source: string): boolean {
+  if (e.type === 'identifier') return getNodeText(e, source) === v;
+  return namedChildren(e).some((c) => mentionsName(c, v, source));
+}
+
+/**
+ * Whether write `site` makes an object of the method's class `self.cls`: a
+ * construction of it (`obj = Gizmo(…)`, see constructedClassOf), or, in an
+ * old-style class, MATLAB's `class(s, …)` with any class name (`mfilename`,
+ * a text, a variable: doc 'class', which an old-style class's constructor
+ * alone may call with a name, its own).
+ */
+function makesOwnObject(site: SyntaxNode, self: Self, source: string): boolean {
+  const right = site.type === 'assignment' ? unparenthesised(childField(site, 'right')) : null;
+  if (!right) return false;
+  if (constructedClassOf(right, source) === self.cls) return true;
+  if (right.type !== 'function_call' || getNodeText(childField(right, 'name') ?? right, source) !== 'class') return false;
+  return callArgs(right).length >= 2;
 }
 
 /**
@@ -1574,6 +2555,12 @@ let fileFunctions: ReadonlySet<string> = EMPTY;
  * call there may be the class's own. Set while extractFile walks the file.
  */
 let fileMethods: ReadonlySet<string> = EMPTY;
+
+/** The class the file's classdef defines (`pkg::Cls`), whose methods are fileMethods; null in a file with none. Set while extractClass walks it. */
+let fileClass: string | null = null;
+
+/** In a class folder's file (`+pkg/@Cls/f.m`), that folder's class (`pkg::Cls`); null elsewhere. Set while extractFile walks the file. */
+let fileFolderClass: string | null = null;
 
 /**
  * Whether the file is a function file in a class folder (`@Cls/f.m`), the
@@ -1779,10 +2766,15 @@ function forwardable(params: readonly (string | null)[], facts: ScopeFacts, walk
  * the `load`s that may make names no code spells (see Frame.loads): its own,
  * and the `eval`s whose code holds one (`eval(['load ' f])`), unless `load`
  * is not MATLAB's there (see loadIsMatlabs), or the function's workspace is
- * static (see Frame.staticWorkspace).
+ * static (see Frame.staticWorkspace). A name only a `load` list makes is one
+ * where such a load may have run (Frame.runtimeLoads); in a static workspace
+ * none is made. Returns the names made at runtime.
  */
-function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source: string, isFunction: boolean): void {
-  const made = new Set<string>(isFunction ? facts.loaded : []);
+function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source: string, isFunction: boolean): ReadonlySet<string> {
+  // A static workspace takes no variable its code does not spell: a `load` that lists one there is an error
+  // (MATLAB 'Attempt to add … to a static workspace'), and the name stays a call.
+  const listed = isFunction && !f.staticWorkspace ? facts.loaded : EMPTY;
+  const made = new Set<string>();
   const loadCalled = !f.staticWorkspace && loadIsMatlabs(f);
   const sites: SyntaxNode[] = loadCalled ? [...facts.loads] : [];
   for (const { callee, arg, call } of facts.evalCodes) {
@@ -1796,11 +2788,18 @@ function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source:
     // (An `eval(code, catchCode)` call's two codes are consecutive entries.)
     if (loads && loadCalled && sites[sites.length - 1] !== call) sites.push(call);
   }
-  const loads = loadSitesOf(sites, facts.clears, scope);
+  const loads = loadSitesOf(sites, facts, scope);
   if (loads) f.loads = loads;
-  if (made.size === 0) return;
-  if (isFunction) f.runtime = made;
-  else for (const n of made) facts.locals.add(n);
+  // A name only a load list makes is one where such a load may have run (see Frame.runtimeLoads).
+  const byLoad = new Map<string, Placed[]>();
+  for (const n of listed) if (!made.has(n)) byLoad.set(n, (facts.loadedAt.get(n) ?? []).map((s) => placed(s, scope)));
+  for (const n of listed) made.add(n);
+  if (made.size === 0) return made;
+  if (isFunction) {
+    f.runtime = made;
+    if (byLoad.size > 0) f.runtimeLoads = { sites: byLoad, ...clearSitesOf(facts, scope) };
+  } else for (const n of made) facts.locals.add(n);
+  return made;
 }
 
 /**
@@ -1823,7 +2822,8 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
     const computed = !writtenAsLiteral(arg);
     switch (kind) {
       case 'feval':
-        handleCalls(v.fns, v.strs, arg, args[1], ctx, computed);
+        // `feval('probe');`: one name and nothing more, as a statement, runs a script of it (the `emptyCall` fact).
+        handleCalls(v.fns, v.strs, arg, args[1], ctx, computed, args.length === 1 && isStatement(node));
         break;
       case 'function':
         // A handle written with `@` is referenced there.
@@ -1880,13 +2880,15 @@ function computedFact(name: string, computed: boolean): MatlabRefFacts {
  * dispatches on the object passed first (`dispatchOn`) as a call written so
  * would: `feval('area', c)` after `c = Shape(…)` is `Shape::area`.
  */
-function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext, computed: boolean): void {
-  const cls = dispatchClass(dispatchOn, ctx.source);
+function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxNode, dispatchOn: SyntaxNode | undefined, ctx: ExtractorContext, computed: boolean, emptyCall = false): void {
+  const held = dispatchClassKept(dispatchOn, ctx.source);
+  const cls = held?.cls;
+  const own = cls !== undefined && isOwnObject(dispatchOn, ctx.source);
   // A value's names (one of several a variable may hold, what `mfilename` returns) are no text written at `at`: anchored (see anchoredRefs).
   const column = computed ? 'anchored' : undefined;
   const call = (f: FnVal): void => {
-    if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name }, column);
-    else addRef(ctx, f.name, 'calls', at, { ...(f.variable ? { variable: f.variable } : {}), ...computedFact(f.name, computed) }, column);
+    if (cls && /^[A-Za-z]\w*$/.test(f.name)) addRef(ctx, `${cls}::${f.name}`, 'calls', at, { dispatch: f.name, ...(own ? { selfArg: true } : {}), ...keptFact(held?.kept) }, column);
+    else addRef(ctx, f.name, 'calls', at, { ...(f.variable ? { variable: f.variable } : {}), ...computedFact(f.name, computed), ...(emptyCall && !isDottedName(f.name) ? { emptyCall } : {}) }, column);
   };
   for (const text of strs) {
     const f = NAME_SHAPED.test(text) ? namedRef(text.split('.')) : null;
@@ -1943,7 +2945,7 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
     };
     if (here) {
       f.at = at;
-      const loads = loadIsMatlabs(outer) && !inStaticWorkspace(outer) ? loadSitesOf(facts.loads, facts.clears, root) : undefined;
+      const loads = loadIsMatlabs(outer) && !inStaticWorkspace(outer) ? loadSitesOf(facts.loads, facts, root) : undefined;
       if (loads) f.loads = loads;
     }
     const refs: UnresolvedReference[] = [];
@@ -2610,7 +3612,7 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
   if (cls) {
     const isConstructor = name === (block ? block.className : classFolder);
     const v = isConstructor ? singleOutput(children, source) : firstParameter(children, source);
-    if (v) self = { name: v, cls };
+    if (v) self = { name: v, cls, ...(isConstructor && !block ? { made: true as const } : {}) };
   } else if (nested) {
     self = outer.self;
   }
@@ -2620,12 +3622,15 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
   // A nested function's parameters are variables of the workspace it shares: what they hold is not followed.
   const params = nested ? undefined : parameterList(children, source);
   const walk = needsWalk(node, params, source, facts);
-  const classHints = classHintsFrom(facts, (v) => facts.locals.has(v) || (parent !== null && isLocal(parent, v)));
+  const isVariable = (v: string): boolean => facts.locals.has(v) || (parent !== null && isLocal(parent, v));
+  const classHints = classHintsFrom(facts, isVariable);
+  const dispatchHints = dispatchHintsFrom(facts, isVariable);
   const f: Frame = {
     kind: 'function',
     qual: [...qual, name],
     locals: facts.locals,
     classHints,
+    ...(dispatchHints ? { dispatchHints } : {}),
     copyHints: objectCopyHints(classHints, facts, self, new Set(parameterList(children, source).filter((p): p is string => p !== null)), nested, block?.indexesItself !== true, name),
     ...(block?.indexesItself ? { elementsOfClass: false } : {}),
     opaque: facts.opaque,
@@ -2651,6 +3656,8 @@ function extractFunction(node: SyntaxNode, ctx: ExtractorContext, block: Methods
     shared: parent ? (v) => !own.has(v) && isLocal(parent, v) : () => false,
     ...(params ? { params } : {}),
   };
+  f.hintWrites = hintWritesOf(facts, node, source, (v) => inputs.has(v) || options.shared(v), (w, at) =>
+    f.self?.name === w ? (ownObjectKept(f, f.self, at)?.size === 0 ? f.self.cls : undefined) : heldWithoutCondition(classHintKept(f, w, true, at)));
 
   ctx.pushScope(fn.id);
   inFrame(f, () => {
@@ -2688,6 +3695,7 @@ function extractClass(node: SyntaxNode, ctx: ExtractorContext): void {
   ].join(' ');
 
   const qual = [...frame().qual, name];
+  fileClass = qual.join('::');
   const indexesItself = bases.some((b) => /^matlab\.mixin\.indexing\./.test(b));
   const cls = ctx.createNode(isEnum ? 'enum' : 'class', name, node, {
     qualifiedName: qual.join('::'),
@@ -2770,9 +3778,12 @@ function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () 
   fileMethods = fileMethodsOf(root, source);
   fileStem = matlabFileStem(filePath);
   classFile = matlabPathScope(filePath).classFolder !== undefined && !namedChildren(root).some((c) => c.type === 'class_definition');
+  const scope = matlabPathScope(filePath);
+  fileFolderClass = scope.classFolder !== undefined ? [...scope.packages, scope.classFolder].join('::') : null;
   try {
     const out = body();
     placeTextRefs();
+    tagConstructions();
     return out;
   } finally {
     refPlaces = [];
@@ -2782,30 +3793,51 @@ function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () 
     codeDepth = 0;
     fileFunctions = EMPTY;
     fileMethods = EMPTY;
+    fileClass = null;
+    fileFolderClass = null;
+    ctorRefs = [];
+    a10Keys = new Set();
     classFile = false;
     for (const { tree } of codeTrees.values()) tree?.delete();
     codeTrees = new Map();
   }
 }
 
+/**
+ * A script's variables in text order (see Frame.textOrder): each name with
+ * its writes, placed; not a name code `eval` runs may write (`made`), whose
+ * place is unknown: a variable everywhere.
+ */
+function textOrderOf(facts: ScopeFacts, made: ReadonlySet<string>, scope: SyntaxNode): Frame['textOrder'] {
+  const sites = new Map<string, Placed[]>();
+  for (const [v, at] of facts.writeSites) if (!made.has(v)) sites.set(v, at.map((s) => placed(s, scope)));
+  return { sites, ...clearSitesOf(facts, scope) };
+}
+
 /** Walks a file from its root (see extractFile); a walk for parameter sinks walks its definitions only. */
 function walkFile(node: SyntaxNode, ctx: ExtractorContext): void {
   const source = ctx.source;
   const facts = scanScope(node, source, false);
+  const classHints = classHintsFrom(facts, (v) => facts.locals.has(v));
+  const dispatchHints = dispatchHintsFrom(facts, (v) => facts.locals.has(v));
   const f: Frame = {
     kind: 'file',
     qual: matlabPathScope(ctx.filePath).packages,
     locals: facts.locals,
-    classHints: classHintsFrom(facts, (v) => facts.locals.has(v)),
+    classHints,
+    dispatchHints,
     structFields: facts.structFields,
     self: null,
     parent: null,
+    // A script's variables hold nothing on entry the index sees: it is read as run on its own.
+    hintWrites: hintWritesOf(facts, node, source, () => false, (w, at) => heldWithoutCondition(classHintKept(f, w, true, at))),
   };
   inFrame(f, () => {
     // A function file's or a class file's top level runs nothing of its own.
     const script = !sinkCollector && namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
     f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source, needsWalk(node, undefined, source, facts)) : NO_VALUES;
-    addRuntimeNames(facts, f, node, source, false);
+    const madeByEval = addRuntimeNames(facts, f, node, source, false);
+    if (script) f.textOrder = textOrderOf(facts, madeByEval, node);
     for (const c of namedChildren(node)) if (!sinkCollector || DEFINITIONS.has(c.type)) ctx.visitNode(c);
   });
 }
@@ -2893,18 +3925,20 @@ export const matlabExtractor: LanguageExtractor = {
         // (A walk for parameter sinks keeps no reference: what calls pass is no part of it.)
         const args = form || sinkCollector || MATLAB_BUILTINS.has(written) ? undefined : callArgsFact(node, source);
         // A plain name's call after a `load` that may have made it (see loadMayMake) may read a variable, unless it reads as no index (see readsAsCall).
-        const loaded = ref?.name === written && !MATLAB_BUILTINS.has(written) && loadMayMake(frame(), node) && !readsAsCall(node, args);
-        const runtime: MatlabRefFacts = loaded ? { runtime: true } : runtimeFact(frame(), written);
+        const loaded = ref?.name === written && !MATLAB_BUILTINS.has(written) && loadMayMake(frame(), node, written) && !readsAsCall(node, args);
+        const runtime: MatlabRefFacts = loaded ? { runtime: true } : runtimeFact(frame(), written, node);
         // `m(x, …)` on a variable that may hold an object: the resolver may take the caller's class's method (see objectArgument).
         const objectArg = classFile && ref !== null && !ref.dispatch && ref.name === written && !form && !runtime.runtime && !MATLAB_BUILTINS.has(written) && objectArgument(callArgs(node), source);
-        if (ref) addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(form ? { form } : {}), ...runtime, ...(args ? { args } : {}), ...(objectArg ? { objectArg: true } : {}) });
+        // `probe();`: an empty argument list, as a statement, runs a script of the name (the `emptyCall` fact).
+        const emptyCall = !form && ref !== null && ref.name === written && callArgs(node).length === 0 && isStatement(node);
+        if (ref) noteConstruction(node, addRef(ctx, ref.name, 'calls', node, { ...(ref.dispatch ? { dispatch: written } : {}), ...(ref.selfArg ? { selfArg: true } : {}), ...(ref.argClass && !form ? { argClass: ref.argClass } : {}), ...(ref.keptBy && (ref.dispatch || (ref.argClass && !form)) ? { keptBy: ref.keptBy } : {}), ...(form ? { form } : {}), ...runtime, ...(args ? { args } : {}), ...(objectArg ? { objectArg: true } : {}), ...(emptyCall ? { emptyCall } : {}) }), source);
         if (ref?.name === 'run') runRef(namedChildren(node).find((c) => c.type === 'arguments'), ctx, isStatement(node));
         if (ref) dynamicCallRefs(node, written, ctx, ref.name === written);
         else if (isLocal(frame(), written)) {
           // `fh(x)` after `fh = @solve`: a call of what the handle holds.
           const held = recordedValue(callee);
           // What the handle holds was given elsewhere: computed, as far as this call's text says.
-          if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx, true);
+          if (held && held.fns.length > 0) handleCalls(held.fns, [], node, callArgs(node)[0], ctx, true, callArgs(node).length === 0 && isStatement(node));
           if (held && sinkCollector && dispatchClass(callArgs(node)[0], source) === undefined) {
             sinkCollector.add(held, { sink: written, takes: 'handle', edge: 'calls', asValue: false }, node);
           }
@@ -2933,7 +3967,7 @@ export const matlabExtractor: LanguageExtractor = {
           addRef(ctx, ref.name, 'calls', ref.at, {
             ...(ref.variable ? { variable: ref.variable } : {}),
             ...(ref.bare ? { form: 'bare' as const } : {}),
-            ...(head ? runtimeFact(frame(), getNodeText(head, source)) : {}),
+            ...(head ? runtimeFact(frame(), getNodeText(head, source), node) : {}),
             ...(ref.self ? { self: true } : {}),
             ...(ref.param ? { param: true } : {}),
           });
@@ -2959,10 +3993,10 @@ export const matlabExtractor: LanguageExtractor = {
           (parent.type === 'arguments' && parent.parent?.type === 'function_call' && node.nextSibling?.type !== '=');
         if (!asValue) return false;
         const name = getNodeText(node, source);
-        if (!isLocal(frame(), name) && !javaImported.has(name) && !inUnreadText(node, source)) {
+        if (!isVariableAt(frame(), name, node) && !javaImported.has(name) && !inUnreadText(node, source)) {
           // A read after a `load` that may have made the name (see loadMayMake); not a statement, which may run a script here.
-          const loaded = !statement && !MATLAB_BUILTINS.has(name) && loadMayMake(frame(), node);
-          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...(loaded ? { runtime: true } : runtimeFact(frame(), name)) });
+          const loaded = !statement && !MATLAB_BUILTINS.has(name) && loadMayMake(frame(), node, name);
+          noteConstruction(node, addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...(loaded ? { runtime: true } : runtimeFact(frame(), name, node)) }), source);
         }
         return false;
       }
@@ -2972,11 +4006,11 @@ export const matlabExtractor: LanguageExtractor = {
         if (!cmd) return true;
         const name = getNodeText(cmd, source);
         if (name === 'import') extractImport(node, ctx);
-        else if (!isLocal(frame(), name) && !inUnreadText(node, source)) {
+        else if (!isVariableAt(frame(), name, node) && !inUnreadText(node, source)) {
           // `setup_paths`: a statement of its own; `hold on` takes arguments.
           // (`setup_paths ;` reads with an empty argument, which is none.)
           const statement = !namedChildren(node).some((c) => c.type === 'command_argument' && getNodeText(c, source).trim() !== '');
-          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name) });
+          addRef(ctx, name, 'calls', node, { form: statement ? 'statement' : 'bare', ...runtimeFact(frame(), name, node) });
           if (name === 'run') runRef(node, ctx, true);
         }
         return true;

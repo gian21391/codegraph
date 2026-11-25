@@ -1,0 +1,50 @@
+{
+  "index": {
+    "edges": [
+      "lower.m lower.m -calls-> widget @ widget.m"
+    ],
+    "rows": [
+      "max.m:1 calls:Widget",
+      "max.m:2 calls:Widget::plot"
+    ],
+    "dormant": [
+      "lower.m:2 calls:widget::plot"
+    ]
+  },
+  "steps": [
+    {
+      "edges": [
+        "lower.m lower.m -calls-> plot @ lib/plot.m",
+        "lower.m lower.m -calls-> widget @ widget.m",
+        "max.m max.m -calls-> plot @ lib/plot.m"
+      ],
+      "rows": [
+        "max.m:1 calls:Widget"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "lower.m lower.m -calls-> widget @ widget.m"
+      ],
+      "rows": [
+        "max.m:1 calls:Widget",
+        "max.m:2 calls:Widget::plot"
+      ],
+      "dormant": [
+        "lower.m:2 calls:widget::plot"
+      ]
+    },
+    {
+      "edges": [
+        "lower.m lower.m -calls-> plot @ plot.m",
+        "lower.m lower.m -calls-> widget @ widget.m",
+        "max.m max.m -calls-> plot @ plot.m"
+      ],
+      "rows": [
+        "max.m:1 calls:Widget"
+      ],
+      "dormant": []
+    }
+  ]
+}

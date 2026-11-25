@@ -1,0 +1,10 @@
+{
+  "index": {
+    "edges": [
+      "@gadget/gadget.m gadget::gadget -calls-> gadget::tidy @ @gadget/tidy.m",
+      "@gadget/gadget.m gadget::gadget -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

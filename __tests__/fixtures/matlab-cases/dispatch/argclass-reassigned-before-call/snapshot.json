@@ -1,0 +1,23 @@
+{
+  "index": {
+    "edges": [
+      "branch.m branch -calls-> tidy @ tidy.m",
+      "branch.m branch -instantiates-> gadget @ @gadget/gadget.m",
+      "conv.m conv -calls-> tidy @ tidy.m",
+      "conv.m conv -instantiates-> Gizmo @ Gizmo.m",
+      "keep.m keep -calls-> gadget::tidy @ @gadget/tidy.m",
+      "keep.m keep -instantiates-> gadget @ @gadget/gadget.m",
+      "ops.m ops -calls-> Gizmo::tidy @ Gizmo.m",
+      "ops.m ops -instantiates-> Gizmo @ Gizmo.m",
+      "upper.m upper -calls-> tidy @ tidy.m",
+      "upper.m upper -instantiates-> Gizmo @ Gizmo.m",
+      "use.m use -calls-> tidy @ tidy.m",
+      "use.m use -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "conv.m:3 calls:Gizmo::struct",
+      "ops.m:4 calls:Gizmo::set"
+    ]
+  }
+}

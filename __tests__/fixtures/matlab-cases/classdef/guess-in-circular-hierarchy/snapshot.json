@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "@Cx/Cx.m Cx -extends-> Dy @ Dy.m",
+      "@Cx/f.m Cx::f -calls-> zt @ zt.m",
+      "Dy.m Dy -extends-> Cx @ @Cx/Cx.m"
+    ],
+    "rows": [
+      "@Cx/f.m:2 calls:spin"
+    ],
+    "dormant": []
+  }
+}

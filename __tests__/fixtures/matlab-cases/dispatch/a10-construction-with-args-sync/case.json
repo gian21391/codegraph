@@ -1,0 +1,31 @@
+{
+  "why": "A construction an on-object call is read on carries the evidence fact (step 15 round 7), beside what it passes (`g = gadget('a', 1)`): when the function it links goes and comes back, the edge turns into a row and back, and every step must end where a fresh index ends, facts and their order included.",
+  "truth": {
+    "edges": [
+      "use.m use -calls-> zt @ zt.m",
+      "use.m use -calls-> gadget @ gadget.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "gadget.m": null
+      },
+      "truth": {
+        "rows": [
+          "use.m:2 calls:gadget"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "gadget.m": "function s = gadget(varargin)\ns = struct('n', 1);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "use.m use -calls-> gadget @ gadget.m"
+        ]
+      }
+    }
+  ]
+}

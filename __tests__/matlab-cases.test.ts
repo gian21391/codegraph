@@ -518,6 +518,27 @@ describe('MATLAB edge-case catalog', () => {
         }
       }
 
+      if (c.steps?.length && c.pendingBug === undefined) {
+        // What the snapshot leaves out: each row's and edge's facts, which a sync must store as a fresh index does.
+        it('every step: a sync stores the facts a fresh index stores', () => {
+          // As multisets: an entry stored twice on one side and once on the other differs.
+          const counts = (list: readonly string[]): Map<string, number> => {
+            const m = new Map<string, number>();
+            for (const x of list) m.set(x, (m.get(x) ?? 0) + 1);
+            return m;
+          };
+          const differ = run.facts.steps.flatMap((s, i) => {
+            const a = counts(s.synced.stored);
+            const b = counts(s.fresh.stored);
+            const out: string[] = [];
+            for (const [x, n] of a) if (n > (b.get(x) ?? 0)) out.push(`step ${i + 1} only synced (${n - (b.get(x) ?? 0)}): ${x}`);
+            for (const [x, n] of b) if (n > (a.get(x) ?? 0)) out.push(`step ${i + 1} only fresh (${n - (a.get(x) ?? 0)}): ${x}`);
+            return out;
+          });
+          expect(differ).toEqual([]);
+        });
+      }
+
       it('snapshot', () => {
         const now: Snapshot = { index: run.initial, ...(run.steps.length ? { steps: run.steps.map(synced) } : {}) };
         if (UPDATE) {

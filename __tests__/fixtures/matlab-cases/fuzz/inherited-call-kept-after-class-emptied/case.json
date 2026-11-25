@@ -1,5 +1,5 @@
 {
-  "why": "`Widget < Mid` names the root `Mid.m` (its own folder's copy comes first), which has no `plot`, so `w.plot(1)` reaches no method (MATLAB doc 'Function Precedence Order'; project rule: with no path config a caller takes its own folder's copy). Once `Widget.m` is emptied it is an empty MATLAB script (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function, and only a function when called with arguments'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): `w = Widget()` is a live row, and nothing links to `Widget` or `plot`. Today the index links `w.plot` into the other copy's `Mid::plot`, the wrong copy of a superclass (N1, a resolution rule for step 15); a sync after the empty kept that edge where a fresh index drops it until step 14 (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer).",
+  "why": "`Widget < Mid` names the root `Mid.m` (its own folder's copy comes first), which has no `plot`, so `w.plot(1)` reaches no method (MATLAB doc 'Function Precedence Order'; project rule: with no path config a caller takes its own folder's copy). Once `Widget.m` is emptied it is an empty MATLAB script (the user's ruling (step 11)), and a script answers only a statement: called with arguments or an output it is an error in MATLAB ('Attempt to execute SCRIPT … as a function'), so no edge and a live row (matlab-resolution.test.ts 'takes the nearest file of the name, script or function; a call with arguments that finds a script first reaches nothing'; matlab-dormant.test.ts 'a script ahead on the path called with arguments: MATLAB errors, and the row stays live'): `w = Widget()` is a live row, and nothing links to `Widget` or `plot`. A class's methods are those of the one definition its name resolves to (MATLAB doc 'Class Precedence and MATLAB Path'): `tools/Mid.m`'s `plot` is another class's, which the index linked until step 15 (N1); a sync after the empty kept that edge where a fresh index drops it until step 14 (project rule: a sync ends where a fresh index ends; found by the step 11 fuzzer).",
   "truth": {
     "edges": [
       "Widget.m Widget -extends-> Mid @ Mid.m",
@@ -30,11 +30,5 @@
         ]
       }
     }
-  ],
-  "pendingBug": {
-    "id": "S15-wrong-superclass-copy",
-    "fails": [
-      "index: unwanted edge util.m util.m -calls-> Mid::plot @ tools/Mid.m"
-    ]
-  }
+  ]
 }

@@ -1,0 +1,10 @@
+{
+  "why": "`x ~= 0` runs the class's `ne` (its folder has `ne.m`); `x == 0` with no `eq` errors on an old-style object (MATLAB R2026a), so no path through it reaches a later call: in `@Cel/all.m` (one write or the other) and in `@Cel/any.m` (both, in sequence) `sum(x)` is reached with the Cel or not at all, and it is `Cel::sum` (step 15 round 7: a write through a MATLAB function that errors on objects ends no hint).",
+  "truth": {
+    "edges": [
+      "@Cel/all.m Cel::all -calls-> zt @ zt.m",
+      "@Cel/all.m Cel::all -calls-> Cel::sum @ @Cel/sum.m",
+      "@Cel/any.m Cel::any -calls-> Cel::sum @ @Cel/sum.m"
+    ]
+  }
+}

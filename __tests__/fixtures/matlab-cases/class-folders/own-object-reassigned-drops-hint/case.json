@@ -1,0 +1,63 @@
+{
+  "why": "The method's own object follows the reaching rule of every class hint (doc 'Function Precedence Order', 'Method Invocation': the class of the argument's value at the call): `obj = 5` makes `obj` a double, so `tidy(obj)` in `@Gizmo/poke.m` calls the root `tidy.m`. A write that gives the object back keeps it: `obj = set(obj, 'n', 1)` (MATLAB R2026a: `set` errors on an old-style object whose class has no `set`, so the call after it is reached only through the class's own `set`, which by the project rule of OBJECT_RETURNING_BUILTINS gives the object back), `obj = obj(1)` (an element of an object array), `obj = bump(obj)` (a project function: the project rule of what a call passed the object returns). A MATLAB name the file defines itself is the project's function: `g = subs(g, n - 1)` in `@Gizmo/subs.m` calls that method again, `obj = subs(obj)` in `Pod.m` calls the classdef's own `subs` on its object, and `obj = numel(obj)` in `@Gizmo/zqhold4.m` calls the file's local `numel` (local functions come before MATLAB's); `obj = numel(obj)`, which `Pod` does not define, is MATLAB's and gives a double. A write a `return` follows in its block reaches nothing after the block (doc 'return'): `obj = v; return;` in `@Gizmo/fill.m` and `k = 5; return;` in `ret.m` leave the object to the call after the `if`. A construction of the class ends what came before it: `[ok, this] = helper2(struct(this))` gives `this` the value a project function returns, which keeps the object (the project's update idiom), and `this = Gizmo(this)`, the class's constructor called with it (the fixture's takes any input), makes an object of the class again. In an old-style constructor the output is a struct until `class(obj, 'Gizmo')` makes it the object (doc 'class'; a field written into it first, `b.n = 0`, makes a struct): its first `tidy(obj)` is the root `tidy.m`, the second the class's method, in `@Gizmo/Gizmo.m` and `@Bolt/Bolt.m` alike.",
+  "truth": {
+    "edges": [
+      "@Gizmo/poke.m Gizmo::poke -calls-> zt @ zt.m",
+      "@Gizmo/poke.m Gizmo::poke -calls-> tidy @ tidy.m",
+      "@Gizmo/zqhold1.m Gizmo::zqhold1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold2.m Gizmo::zqhold2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold3.m Gizmo::zqhold3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> tidy @ tidy.m",
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/subs.m Gizmo::subs -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "Pod.m Pod::go -calls-> Pod::tidy @ Pod.m",
+      "Pod.m Pod::stop -calls-> tidy @ tidy.m",
+      "@Gizmo/fill.m Gizmo::fill -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/chk.m Gizmo::chk -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "ret.m ret -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold4.m Gizmo::zqhold4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> tidy @ tidy.m",
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> Bolt::tidy @ @Bolt/tidy.m"
+    ],
+    "noEdges": [
+      {
+        "from": "@Gizmo/subs.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/fill.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/chk.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "ret.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/zqhold4.m",
+        "at": "tidy.m"
+      },
+      "Pod.m Pod::go -calls-> tidy @ tidy.m",
+      "Pod.m Pod::stop -calls-> Pod::tidy @ Pod.m",
+      {
+        "from": "@Gizmo/poke.m",
+        "at": "@Gizmo/tidy.m"
+      },
+      {
+        "from": "@Gizmo/zqhold1.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/zqhold2.m",
+        "at": "tidy.m"
+      },
+      {
+        "from": "@Gizmo/zqhold3.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

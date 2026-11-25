@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "plain.m plain -calls-> noclass @ noclass.m",
+      "use.m use -calls-> Gizmo::disp @ Gizmo.m",
+      "use.m use -calls-> gadget::disp @ @gadget/disp.m",
+      "use.m use -instantiates-> Gizmo @ Gizmo.m",
+      "use.m use -instantiates-> gadget @ @gadget/gadget.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

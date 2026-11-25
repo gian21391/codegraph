@@ -1,0 +1,98 @@
+{
+  "why": "`tidy(b)` after `b = Box(1);` is recorded under its class, `Box::tidy` (the dispatch fact); no class `Box` exists, so it is the plain call `tidy(b)`, and the empty `lib/tidy.m` (a script: the user's ruling, step 11) is found first: a call with arguments that finds a script first links nowhere (MATLAB R2026a: 'Execution of script \u2026 as a function is not supported'; the user's ruling, step 15), a live row. Help text only, `lib/tidy.m` is a stub, which comes after every function (project rule, step 8): the root `tidy.m` answers. A function in `lib/` answers; deleted, the root one does; Octave, which the index does not read (step 4), blocks nothing. Each step must end where a fresh index ends (project rule; the step 15 review's find s2302-c15, renamed and made by hand).",
+  "truth": {
+    "rows": [
+      "lib/run.m:2 calls:Box::tidy"
+    ],
+    "noEdges": [
+      {
+        "from": "lib/run.m",
+        "to": "tidy"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "lib/tidy.m": "% TIDY  help text only\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+        ],
+        "noRows": [
+          {
+            "file": "lib/run.m",
+            "name": "Box::tidy"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": ""
+      },
+      "truth": {
+        "rows": [
+          "lib/run.m:2 calls:Box::tidy"
+        ],
+        "noEdges": [
+          {
+            "from": "lib/run.m",
+            "to": "tidy"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": "function tidy(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m lib/run.m -calls-> tidy @ lib/tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": ""
+      },
+      "truth": {
+        "rows": [
+          "lib/run.m:2 calls:Box::tidy"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": null
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": ""
+      },
+      "truth": {
+        "rows": [
+          "lib/run.m:2 calls:Box::tidy"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "lib/tidy.m": "function tidy(x)\n  x = 2;\nendfunction\n"
+      },
+      "truth": {
+        "edges": [
+          "lib/run.m lib/run.m -calls-> tidy @ tidy.m"
+        ]
+      }
+    }
+  ]
+}

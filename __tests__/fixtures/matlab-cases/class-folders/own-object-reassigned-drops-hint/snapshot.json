@@ -1,0 +1,36 @@
+{
+  "index": {
+    "edges": [
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> Bolt::tidy @ @Bolt/tidy.m",
+      "@Bolt/Bolt.m Bolt::Bolt -calls-> tidy @ tidy.m",
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/Gizmo.m Gizmo::Gizmo -calls-> tidy @ tidy.m",
+      "@Gizmo/chk.m Gizmo::chk -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/chk.m Gizmo::chk -calls-> helper2 @ helper2.m",
+      "@Gizmo/chk.m Gizmo::chk -instantiates-> Gizmo @ @Gizmo/Gizmo.m",
+      "@Gizmo/fill.m Gizmo::fill -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/poke.m Gizmo::poke -calls-> tidy @ tidy.m",
+      "@Gizmo/poke.m Gizmo::poke -calls-> zt @ zt.m",
+      "@Gizmo/subs.m Gizmo::subs -calls-> Gizmo::subs @ @Gizmo/subs.m",
+      "@Gizmo/subs.m Gizmo::subs -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold1.m Gizmo::zqhold1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold2.m Gizmo::zqhold2 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold3.m Gizmo::zqhold3 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold3.m Gizmo::zqhold3 -calls-> bump @ bump.m",
+      "@Gizmo/zqhold4.m Gizmo::zqhold4 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "@Gizmo/zqhold4.m Gizmo::zqhold4 -calls-> numel @ @Gizmo/zqhold4.m",
+      "Pod.m Pod::go -calls-> Pod::subs @ Pod.m",
+      "Pod.m Pod::go -calls-> Pod::tidy @ Pod.m",
+      "Pod.m Pod::stop -calls-> tidy @ tidy.m",
+      "ret.m ret -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "ret.m ret -instantiates-> Gizmo @ @Gizmo/Gizmo.m"
+    ],
+    "rows": [
+      "Pod.m:12 calls:Pod::numel"
+    ],
+    "dormant": [
+      "@Gizmo/chk.m:2 calls:Gizmo::struct",
+      "@Gizmo/zqhold1.m:2 calls:Gizmo::set"
+    ]
+  }
+}

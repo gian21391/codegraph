@@ -15,11 +15,5 @@
         "file": "s.m"
       }
     ]
-  },
-  "pendingBug": {
-    "id": "S11-ruling-text-order-2",
-    "fails": [
-      "index: missing edge s.m s.m -calls-> helperT @ helperT.m"
-    ]
   }
 }

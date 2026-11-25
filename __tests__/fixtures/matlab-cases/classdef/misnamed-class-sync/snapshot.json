@@ -1,0 +1,56 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -instantiates-> Vane @ Vane.m"
+    ],
+    "rows": [
+      "use.m:3 calls:Vane::turn"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "use.m use -calls-> Vane::turn @ lib/Vane.m",
+        "use.m use -instantiates-> Vane @ lib/Vane.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -instantiates-> Vane @ Vane.m"
+      ],
+      "rows": [
+        "use.m:3 calls:Vane::turn"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> Vane::turn @ lib/Vane.m"
+      ],
+      "rows": [
+        "use.m:2 calls:Vane"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> Vane::turn @ lib/Vane.m",
+        "use.m use -instantiates-> Vane @ lib/Vane.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -instantiates-> Vane @ Vane.m"
+      ],
+      "rows": [
+        "use.m:3 calls:Vane::turn"
+      ],
+      "dormant": []
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "why": "A write in a `try` body reaches the `catch` clause, and what follows the `try`, only when something between it and the `return` that follows it (or its own right side) can throw (doc 'try, catch'): in `u1.m`, `k = 5; return` throws nothing, so `k = 5` reaches no later call and `tidy(k)` is `Gizmo::tidy` (step 15 round 8). In `u2.m` `zt(c)` may throw, in `u3.m` `k = 5 + c` may (an operator) and in `u4.m` `[1 2] + [1 2 3]` does (MATLAB: arrays have incompatible sizes), so the double reaches `tidy(k)` along with the Gizmo: the plain `tidy`. Review 5's probe `r5p6`: the same inside an `if` in the `try` body.",
+  "truth": {
+    "edges": [
+      "u1.m u1 -calls-> Gizmo::tidy @ @Gizmo/tidy.m",
+      "u2.m u2 -calls-> tidy @ tidy.m",
+      "u3.m u3 -calls-> tidy @ tidy.m",
+      "u4.m u4 -calls-> tidy @ tidy.m",
+      "u2.m u2 -calls-> zt @ zt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "u2.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "u3.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "u4.m",
+        "to": "Gizmo::tidy"
+      },
+      {
+        "from": "u1.m",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

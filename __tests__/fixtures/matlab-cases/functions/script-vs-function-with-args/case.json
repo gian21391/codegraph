@@ -1,13 +1,16 @@
 {
-  "why": "A statement takes the nearest file of the name, script or function, but a call with arguments only a function (a script takes none: MATLAB doc 'Scripts vs. Functions'; harvested from matlab-resolution.test.ts 'takes the nearest file of the name, script or function').",
+  "why": "A statement takes the nearest file of the name, script or function. MATLAB runs the first file of a name it finds on the path, and a call of any form but a statement that finds a script first is an error ('Attempt to execute SCRIPT … as a function'; MATLAB doc 'Scripts vs. Functions', 'Function Precedence Order'), not a call of a farther function: it links nowhere and stays a live row (the user's ruling (step 15); matlab-resolution.test.ts 'takes the nearest file of the name, script or function; a call with arguments that finds a script first reaches nothing'): `tool(1)` in `b/useB.m` finds the nearer script `b/tool.m` first, so it reaches neither file. The anchor: `useA`'s statement finds the function `a/tool.m` first, and links.",
   "truth": {
     "edges": [
       "a/useA.m useA -calls-> tool @ a/tool.m",
-      "b/useB.m useB -calls-> b/tool.m @ b/tool.m",
-      "b/useB.m useB -calls-> tool @ a/tool.m"
+      "b/useB.m useB -calls-> b/tool.m @ b/tool.m"
     ],
     "noEdges": [
-      "a/useA.m useA -calls-> b/tool.m @ b/tool.m"
+      "a/useA.m useA -calls-> b/tool.m @ b/tool.m",
+      "b/useB.m useB -calls-> tool @ a/tool.m"
+    ],
+    "rows": [
+      "b/useB.m:3 calls:tool"
     ]
   }
 }

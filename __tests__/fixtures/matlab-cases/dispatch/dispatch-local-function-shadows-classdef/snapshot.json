@@ -1,0 +1,13 @@
+{
+  "index": {
+    "edges": [
+      "recv.m recv -calls-> Gizmo @ recv.m",
+      "use.m use -calls-> Gizmo @ use.m",
+      "use.m use -calls-> tidy @ tidy.m"
+    ],
+    "rows": [
+      "recv.m:3 calls:g.tidy"
+    ],
+    "dormant": []
+  }
+}

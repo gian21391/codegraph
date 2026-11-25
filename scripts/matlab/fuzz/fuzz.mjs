@@ -57,11 +57,11 @@ export const UNRELATED_PATH = 'zz_offpath/zzunrelated.m';
 const isText = (c) => typeof c === 'string';
 
 /** The project and options a case's seed makes: deterministic in (seed, caseIndex). */
-export function caseSetup(seed, caseIndex, { bigEvery = 0, profile = 'default' } = {}) {
+export function caseSetup(seed, caseIndex, { bigEvery = 0, profile = 'default', generatorVersion } = {}) {
   const rng = new Rng(hash32('case', seed, caseIndex));
   const bigMode = bigEvery > 0 && caseIndex % bigEvery === bigEvery - 1 ? rng.pick(['deep', 'broken']) : null;
   const kb = bigMode ? rng.range(40, 400) : 0;
-  const files = generateProject(rng.fork('gen'), { big: bigMode, kb, profile });
+  const files = generateProject(rng.fork('gen'), { big: bigMode, kb, profile, generatorVersion });
   return { files, bigMode, kb, mutRng: rng.fork('mut'), variantRng: rng.fork('variant') };
 }
 

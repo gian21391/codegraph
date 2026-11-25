@@ -10,6 +10,36 @@
  *     (`m(obj, …)`, `area(c)` after `c = Shape(…)`), recorded as `Cls::m`:
  *     the name as written, which MATLAB looks up as a function before the
  *     class's methods and after them on the path;
+ *   - `selfArg` — a `dispatch:` call whose object is the method's own (`m(obj,
+ *     …)` in a method of `Cls`, `f(2, obj)`, `f(obj(k))`, a copy of it: see
+ *     argumentDispatchClass in matlab.ts): of the caller's own class, as
+ *     written, whether or not the project defines that class where a call
+ *     of its name reaches (`@double/f.m`, a class folder with no
+ *     constructor). Any other `dispatch:` call's class is the one a call of
+ *     its constructor's name reaches from the caller (constructedClass in
+ *     ../../resolution/matlab-lookup.ts), and so is an `argClass:` one's;
+ *   - `keptBy:<f>` — on a `dispatch:` or `argClass:` call, one per name: the
+ *     object's class is read through a write that may reach the call and
+ *     passes the object to a MATLAB function `f` (`x = x ~= 0` is `ne`, `fa
+ *     = reshape(fa, n, 1)`), which gives an object of the class back only
+ *     when the class defines or inherits a method `f` (doc 'Method
+ *     Invocation', 'Operator Overloading'): the resolver takes the class
+ *     only when it has every such method (see resolveBare in
+ *     ../../resolution/matlab-lookup.ts), and a sync re-opens the call where
+ *     a definition of `f` comes or goes (reopenMatlabKeptByCalls in
+ *     ../../resolution/matlab-sync.ts);
+ *   - `ctor` — a lower-case callee's construction (`g = gadget(…)`) that an
+ *     on-object call under a built-in's name was read on in the file (`disp(g)`):
+ *     the evidence a class of the name arriving may give the file rows to
+ *     write (matlabFilesConstructing in ../../resolution/matlab-builtin-carriers).
+ *     The resolver reads nothing of it;
+ *   - `argClass:<Cls>` — the dispatch lookup of `dispatch:` for a call
+ *     recorded under the name as written (`tidy(g)` after `g = gadget();`),
+ *     whose first argument a lower-case callee made, which may be an
+ *     old-style class's constructor (`@gadget/gadget.m`) or any function:
+ *     the resolver takes `Cls`'s method only when `Cls` is a class that has
+ *     one, and the call is otherwise the plain call it is written as (no
+ *     `dispatch` fact: every rule for a plain call holds for it);
  *   - `variable:<v.m>` — a member call through a class only a bare name gave
  *     (`aa = Archive; aa.getData()` → `Archive::getData`): the variable's own
  *     dotted name, taken when that bare name is a function, not a class;
@@ -63,6 +93,14 @@
  *     nothing else answers, it is taken for a call of the class's method
  *     (see classMethodGuess in ../../resolution/matlab-lookup.ts), a guess
  *     the edge says it is;
+ *   - `emptyCall` — a call written with an empty argument list as a
+ *     statement of its own (`probe();`, `probe()`), or `feval` of one name
+ *     and nothing more, so (`feval('probe');`), or a call so of a variable
+ *     holding a handle (`h();`): a script MATLAB finds first for the name
+ *     runs then, as for a statement `probe` (MATLAB R2026a: `probe()` runs
+ *     the script, `probe(2)` is an error), so the resolver takes the script
+ *     (see resolveBare in ../../resolution/matlab-lookup.ts). Every other
+ *     rule for a call written with arguments holds for it;
  *   - `args:<json>` — what a call written with arguments (`fitmodel(S, Y,
  *     'basis0')`, `gui('LoadLattice', h)` in callback code) passes, where
  *     the code says (see MatlabCallArgs): read by nothing in resolution, it
@@ -119,6 +157,14 @@ export function spreadItem(v: MatlabArgValue): { r: number; s?: 1 } | undefined 
 
 export interface MatlabRefFacts {
   dispatch?: string;
+  /** The `argClass:<Cls>` fact's class (see the top of this file). */
+  argClass?: string;
+  /** The `emptyCall` fact (see the top of this file). */
+  emptyCall?: boolean;
+  /** The `selfArg` fact (see the top of this file). */
+  selfArg?: boolean;
+  /** The `keptBy:<f>` facts' names, sorted (see the top of this file). */
+  keptBy?: string[];
   variable?: string;
   form?: 'bare' | 'statement';
   runtime?: boolean;
@@ -131,6 +177,8 @@ export interface MatlabRefFacts {
 
 const DISPATCH = 'dispatch:';
 const VARIABLE = 'variable:';
+/** The `argClass` fact's tag. */
+const ARG_CLASS = 'argClass:';
 /** The `args` fact's tag. */
 const ARGS = 'args:';
 /** The `runtime` fact's tag. */
@@ -143,11 +191,20 @@ const PARAM_TAG = 'param';
 export const COMPUTED_TAG = 'computed';
 /** The `objectArg` fact's tag. */
 const OBJECT_ARG_TAG = 'objectArg';
+/** The `emptyCall` fact's tag. */
+const EMPTY_CALL_TAG = 'emptyCall';
+/** The `selfArg` fact's tag. */
+const SELF_ARG_TAG = 'selfArg';
+/** The `keptBy` fact's tag. */
+export const KEPT_BY = 'keptBy:';
+/** The `ctor` fact's tag: a lower-case construction an on-object call under a built-in's name was read on (see ctorRefs in matlab.ts). */
+export const CTOR_TAG = 'ctor';
 
 /** `facts` as a reference's `candidates`, or undefined when there are none. */
 export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined {
   const out: string[] = [];
   if (facts.dispatch) out.push(DISPATCH + facts.dispatch);
+  if (facts.argClass) out.push(ARG_CLASS + facts.argClass);
   if (facts.variable) out.push(VARIABLE + facts.variable);
   if (facts.form) out.push(facts.form);
   if (facts.runtime) out.push(RUNTIME_TAG);
@@ -155,6 +212,9 @@ export function matlabRefCandidates(facts: MatlabRefFacts): string[] | undefined
   if (facts.param) out.push(PARAM_TAG);
   if (facts.computed) out.push(COMPUTED_TAG);
   if (facts.objectArg) out.push(OBJECT_ARG_TAG);
+  if (facts.emptyCall) out.push(EMPTY_CALL_TAG);
+  if (facts.selfArg) out.push(SELF_ARG_TAG);
+  for (const f of facts.keptBy ?? []) out.push(KEPT_BY + f);
   if (facts.args) out.push(ARGS + JSON.stringify(facts.args));
   return out.length > 0 ? out : undefined;
 }
@@ -199,6 +259,7 @@ export function matlabRefFacts(ref: { candidates?: readonly string[] }): MatlabR
   const facts: MatlabRefFacts = {};
   for (const c of ref.candidates ?? []) {
     if (c.startsWith(DISPATCH)) facts.dispatch = c.slice(DISPATCH.length);
+    else if (c.startsWith(ARG_CLASS)) facts.argClass = c.slice(ARG_CLASS.length);
     else if (c.startsWith(VARIABLE)) facts.variable = c.slice(VARIABLE.length);
     else if (c === 'bare' || c === 'statement') facts.form = c;
     else if (c === RUNTIME_TAG) facts.runtime = true;
@@ -206,6 +267,9 @@ export function matlabRefFacts(ref: { candidates?: readonly string[] }): MatlabR
     else if (c === PARAM_TAG) facts.param = true;
     else if (c === COMPUTED_TAG) facts.computed = true;
     else if (c === OBJECT_ARG_TAG) facts.objectArg = true;
+    else if (c === EMPTY_CALL_TAG) facts.emptyCall = true;
+    else if (c === SELF_ARG_TAG) facts.selfArg = true;
+    else if (c.startsWith(KEPT_BY)) (facts.keptBy ??= []).push(c.slice(KEPT_BY.length));
     // `args` is resolution's to carry, not to read: see splitMatlabArgs.
   }
   return facts;

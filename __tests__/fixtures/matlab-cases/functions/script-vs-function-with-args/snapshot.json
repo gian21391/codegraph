@@ -2,10 +2,11 @@
   "index": {
     "edges": [
       "a/useA.m useA -calls-> tool @ a/tool.m",
-      "b/useB.m useB -calls-> b/tool.m @ b/tool.m",
-      "b/useB.m useB -calls-> tool @ a/tool.m"
+      "b/useB.m useB -calls-> b/tool.m @ b/tool.m"
     ],
-    "rows": [],
+    "rows": [
+      "b/useB.m:3 calls:tool"
+    ],
     "dormant": []
   }
 }

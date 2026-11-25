@@ -1,0 +1,2 @@
+function second(obj)
+end

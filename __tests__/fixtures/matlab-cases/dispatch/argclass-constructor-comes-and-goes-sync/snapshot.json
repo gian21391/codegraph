@@ -1,0 +1,61 @@
+{
+  "index": {
+    "edges": [
+      "use.m use -calls-> gadget @ gadget.m",
+      "use.m use -calls-> tidy @ tidy.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m",
+        "use.m use -instantiates-> gadget @ ext/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m",
+        "use.m use -instantiates-> gadget @ ext/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> tidy @ tidy.m",
+        "use.m use -instantiates-> gadget @ ext/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> gadget::tidy @ ext/@gadget/tidy.m",
+        "use.m use -instantiates-> gadget @ ext/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> tidy @ tidy.m",
+        "use.m use -instantiates-> gadget @ ext/@gadget/gadget.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "use.m use -calls-> tidy @ tidy.m"
+      ],
+      "rows": [
+        "use.m:2 calls:gadget"
+      ],
+      "dormant": []
+    }
+  ]
+}

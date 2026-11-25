@@ -1,0 +1,60 @@
+{
+  "why": "Review 5 finding 1's variant: `widget(1)` in the root script `step.m` is the private function while `private/widget.m` is one (doc 'Function Precedence Order': private functions before class constructors), and, while it is a script, no call MATLAB makes (a script takes no arguments: an error), so it links to nothing and stays a row; the class's construction otherwise. A sync that adds it, removes it, turns it from a function into a script and removes it must end each step where a fresh index ends.",
+  "truth": {
+    "edges": [
+      "step.m step.m -instantiates-> widget @ widget.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "private/widget.m": "function widget(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -calls-> widget @ private/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": null
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -instantiates-> widget @ widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": "function widget(x)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -calls-> widget @ private/widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": "x = 1;\n"
+      },
+      "truth": {
+        "noEdges": [
+          "step.m step.m -instantiates-> widget @ widget.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "private/widget.m": null
+      },
+      "truth": {
+        "edges": [
+          "step.m step.m -instantiates-> widget @ widget.m"
+        ]
+      }
+    }
+  ]
+}

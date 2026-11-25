@@ -1,0 +1,2 @@
+function tidy(obj)
+end

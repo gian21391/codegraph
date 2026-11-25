@@ -1,0 +1,15 @@
+{
+  "why": "The project rule the fix states (keepsObject): `k = k.scale(2)` gives the object back from a call on it, read as the object still, so `tidy(k)` dispatches to `Gizmo::tidy` (here `scale` returns `obj`, so MATLAB agrees: doc 'Method Invocation').",
+  "truth": {
+    "edges": [
+      "sc.m sc -calls-> Gizmo::tidy @ Gizmo.m"
+    ],
+    "noEdges": [
+      {
+        "from": "sc.m",
+        "to": "tidy",
+        "at": "tidy.m"
+      }
+    ]
+  }
+}

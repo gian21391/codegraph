@@ -1,0 +1,64 @@
+{
+  "why": "Fuzz find s2401-c35 (the step 15 fix's run; s2402-c5 is the same family), shrunk, with a lower-case twin `lower.m` and two more steps; generated text only. `plot(w)` after `w = Widget(1);` is a call on an object under a built-in's name, `Widget::plot`; no class `Widget` exists, so it is the plain call `plot(w)`, and the startup puts `lib/` after MATLAB's own folders (`addpath(\u2026, '-end')`), so MATLAB's `plot` runs (project rule, the search path): no edge, and a live row (a call on an object a capitalised callee made keeps its row while a symbol carries its name: project rule). In `lower.m`, `widget(1)` is a function's call, `widget::plot` with the argClass fact: the same answer, a dormant row (project rule, step 15 fix). With the path config dropped, `lib/plot.m` is the nearest `plot` and answers both (project rule: with no path, the nearest file); the config back, neither; a root `plot.m` added, in the callers' own folder, answers both (MATLAB runs the current folder's copy before its own). Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "rows": [
+      "max.m:2 calls:Widget::plot"
+    ],
+    "dormant": [
+      "lower.m:2 calls:widget::plot"
+    ],
+    "noEdges": [
+      {
+        "from": "max.m",
+        "to": "plot"
+      },
+      {
+        "from": "lower.m",
+        "to": "plot"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "codegraph.json": null
+      },
+      "truth": {
+        "edges": [
+          "max.m max.m -calls-> plot @ lib/plot.m",
+          "lower.m lower.m -calls-> plot @ lib/plot.m"
+        ],
+        "noRows": [
+          "max.m:2 calls:Widget::plot"
+        ],
+        "noDormant": [
+          "lower.m:2 calls:widget::plot"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "codegraph.json": "{\n  \"matlab\": {\n    \"startup\": [\n      \"addpath('lib', '-end');\",\n      \"addpath('tools', '-end');\"\n    ]\n  },\n  \"exclude\": [\n  ]\n}"
+      },
+      "truth": {
+        "rows": [
+          "max.m:2 calls:Widget::plot"
+        ],
+        "dormant": [
+          "lower.m:2 calls:widget::plot"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "plot.m": "function plot(a)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "max.m max.m -calls-> plot @ plot.m",
+          "lower.m lower.m -calls-> plot @ plot.m"
+        ]
+      }
+    }
+  ]
+}

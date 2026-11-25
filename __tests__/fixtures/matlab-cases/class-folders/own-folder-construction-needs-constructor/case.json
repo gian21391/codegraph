@@ -1,0 +1,12 @@
+{
+  "why": "In a class folder's method with no constructor in the folder, a construction of the folder's name runs what a call of the name reaches (MATLAB doc 'Function Precedence Order'; a legacy object is made by its folder's constructor alone, doc 'class'): `g = gadget()` and `k = Gizmo()` run the root functions, which return structs, so `tidy(g)` and `tidy(k)` call `tidy.m`. The method's own object is of the folder's class whatever the project defines, so `tidy(obj)` calls the folder's `tidy`. (Review 2 finding 6, with its capitalised form.)",
+  "truth": {
+    "edges": [
+      "@gadget/helper.m gadget::helper -calls-> gadget @ gadget.m",
+      "@gadget/helper.m gadget::helper -calls-> tidy @ tidy.m",
+      "@gadget/helper.m gadget::helper -calls-> gadget::tidy @ @gadget/tidy.m",
+      "@Gizmo/helper.m Gizmo::helper -calls-> tidy @ tidy.m",
+      "@Gizmo/helper.m Gizmo::helper -calls-> Gizmo::tidy @ @Gizmo/tidy.m"
+    ]
+  }
+}
