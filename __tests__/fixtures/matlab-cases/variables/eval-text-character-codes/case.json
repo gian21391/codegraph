@@ -1,0 +1,101 @@
+{
+  "why": "In a char concatenation a number is the character of that code (MATLAB doc 'char', 'Valid Combinations of Unlike Classes'), `newline` is `char(10)` (MATLAB doc 'newline'): so `eval(['disp(1);' 10 'gg(2)'])` and `eval(['disp(1);' newline 'gg(3)'])` run `gg` on the second line (MATLAB R2026a, measured for step 16), and so does `char(10)` (doc 'newline': the same character). A carriage return, 13, ends a line, after a `;` or not (MATLAB R2026a, measured for step 16: `['disp(1);' 13 'gg(2)']` and `['disp(1)' 13 'gg(6)']` both call `gg`); a tab, 9, separates no statements, and MATLAB runs none of that text (measured: a syntax error). The code before the line break is read too, placed in the literal that writes it (`zkcpa`, on the first line: project rule, a reference is placed where its name is written), and `['zkcd' 49 '(2)']` is `zkcd1(2)` (49 is `1`). A number that is no whole number is truncated toward zero, and one out of range held to 0–65535 (MATLAB R2026a, measured for step 16: 49.5 and 49.7 are `1`, 10.5 is a line break and `['disp(1);' 10.5 'gg(5)']` calls `gg`). `char(n)` of such a number converts the same way (MATLAB R2026a, measured for step 16: `char(49.5)` is `'1'`, and `['gg' char(49.5) '(1)']` names `gg1`). A code 0 (from 0, 0.5 or `char(0)`) outside a string ends the code: what comes before it runs, what comes after it does not (MATLAB R2026a, measured for step 16). A character MATLAB takes in code only inside a string, a comment or a command's argument (codes 1 to 8, 14 to 31, and 127 and up, after the truncation) makes MATLAB run none of the text when it lands outside them: measured for step 16 for 1, 1.5, `char(1)` and 233 between two statements, each 'Invalid text character', and stated by the project for the others. A vertical tab, 11, and a form feed, 12, are spaces there: the code after them runs (MATLAB R2026a, measured for step 16, `rung.out`: `['disp(1);' 11 'gg(3)']` and `… 12 …` call `gg`). Inside a string literal of the text such a character is text, and the text runs (project rule, step 16, as for literal non-ASCII text in a string: `eval(['disp(''é€😀''); ' 'ff(1)'])` calls `ff`, measured for step 16), and so does a code 0 there (`zkcsa`, `zkcsb`: MATLAB R2026a, measured for step 16, `rung.out`: `['disp(''a' 0 'b''); gg(2)']` prints `a` and calls `gg`). In a command's argument such a character is text too (`zkcca`: MATLAB R2026a, measured for step 16, `rung.out`: `['disp ' 233 '; gg(1)']` prints the character and calls `gg`). A variable named `newline` is that variable (`zkcodenv.m`: MATLAB doc 'eval'), so that text runs `disp(1);xzkcdnv(2)`. A code 0 in a command's argument ends the code as outside a string (`zkcta`, `zkctb`: MATLAB R2026a, measured for step 16, `run5.out`: `['disp a' 0 'b; gg(3)']` prints `a` and calls no `gg`), and one in a comment is part of the comment (`zkcua`, `zkcub`: measured for step 16, `run5.out`: a code 0 in a comment, then a line break and `gg(2)`, runs both calls). The code before a code 0 runs as it is written, a name right before it included (`zkcgz`: MATLAB R2026a, measured for step 16, `runm.out`: `eval(['r3g' 0 '(1)'])` calls `r3g` with no arguments).",
+  "truth": {
+    "edges": [
+      "zkcodes.m zkcodes -calls-> zkcdlf @ zkcdlf.m",
+      "zkcodes.m zkcodes -calls-> zkcdcr @ zkcdcr.m",
+      "zkcodes.m zkcodes -calls-> zkcdnl @ zkcdnl.m",
+      "zkcodes.m zkcodes -calls-> zkcdch @ zkcdch.m",
+      "zkcodes.m zkcodes -calls-> zkcdlead @ zkcdlead.m",
+      "zkcodes.m zkcodes -calls-> zkcd1 @ zkcd1.m",
+      "zkcodes.m zkcodes -calls-> zkce1 @ zkce1.m",
+      "zkcodes.m zkcodes -calls-> zkcf1 @ zkcf1.m",
+      "zkcodes.m zkcodes -calls-> zkcg @ zkcg.m",
+      "zkcodes.m zkcodes -calls-> zkch @ zkch.m",
+      "zkcodes.m zkcodes -calls-> zkcn @ zkcn.m",
+      "zkcodes.m zkcodes -calls-> zkcp @ zkcp.m",
+      "zkcodes.m zkcodes -calls-> zkcx @ zkcx.m",
+      "zkcodes.m zkcodes -calls-> zkcgg1 @ zkcgg1.m",
+      "zkcodes.m zkcodes -calls-> zkc0a @ zkc0a.m",
+      "zkcodes.m zkcodes -calls-> zkcy @ zkcy.m",
+      "zkcodes.m zkcodes -calls-> zkcz @ zkcz.m",
+      "zkcodes.m zkcodes -calls-> zkcfa @ zkcfa.m",
+      "zkcodes.m zkcodes -calls-> zkcfb @ zkcfb.m",
+      "zkcodes.m zkcodes -calls-> zkcsa @ zkcsa.m",
+      "zkcodes.m zkcodes -calls-> zkcsb @ zkcsb.m",
+      "zkcodes.m zkcodes -calls-> zkcca @ zkcca.m",
+      "zkcodes.m zkcodes -calls-> zkcta @ zkcta.m",
+      "zkcodes.m zkcodes -calls-> zkcua @ zkcua.m",
+      "zkcodes.m zkcodes -calls-> zkcub @ zkcub.m",
+      "zkcodes.m zkcodes -calls-> zkcgz @ zkcgz.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkcodes.m",
+        "to": "zkci"
+      },
+      {
+        "from": "zkcodenv.m",
+        "to": "zkcdnv"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcm"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcj"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkck"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkco"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcq"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcr"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcs"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkct"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcu"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcv"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkcw"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkc0b"
+      },
+      {
+        "from": "zkcodes.m",
+        "to": "zkctb"
+      }
+    ],
+    "rows": [
+      "zkcodes.m:13 calls:zkcpa"
+    ],
+    "noRows": [
+      "zkcodes.m:14 calls:zkcpa"
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "why": "A callback's name, given first in a cell (`{'f', 1}`) or as text (`'f'`), is called in the base workspace when the event comes, so it reaches what a call from outside the file reaches: never a local function of the file, nor a function in the file's `private/` folder, and a path file of the name instead of the file's local one (MATLAB R2026a, measured for step 16: a callback cell and a callback text naming local functions are 'Undefined function' and 'Unrecognized function or variable' errors, a cell naming both a local function and a path file calls the path file, and the same names in a `private/` folder are not called). A handle names the function where it is written (a handle in the cell to the private function calls it: measured for step 16), so `{@zkbwhloc, 3}` and `{@zkbwhpriv, 3}` link. A path file that comes for a local function's name is what the callback then calls, and its going takes the link away: each step must end where a fresh index ends (project rule). A callback cell may name a class's static method by its dotted name (`{'zkbwcls.zkbwsm', 4}`): MATLAB calls it (R2026a, measured for step 16), so it links. Code `evalin` runs is no callback: a handle, a name given to `str2func` and a call there each reach a local function of the file, in the caller's workspace and the base one alike (MATLAB R2026a, measured for step 16), so `zkbwin.m`'s four names link.",
+  "truth": {
+    "edges": [
+      "zkbw.m zkbw -references-> zkbwboth @ zkbwboth.m",
+      "zkbw.m zkbw -references-> zkbwhloc @ zkbw.m",
+      "zkbw.m zkbw -references-> zkbwhpriv @ private/zkbwhpriv.m",
+      "zkbwst.m zkbwst -references-> zkbwcls::zkbwsm @ zkbwcls.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc2 @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc3 @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -calls-> zkbwinloc4 @ zkbwin.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkbw.m",
+        "to": "zkbwloc"
+      },
+      {
+        "from": "zkbw.m",
+        "to": "zkbwloc2"
+      },
+      {
+        "from": "zkbw.m",
+        "to": "zkbwboth",
+        "at": "zkbw.m"
+      },
+      {
+        "from": "zkbw.m",
+        "to": "zkbwpriv"
+      },
+      {
+        "from": "zkbw.m",
+        "to": "zkbwpriv2"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkbwloc.m": "function zkbwloc(varargin)\nend\n",
+        "zkbwloc2.m": "function zkbwloc2(varargin)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkbw.m zkbw -references-> zkbwloc @ zkbwloc.m",
+          "zkbw.m zkbw -references-> zkbwloc2 @ zkbwloc2.m"
+        ],
+        "noEdges": [
+          {
+            "from": "zkbw.m",
+            "to": "zkbwloc",
+            "at": "zkbw.m"
+          },
+          {
+            "from": "zkbw.m",
+            "to": "zkbwloc2",
+            "at": "zkbw.m"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkbwloc.m": null,
+        "zkbwloc2.m": null,
+        "zkbwpriv.m": "function zkbwpriv(varargin)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkbw.m zkbw -references-> zkbwpriv @ zkbwpriv.m"
+        ],
+        "noEdges": [
+          {
+            "from": "zkbw.m",
+            "to": "zkbwloc"
+          },
+          {
+            "from": "zkbw.m",
+            "to": "zkbwloc2"
+          },
+          {
+            "from": "zkbw.m",
+            "to": "zkbwpriv",
+            "at": "private/zkbwpriv.m"
+          }
+        ]
+      }
+    }
+  ]
+}

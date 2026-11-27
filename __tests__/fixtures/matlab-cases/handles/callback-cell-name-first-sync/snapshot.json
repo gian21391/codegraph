@@ -1,0 +1,33 @@
+{
+  "index": {
+    "edges": [],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "zkguis.m zkguis -references-> zkcbsync @ zkcbsync.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "zkguis.m zkguis -references-> zkcbsync @ zkcbsync.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

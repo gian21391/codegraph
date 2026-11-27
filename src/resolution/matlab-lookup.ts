@@ -50,6 +50,10 @@
  *      index reads as no MATLAB (Octave, binary) blocks no farther stub,
  *      though MATLAB would find that file first; an empty one is a script.
  *
+ * A callback's name and the names of its code given as text, run in the base
+ * workspace (a handle reference with the `runtime` fact), are looked up from
+ * outside the file: steps 1 to 5 do not apply to them (see baseCallerOf).
+ *
  * An import holds in the function that makes it and the functions nested in
  * it, not in the file's other functions. Of several equally near same-named
  * files the first in `genpath` order is picked (see `nearest`).
@@ -239,12 +243,42 @@ interface Caller {
   /** The calling function's qualified name, then each function it is nested in, innermost first. */
   scopes: string[];
   imports: Imports;
+  /** Code run in the base workspace, not in the file: see baseCallerOf. */
+  base?: boolean;
 }
 
 /** A function of the file that another function of it nests (`gui::cb` in gui), by the qualified name of that parent. */
 function nestingParent(n: Node, functions: ReadonlyMap<string, Node>): string | null {
   const owner = ownerOf(n);
   return owner && functions.has(owner) ? owner : null;
+}
+
+/** What a file holds, for code that sees none of it (see baseCallerOf). */
+const NO_FILE_FACTS: FileFacts = { functions: new Map(), byId: new Map(), byName: new Map(), imports: [] };
+
+/**
+ * Where a callback's name or code given as text calls from: the base
+ * workspace, when the event comes. Its handle references, and only those,
+ * carry the `runtime` fact (see ../extraction/languages/matlab-ref-facts).
+ * It sees what a call from outside the file reaches: no function of the file
+ * (local or nested), no import of it, no function or script of a `private/`
+ * folder (MATLAB R2026a, measured for step 16: a callback cell and a
+ * callback text naming a local function of the file are "Undefined
+ * function" errors, a path file of the name is called instead, and the same
+ * names in the file's `private/` folder are not called). The path still goes
+ * by the file it is written in. A handle (`{@loc, 1}`) names the function
+ * where it is written, and is no such reference; nor is a handle, a name
+ * given as text or a call in code `evalin` runs, which a local function of
+ * the file answers (measured for step 16, for the caller's workspace and the
+ * base one alike).
+ */
+function baseCallerOf(ref: UnresolvedRef): Caller {
+  return { file: ref.filePath, facts: NO_FILE_FACTS, scopes: [], imports: { wildcards: [], exact: new Map() }, base: true };
+}
+
+/** Whether a private folder's file is in reach of `caller` (see privateInReach): never from the base workspace (see baseCallerOf). */
+function inReachOf(candidate: Node, caller: Pick<Caller, 'file' | 'base'>): boolean {
+  return caller.base ? !/(?:^|\/)private$/.test(dirOf(candidate.filePath)) : privateInReach(candidate, caller.file);
 }
 
 function callerOf(ref: UnresolvedRef, context: ResolutionContext): Caller {
@@ -769,12 +803,12 @@ function resolveBare(
   }
   // 5. Private functions in reach — and what is on the path, outside every package.
   const onPath = matlab(context.getNodesByName(name)).filter(
-    (n) => ((n.kind === 'function' && n.isExported) || (TYPE_KINDS.has(n.kind) && !isMatlabMisnamedClass(n))) && privateInReach(n, from) && ownerOf(n) === '',
+    (n) => ((n.kind === 'function' && n.isExported) || (TYPE_KINDS.has(n.kind) && !isMatlabMisnamedClass(n))) && inReachOf(n, caller) && ownerOf(n) === '',
   );
   const priv = onPath.filter((n) => /(?:^|\/)private\//.test(n.filePath));
   // A private script in reach comes as early as a private function does (doc 'Function Precedence Order': private
   // functions, before the path): one that is first runs for a call of a form that runs it, and any other reaches nothing.
-  const privScripts = scriptsNamed(name, context).filter((f) => /(?:^|\/)private\//.test(f.filePath) && privateInReach(f, from));
+  const privScripts = scriptsNamed(name, context).filter((f) => /(?:^|\/)private\//.test(f.filePath) && inReachOf(f, caller));
   if (priv.length > 0 || privScripts.length > 0) {
     const first = nearest(privScripts.length > 0 ? [...priv, ...privScripts] : priv, from);
     return first?.kind === 'file' && !runs ? undefined : first;
@@ -800,7 +834,7 @@ function resolveBare(
   // script out of the caller's reach is none of its (step 5 took those in it).
   const folderClasses = onPath.filter((n) => TYPE_KINDS.has(n.kind) && inClassFolder(n));
   let target: Node | undefined;
-  const scriptsHere = (): Node[] => scriptsNamed(name, context).filter((f) => privateInReach(f, from));
+  const scriptsHere = (): Node[] => scriptsNamed(name, context).filter((f) => inReachOf(f, caller));
   if (searchPathOf(context)) {
     // A class folder's class on the path comes before any function; one the
     // caller cannot see leaves the functions and scripts it can.
@@ -824,12 +858,12 @@ function resolveBare(
   // differs. A script there runs for a call of a form that runs it, and
   // answers no other (the call is an error): nothing does then.
   if (target && target.kind === 'file' && isMatlabScriptFile(target, context)) {
-    const stub = stubTarget(name, from, context);
-    if (stub) return !nearerInexactMatch(name, stub, from, context) ? stub : undefined;
+    const stub = stubTarget(name, caller, context);
+    if (stub) return !nearerInexactMatch(name, stub, caller, context) ? stub : undefined;
     if (!runs) return undefined;
   }
-  target ??= stubTarget(name, from, context);
-  return target && !nearerInexactMatch(name, target, from, context) ? target : undefined;
+  target ??= stubTarget(name, caller, context);
+  return target && !nearerInexactMatch(name, target, caller, context) ? target : undefined;
 }
 
 /**
@@ -838,14 +872,15 @@ function resolveBare(
  * path rules pick among the stubs and the scripts of the name (`choose`,
  * `nearest`), when that is a stub. A built-in's name has none.
  */
-function stubTarget(name: string, from: string, context: ResolutionContext): Node | undefined {
+function stubTarget(name: string, caller: Pick<Caller, 'file' | 'base'>, context: ResolutionContext): Node | undefined {
   if (MATLAB_BUILTINS.has(name)) return undefined;
+  const from = caller.file;
   const files = matlabFileNames(name).flatMap((fileName) => (context.isAbsentName?.(fileName) ? [] : context.getNodesByName(fileName)));
-  const stubs = files.filter((file) => isMatlabStubFile(file, context) && privateInReach(file, from));
+  const stubs = files.filter((file) => isMatlabStubFile(file, context) && inReachOf(file, caller));
   if (stubs.length === 0) return undefined;
   const priv = stubs.filter((file) => /(?:^|\/)private\//.test(file.filePath));
   if (priv.length > 0) return nearest(priv, from);
-  const scripts = files.filter((file) => isMatlabScriptFile(file, context) && privateInReach(file, from));
+  const scripts = files.filter((file) => isMatlabScriptFile(file, context) && inReachOf(file, caller));
   const all = scripts.length > 0 ? [...stubs, ...scripts] : stubs;
   const picked = searchPathOf(context) ? choose(all, from, context) : nearest(all, from);
   return picked && stubs.includes(picked) ? picked : undefined;
@@ -863,7 +898,8 @@ function stubTarget(name: string, from: string, context: ResolutionContext): Nod
  * old release on a case-blind file system, or nowhere. No edge then. An exact
  * match in the caller's own folder is never beaten.
  */
-function nearerInexactMatch(name: string, target: Node, callerFile: string, context: ResolutionContext): boolean {
+function nearerInexactMatch(name: string, target: Node, caller: Pick<Caller, 'file' | 'base'>, context: ResolutionContext): boolean {
+  const callerFile = caller.file;
   const searchPath = searchPathOf(context);
   // A target the path chose (for any caller) is beaten only by a match
   // earlier on the path: one off it runs nowhere MATLAB looks. Else nearer
@@ -879,7 +915,7 @@ function nearerInexactMatch(name: string, target: Node, callerFile: string, cont
   const lower = name.toLowerCase();
   const variants = [lower, `${lower}.m`].flatMap((k) => context.getNodesByLowerName(k));
   return matlab(variants).some((n) => {
-    if (!beats(n) || !privateInReach(n, callerFile)) return false;
+    if (!beats(n) || !inReachOf(n, caller)) return false;
     const owner = ownerOf(n);
     // `@gmap/GMAP.m`: a constructor's file, its folder's name in another case or its own.
     if (n.kind === 'method') return isMethodFile(n) && !owner.includes('::') && owner.toLowerCase() === lower && (owner !== name || n.name !== name);
@@ -1247,7 +1283,9 @@ function callTarget(ref: UnresolvedRef, context: ResolutionContext): Found | nul
   const name = ref.referenceName;
   const facts = matlabRefFacts(ref);
   let caller: Caller | undefined;
-  const callerHere = (): Caller => (caller ??= callerOf(ref, context));
+  // A callback's name, or a name of its code given as text: called from outside the file (see baseCallerOf).
+  const base = ref.referenceKind === 'function_ref' && facts.runtime === true;
+  const callerHere = (): Caller => (caller ??= base ? baseCallerOf(ref) : callerOf(ref, context));
   if (!name.includes('::')) {
     if (name.includes('.')) {
       // A member written without an argument list on a variable of no stated

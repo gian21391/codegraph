@@ -1,0 +1,17 @@
+{
+  "why": "A script runs in its caller's workspace, so a clear it runs, as text or plainly, removes the caller's variable, and the caller's read after it calls the function (MATLAB R2026a, measured for step 16: a script `xb = 1; r8sub; xb(2)`, where `r8sub.m` is `eval('clear xb')`, calls `xb`; a plain clear is the same clear, MATLAB doc 'clear', 'Scripts'). Not followed yet, for plain clears as for text ones. A clear the script itself runs is followed (`zkrc3.m`: MATLAB doc 'clear').",
+  "truth": {
+    "edges": [
+      "zkrc1.m zkrc1.m -calls-> zkrca @ zkrca.m",
+      "zkrc2.m zkrc2.m -calls-> zkrcb @ zkrcb.m",
+      "zkrc3.m zkrc3.m -calls-> zkrcc @ zkrcc.m"
+    ]
+  },
+  "pendingBug": {
+    "id": "S18-run-script-clears-caller",
+    "fails": [
+      "index: missing edge zkrc1.m zkrc1.m -calls-> zkrca @ zkrca.m",
+      "index: missing edge zkrc2.m zkrc2.m -calls-> zkrcb @ zkrcb.m"
+    ]
+  }
+}

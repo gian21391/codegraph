@@ -940,6 +940,63 @@ function isStringObjectLiteral(node: SyntaxNode, source: string): boolean {
 /** A name MATLAB can call a function by: `f`, `pkg.f`. */
 export const NAME_SHAPED = /^[A-Za-z]\w*(?:\.[A-Za-z]\w*)*$/;
 
+/** A number literal MATLAB reads as a double: `10`, `10.0`, `1e1` (no hex, binary or imaginary one). */
+const DECIMAL_NUMBER = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+/**
+ * The character a piece of a char concatenation is, when it is a character
+ * code: in `['a' 10 'b']` a number is the character of that code (MATLAB doc
+ * 'char', 'Valid Combinations of Unlike Classes'), `newline` is char(10)
+ * (MATLAB doc 'newline'), and `char(n)` of a number is that character;
+ * `newline` and `char` no variable there (`isVariable`). A number is
+ * converted as MATLAB converts it in the concatenation, and in `char`:
+ * truncated toward zero, then held to 0–65535 (MATLAB R2026a, measured for
+ * step 16: 49.5 and 49.7 are 49, -1 is 0, 65536 is 65535, and `char(49.5)` is
+ * `'1'`). Null for anything else. Two codes are the extractor's own markers,
+ * and stand for what MATLAB does with them (project rule, step 16):
+ *   - 0, HOLE, ends code outside a string or a comment, a command's
+ *     argument included, the code before it run and none after it, and is a
+ *     character of a string or a comment like any other (MATLAB R2026a,
+ *     measured for step 16: `['disp(''a' 0 'b''); gg(2)']` and a code 0 in a
+ *     comment before `gg(2)` call `gg`, `['disp a' 0 'b; gg(3)']` does not):
+ *     CODE_ZERO, which the parse of the text cuts the code at where it lands
+ *     outside those (see parseCode in matlab.ts);
+ *   - 1, MARK, is a character MATLAB has in no code outside a string or a
+ *     comment ("Invalid text character", measured for step 16): STAND_IN,
+ *     another such character, so that the text's parse rejects it there as
+ *     it rejects any other (see parseCode in matlab.ts).
+ */
+export function charCodePiece(node: SyntaxNode, source: string, isVariable: (name: string) => boolean): string | null {
+  let code: number | null = null;
+  if (node.type === 'number') {
+    code = codeOf(getNodeText(node, source));
+  } else if (node.type === 'identifier') {
+    code = getNodeText(node, source) === 'newline' && !isVariable('newline') ? 10 : null;
+  } else if (node.type === 'function_call') {
+    const callee = childField(node, 'name');
+    const args = callArgs(node);
+    if (callee?.type === 'identifier' && getNodeText(callee, source) === 'char' && !isVariable('char') && !bracesIndex(node) && args.length === 1 && args[0]!.type === 'number') {
+      code = codeOf(getNodeText(args[0]!, source));
+    }
+  }
+  if (code === null) return null;
+  if (code === 0) return CODE_ZERO;
+  if (code === 1) return STAND_IN;
+  return String.fromCharCode(code);
+}
+
+/** The character code a number literal is converted to (see charCodePiece); null for one that is no finite decimal number. */
+function codeOf(text: string): number | null {
+  const n = Number(text);
+  return DECIMAL_NUMBER.test(text) && Number.isFinite(n) ? Math.min(Math.trunc(n), 0xffff) : null;
+}
+
+/** What charCodePiece gives for code 0 (HOLE): another character, which ends code where it lands outside a string. */
+export const CODE_ZERO = '\u0003';
+
+/** What charCodePiece gives for code 1 (MARK): another character no code may hold outside a string or a comment. */
+const STAND_IN = '\u0002';
+
 // ---------------------------------------------------------------------------
 // Evaluation
 // ---------------------------------------------------------------------------
@@ -1040,7 +1097,13 @@ function evaluateNode(node: SyntaxNode, env: EnvReader | null, host: ValueHost, 
       const vals = parts.map((c) => evaluate(c, env, host, rec));
       // `["a" "b"]` (or a string object among the parts) is a string array, not one text.
       if (vals.some((v) => v.stringObject)) return OPEN;
-      return concat(vals);
+      // A char concatenation's character codes are characters (`['a' 10 'b']`: see charCodePiece); a number array's are numbers.
+      if (!vals.some((v) => v.strs.length > 0)) return concat(vals);
+      const isVariable = (name: string): boolean => host.isLocal(name) || env?.get(name) !== undefined;
+      return concat(vals.map((v, i) => {
+        const ch = charCodePiece(parts[i]!, source, isVariable);
+        return ch === null ? v : strVal(ch);
+      }));
     }
     case 'cell': {
       const rows = namedChildren(node).filter((c) => c.type === 'row');

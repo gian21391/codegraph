@@ -1,0 +1,43 @@
+{
+  "why": "A line break given as the number 10 among the pieces of code `eval` runs splits two statements (MATLAB R2026a, measured for step 16: `eval(['disp(1);' 10 'gg(2)'])` calls `gg`); 10.5 is truncated to 10, the same line break (measured for step 16: `['disp(1);' 10.5 'gg(5)']` calls `gg`); a tab, 9, is no separator, and MATLAB runs none of that text (measured for step 16); `newline` is `char(10)` (MATLAB doc 'newline'). Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "zkcodess.m zkcodess -calls-> zkcdsync @ zkcdsync.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkcodess.m": "function zkcodess()\neval(['disp(1);' 10.5 'zkcdsync(2)']);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkcodess.m zkcodess -calls-> zkcdsync @ zkcdsync.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkcodess.m": "function zkcodess()\neval(['disp(1)' 9 'zkcdsync(2)']);\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkcodess.m",
+            "to": "zkcdsync"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkcodess.m": "function zkcodess()\neval(['disp(1);' newline 'zkcdsync(2)']);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkcodess.m zkcodess -calls-> zkcdsync @ zkcdsync.m"
+        ]
+      }
+    }
+  ]
+}

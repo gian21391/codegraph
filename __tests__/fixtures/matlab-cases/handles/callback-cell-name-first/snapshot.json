@@ -1,0 +1,18 @@
+{
+  "index": {
+    "edges": [
+      "zkgui.m zkgui -references-> zkcbbtn @ zkcbbtn.m",
+      "zkgui.m zkgui -references-> zkcbctor @ zkcbctor.m",
+      "zkgui.m zkgui -references-> zkcbdrop @ zkcbdrop.m",
+      "zkgui.m zkgui -references-> zkcbprop @ zkcbprop.m",
+      "zkgui.m zkgui -references-> zkcbset @ zkcbset.m",
+      "zkgui.m zkgui -references-> zkcbtimer @ zkcbtimer.m",
+      "zkgui.m zkgui -references-> zkcbvar @ zkcbvar.m",
+      "zkgui.m zkgui -references-> zkpk::zkcbpkg @ +zkpk/zkcbpkg.m"
+    ],
+    "rows": [],
+    "dormant": [
+      "zkgui.m:17 function_ref:zkcbnone"
+    ]
+  }
+}

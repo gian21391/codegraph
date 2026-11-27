@@ -1,0 +1,69 @@
+{
+  "why": "Code one `eval` runs reads the names it assigns itself in its own text order: in a function, a read before the text's own assignment calls the function, and so does a read in code an `eval` inside it runs (MATLAB R2026a, measured for step 16: `eval('xa(1); xa = 1;')` calls `xa`, and `eval('eval(''xb(1);''); xb = 1;')` calls `xb`), the rule of texts read in the order they run applied within one text. A text that an earlier `eval` text runs before reads no variable (`zktoc`), one after it the variable (`zktod`: MATLAB R2026a, measured for step 16, `eval('hh(2);'); eval('hh = 3;')` calls `hh` and a later text reads the variable). A name that is a variable where the `eval` runs is one throughout its text: one the function assigns in its own code (`zktoe`, which holds a value when the text runs: MATLAB doc 'eval'), one an earlier text made (`zktof`). A script reads a text's own names in text order too (the user's ruling 3, step 11): `zktog` is a call, and `zktoh`, which the script assigned before, the variable. A text's own clear of a name an earlier text made ends it for the rest of that text, code an `eval` inside it runs included (MATLAB R2026a, measured for step 16: in a function, `eval('a = 1;'); eval('a(1); clear a; a(2);')` calls `a` at `a(2)`, and `eval('b = 1;'); eval('clear b; eval(''b(3);'');')` calls `b`): `zktoi` and `zktoj` are calls, and `zktok`, written again after the clear, the variable. A name the function assigns in its own code stays a variable after a text clears it (`zktol`: MATLAB R2026a, measured for step 16, `hc = 1; eval('clear hc'); eval('hc(2);')` is 'Reference to a cleared variable', and a read in the clearing text itself goes the same way). In a script, a text's own clear of a script variable ends it for the rest of that text (`zktom`: MATLAB R2026a, measured for step 16, `rung.out`: `gg = 1; eval('clear gg; gg(5)')` calls `gg`), and a read before that clear in the text reads the variable (`zkton`: the same text order).",
+  "truth": {
+    "edges": [
+      "zkto1.m zkto1 -calls-> zktoa @ zktoa.m",
+      "zkto1.m zkto1 -calls-> zktob @ zktob.m",
+      "zkto1.m zkto1 -calls-> zktoc @ zktoc.m",
+      "zkto2.m zkto2.m -calls-> zktog @ zktog.m",
+      "zkto3.m zkto3 -calls-> zktoi @ zktoi.m",
+      "zkto3.m zkto3 -calls-> zktoj @ zktoj.m",
+      "zkto4.m zkto4.m -calls-> zktom @ zktom.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkto1.m",
+        "to": "zktod"
+      },
+      {
+        "from": "zkto1.m",
+        "to": "zktoe"
+      },
+      {
+        "from": "zkto1.m",
+        "to": "zktof"
+      },
+      {
+        "from": "zkto2.m",
+        "to": "zktoh"
+      },
+      {
+        "from": "zkto3.m",
+        "to": "zktok"
+      },
+      {
+        "from": "zkto3.m",
+        "to": "zktol"
+      },
+      {
+        "from": "zkto4.m",
+        "to": "zkton"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkto1.m": "function zkto1()\neval('zktoa = 1; zktoa(1);');\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkto1.m",
+            "to": "zktoa"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkto1.m": "function zkto1()\neval('zktoa(1); zktoa = 1;');\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkto1.m zkto1 -calls-> zktoa @ zktoa.m"
+        ]
+      }
+    }
+  ]
+}

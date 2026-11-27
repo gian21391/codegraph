@@ -1,0 +1,34 @@
+{
+  "why": "A name code `eval` runs makes is made where that `eval` runs, so code an earlier `eval` runs reads no variable of it and calls the function (MATLAB R2026a, measured for step 16: in a function, `eval('hh(2);'); eval('hh = 3;')` calls `hh`, and a later `eval('disp(hh(1))')` reads the variable; in a loop, `eval('xd(k);'); eval('xd = 5;')` calls `xd` on the first pass; `eval('xe(1);'); eval(s); eval('xe(1);')` with `s = 'xe = 1;'` calls `xe` once, from the first text). So `zkord3.m`'s line 3 is a call and line 5 the variable. A script reads in text order (the user's ruling 3, step 11): a read before the `eval` that makes the name is a call (`zkord4.m` line 1, and `zkord5.m` line 1, which nothing answers: a call that links nowhere), and the read after it the variable. One `eval` whose argument may hold texts built from two names (`[v ' = 1; disp(' v ')']`, `v` one of two) reads, in each of them, what another makes as the variable: those texts are what one argument may hold, and the ones that mix the names never run (project rule, step 16), so `zkord6.m` names nothing.",
+  "truth": {
+    "edges": [
+      "zkord1.m zkord1 -calls-> zkea @ zkea.m",
+      "zkord2.m zkord2 -calls-> zkeb @ zkeb.m",
+      "zkord4.m zkord4.m -calls-> zkes @ zkes.m"
+    ],
+    "rows": [
+      "zkord3.m:3 calls:zkec",
+      "zkord5.m:1 calls:zket"
+    ],
+    "noRows": [
+      "zkord3.m:5 calls:zkec",
+      "zkord5.m:3 calls:zket",
+      {
+        "file": "zkord6.m"
+      }
+    ],
+    "noDormant": [
+      {
+        "file": "zkord3.m",
+        "name": "zkec"
+      },
+      {
+        "file": "zkord5.m",
+        "name": "zket"
+      },
+      {
+        "file": "zkord6.m"
+      }
+    ]
+  }
+}

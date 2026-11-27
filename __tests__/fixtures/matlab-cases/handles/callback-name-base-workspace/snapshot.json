@@ -1,0 +1,64 @@
+{
+  "index": {
+    "edges": [
+      "zkbw.m zkbw -references-> zkbwboth @ zkbwboth.m",
+      "zkbw.m zkbw -references-> zkbwhloc @ zkbw.m",
+      "zkbw.m zkbw -references-> zkbwhpriv @ private/zkbwhpriv.m",
+      "zkbwin.m zkbwin -calls-> zkbwinhelp @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -calls-> zkbwinloc4 @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc2 @ zkbwin.m",
+      "zkbwin.m zkbwinhelp -references-> zkbwinloc3 @ zkbwin.m",
+      "zkbwst.m zkbwst -references-> zkbwcls::zkbwsm @ zkbwcls.m"
+    ],
+    "rows": [
+      "zkbw.m:2 function_ref:zkbwloc",
+      "zkbw.m:3 function_ref:zkbwloc2",
+      "zkbw.m:5 function_ref:zkbwpriv",
+      "zkbw.m:6 function_ref:zkbwpriv2"
+    ],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "zkbw.m zkbw -references-> zkbwboth @ zkbwboth.m",
+        "zkbw.m zkbw -references-> zkbwhloc @ zkbw.m",
+        "zkbw.m zkbw -references-> zkbwhpriv @ private/zkbwhpriv.m",
+        "zkbw.m zkbw -references-> zkbwloc @ zkbwloc.m",
+        "zkbw.m zkbw -references-> zkbwloc2 @ zkbwloc2.m",
+        "zkbwin.m zkbwin -calls-> zkbwinhelp @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -calls-> zkbwinloc4 @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc2 @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc3 @ zkbwin.m",
+        "zkbwst.m zkbwst -references-> zkbwcls::zkbwsm @ zkbwcls.m"
+      ],
+      "rows": [
+        "zkbw.m:5 function_ref:zkbwpriv",
+        "zkbw.m:6 function_ref:zkbwpriv2"
+      ],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "zkbw.m zkbw -references-> zkbwboth @ zkbwboth.m",
+        "zkbw.m zkbw -references-> zkbwhloc @ zkbw.m",
+        "zkbw.m zkbw -references-> zkbwhpriv @ private/zkbwhpriv.m",
+        "zkbw.m zkbw -references-> zkbwpriv @ zkbwpriv.m",
+        "zkbwin.m zkbwin -calls-> zkbwinhelp @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -calls-> zkbwinloc4 @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc2 @ zkbwin.m",
+        "zkbwin.m zkbwinhelp -references-> zkbwinloc3 @ zkbwin.m",
+        "zkbwst.m zkbwst -references-> zkbwcls::zkbwsm @ zkbwcls.m"
+      ],
+      "rows": [
+        "zkbw.m:2 function_ref:zkbwloc",
+        "zkbw.m:3 function_ref:zkbwloc2",
+        "zkbw.m:6 function_ref:zkbwpriv2"
+      ],
+      "dormant": []
+    }
+  ]
+}

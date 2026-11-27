@@ -1,0 +1,59 @@
+{
+  "why": "A cell whose first element names a function as a character vector is a callback only where a callback property takes it (MATLAB R2026a, measured for step 16, `set(f, 'CloseRequestFcn', {'fa', 7})`; MATLAB doc 'Specify a Callback Function'): data first, then given to `set` as written, then through a variable (anchored), then a string object first, which MATLAB refuses there (measured for step 16), then a first element that is no name. Each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "noEdges": [
+      {
+        "from": "zkguis.m",
+        "to": "zkcbsync"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkguis.m": "function zkguis(h)\nset(h, 'ButtonDownFcn', {'zkcbsync', 7});\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkguis.m zkguis -references-> zkcbsync @ zkcbsync.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkguis.m": "function zkguis(h)\nc = {'zkcbsync', 7};\nset(h, 'ButtonDownFcn', c);\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkguis.m zkguis -references-> zkcbsync @ zkcbsync.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkguis.m": "function zkguis(h)\nset(h, 'ButtonDownFcn', {\"zkcbsync\", 7});\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkguis.m",
+            "to": "zkcbsync"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkguis.m": "function zkguis(h)\nset(h, 'ButtonDownFcn', {'zkcbsync(1)', 7});\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkguis.m",
+            "to": "zkcbsync"
+          }
+        ]
+      }
+    }
+  ]
+}

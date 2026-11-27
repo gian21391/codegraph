@@ -1,0 +1,147 @@
+{
+  "why": "A clear later in a loop's body than a read reaches the read on the next pass, and MATLAB calls the function there (MATLAB R2026a, measured for step 16: in a script, `xa = 1; for k = 1:2, xa(1); eval('clear xa'); end` calls `xa` on the second pass, R7; a plain clear the same, MATLAB doc 'clear'; in a function, a name code `eval` runs made, cleared by a later text, the same, t5; a `while` condition read again after a clear in the body calls, P4; a text that reads and then clears the name calls on the second pass, M6). The extractor does not follow a clear round a loop (project ruling, step 16 round 4: the rule cost whole files and made wrong edges for a shape no corpus holds), so these reads stay the variable, as on base: the pending bug S18-clear-around-loop (`zklp1`, `zklp2`, `zklp5`, `zklp9`, `zklp11`, `zklp12`, `zklp19`). The shapes where MATLAB calls nothing pass and guard any later rule: a write after the clear (`zklp3.m`, `zklp6.m`), a clear on one branch (`zklp4.m`, project rule), a `for` loop's own variable, written again on every pass (`zklp7.m`: MATLAB doc 'for', and measured for step 16, P2), a clear a `break` follows (`zklp8.m`, P3), an `if` every branch of which leaves (`zklp13.m`: MATLAB doc 'break', 'return'), a write on a branch after the clear (`zklp10.m`, project rule), a text that clears and writes the name again (`zklp14.m`, `zklp15.m`: measured for step 16, M1, M2), and a clear followed by `error` (`zklp16.m`, M3), by `try, error(…); catch, break; end` (`zklp17.m`, M4) or by `try, break; catch, end` (`zklp18.m`, M5): no call. A clear moved before the read is a call on every pass (text order), and moved after the loop ends nothing the loop reads: each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "zklp1.m zklp1.m -calls-> zklpa @ zklpa.m",
+      "zklp2.m zklp2.m -calls-> zklpb @ zklpb.m",
+      "zklp5.m zklp5 -calls-> zklpe @ zklpe.m",
+      "zklp9.m zklp9.m -calls-> zklpi @ zklpi.m",
+      "zklp11.m zklp11.m -calls-> zklpk @ zklpk.m",
+      "zklp12.m zklp12.m -calls-> zklpl @ zklpl.m",
+      "zklp19.m zklp19.m -calls-> zklpt @ zklpt.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zklp3.m",
+        "to": "zklpc"
+      },
+      {
+        "from": "zklp4.m",
+        "to": "zklpd"
+      },
+      {
+        "from": "zklp6.m",
+        "to": "zklpf"
+      },
+      {
+        "from": "zklp7.m",
+        "to": "zklpg"
+      },
+      {
+        "from": "zklp8.m",
+        "to": "zklph"
+      },
+      {
+        "from": "zklp10.m",
+        "to": "zklpj"
+      },
+      {
+        "from": "zklp13.m",
+        "to": "zklpm"
+      },
+      {
+        "from": "zklp14.m",
+        "to": "zklpn"
+      },
+      {
+        "from": "zklp15.m",
+        "to": "zklpo"
+      },
+      {
+        "from": "zklp16.m",
+        "to": "zklpp"
+      },
+      {
+        "from": "zklp17.m",
+        "to": "zklpq"
+      },
+      {
+        "from": "zklp18.m",
+        "to": "zklpr"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zklp1.m": "zklpa = 1;\nfor k = 1:2\n  eval('clear zklpa');\n  zklpa(1)\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zklp1.m zklp1.m -calls-> zklpa @ zklpa.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zklp1.m": "zklpa = 1;\nfor k = 1:2\n  zklpa(1)\nend\neval('clear zklpa');\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zklp1.m",
+            "to": "zklpa"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zklp1.m": "zklpa = 1;\nfor k = 1:2\n  zklpa(1)\n  eval('clear zklpa');\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zklp1.m zklp1.m -calls-> zklpa @ zklpa.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zklp7.m": "zklpg = 1;\nfor k = 1:2\n  zklpg(1)\n  clear zklpg\nend\n",
+        "zklp8.m": "zklph = 1;\nfor k = 1:3\n  zklph(1)\n  clear zklph\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zklp7.m zklp7.m -calls-> zklpg @ zklpg.m",
+          "zklp8.m zklp8.m -calls-> zklph @ zklph.m"
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zklp7.m": "for zklpg = 1:2\n  zklpg(1)\n  clear zklpg\nend\n",
+        "zklp8.m": "zklph = 1;\nfor k = 1:3\n  zklph(1)\n  clear zklph\n  break\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zklp7.m",
+            "to": "zklpg"
+          },
+          {
+            "from": "zklp8.m",
+            "to": "zklph"
+          }
+        ]
+      }
+    }
+  ],
+  "pendingBug": {
+    "id": "S18-clear-around-loop",
+    "fails": [
+      "index: missing edge zklp1.m zklp1.m -calls-> zklpa @ zklpa.m",
+      "index: missing edge zklp2.m zklp2.m -calls-> zklpb @ zklpb.m",
+      "index: missing edge zklp5.m zklp5 -calls-> zklpe @ zklpe.m",
+      "index: missing edge zklp9.m zklp9.m -calls-> zklpi @ zklpi.m",
+      "index: missing edge zklp11.m zklp11.m -calls-> zklpk @ zklpk.m",
+      "index: missing edge zklp12.m zklp12.m -calls-> zklpl @ zklpl.m",
+      "index: missing edge zklp19.m zklp19.m -calls-> zklpt @ zklpt.m",
+      "step 3 (synced): missing edge zklp1.m zklp1.m -calls-> zklpa @ zklpa.m",
+      "step 3 (fresh): missing edge zklp1.m zklp1.m -calls-> zklpa @ zklpa.m",
+      "step 4 (synced): missing edge zklp7.m zklp7.m -calls-> zklpg @ zklpg.m",
+      "step 4 (synced): missing edge zklp8.m zklp8.m -calls-> zklph @ zklph.m",
+      "step 4 (fresh): missing edge zklp7.m zklp7.m -calls-> zklpg @ zklpg.m",
+      "step 4 (fresh): missing edge zklp8.m zklp8.m -calls-> zklph @ zklph.m"
+    ]
+  }
+}

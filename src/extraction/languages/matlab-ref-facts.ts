@@ -63,9 +63,15 @@
  *     as no index (a text passed, a statement of its own with arguments:
  *     `sigtag('HaltFeed')`, `hz_mark(x, y)`); and
  *     every name of code run in another workspace (a callback given as text,
- *     what `evalin` runs), whose variables the index cannot see: resolved
- *     like any other, and dropped when nothing answers it (see
- *     ../../resolution/matlab-failures.ts).
+ *     what `evalin` runs), whose variables the index cannot see, and the
+ *     name a callback cell gives first (`{'go', 7}`): resolved like any
+ *     other, and dropped when nothing answers it (see
+ *     ../../resolution/matlab-failures.ts). Not a handle or a name given as
+ *     text in what `evalin` runs (`@f`, `str2func('f')`), which names a
+ *     function, as one in code here does. On a handle reference (every one
+ *     a callback gives), it is called from outside the file: no function of
+ *     the file or of its `private/` folder answers it (see baseCallerOf in
+ *     ../../resolution/matlab-lookup.ts).
  *   - `self` — a member call on the method's own object (`obj.step()`,
  *     `veh.dxstate(t, y)`), recorded as `Cls::m`: one whose class neither
  *     defines nor inherits `m` runs a subclass's (see

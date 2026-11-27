@@ -1,0 +1,2 @@
+function zkcbsync(varargin)
+end

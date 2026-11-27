@@ -1,0 +1,39 @@
+{
+  "why": "A callback property's value may be a cell whose first element names the function as a character vector: MATLAB calls it with the object, the event and the cell's other elements (MATLAB R2026a, measured for step 16: `set(f, 'CloseRequestFcn', {'fa', 7})`, `f.CloseRequestFcn = {'fb', 8}` and `timer('TimerFcn', {'fa', 9})` each call the named function with three arguments, a package name `{'pq.fp', 2}` calls the package function, `uicontrol`'s constructor keeps the cell and calls its name, and `uibutton`'s `ButtonPushedFcn` and `uidropdown`'s `ValueChangedFcn` keep it as a property and in the constructor, and so does `uidropdown`'s `DeleteFcn` (`zkcbdrop`); MATLAB doc 'Specify a Callback Function', 'timer'). So each is referenced as the handle in `{@f, 1}` is, a name a variable holds too (anchored). A string object first (`{\"fa\", 1}`) is refused (MATLAB R2026a, measured for step 16, for `set`, `timer` and `uicontrol`: 'Callback value must be a character vector, a function handle, or a cell array containing character vector or function handle'), and a first element that is no name (`{'zkcbidx(1)', 2}`) names nothing ('Invalid function name': measured for step 16). A cell anywhere else is data, and `struct` given a cell makes a struct array of its elements (MATLAB doc 'struct'), no callback. A name written in the cell is placed where it is written, on the cell's first line (project rule: a reference is placed where its name is written), and one nothing answers is kept dormant there, as the name of a callback given as text is.",
+  "truth": {
+    "edges": [
+      "zkgui.m zkgui -references-> zkcbset @ zkcbset.m",
+      "zkgui.m zkgui -references-> zkcbctor @ zkcbctor.m",
+      "zkgui.m zkgui -references-> zkcbtimer @ zkcbtimer.m",
+      "zkgui.m zkgui -references-> zkcbprop @ zkcbprop.m",
+      "zkgui.m zkgui -references-> zkpk::zkcbpkg @ +zkpk/zkcbpkg.m",
+      "zkgui.m zkgui -references-> zkcbvar @ zkcbvar.m",
+      "zkgui.m zkgui -references-> zkcbbtn @ zkcbbtn.m",
+      "zkgui.m zkgui -references-> zkcbdrop @ zkcbdrop.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkgui.m",
+        "to": "zkcbidx"
+      },
+      {
+        "from": "zkgui.m",
+        "to": "zkcbdata"
+      },
+      {
+        "from": "zkgui.m",
+        "to": "zkcbstr"
+      },
+      {
+        "from": "zkgui.m",
+        "to": "zkcbst"
+      }
+    ],
+    "dormant": [
+      "zkgui.m:17 function_ref:zkcbnone"
+    ],
+    "noDormant": [
+      "zkgui.m:18 function_ref:zkcbnone"
+    ]
+  }
+}

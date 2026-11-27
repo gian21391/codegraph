@@ -1,0 +1,37 @@
+{
+  "index": {
+    "edges": [
+      "zkcodes.m zkcodes -calls-> zkc0a @ zkc0a.m",
+      "zkcodes.m zkcodes -calls-> zkcca @ zkcca.m",
+      "zkcodes.m zkcodes -calls-> zkcd1 @ zkcd1.m",
+      "zkcodes.m zkcodes -calls-> zkcdch @ zkcdch.m",
+      "zkcodes.m zkcodes -calls-> zkcdcr @ zkcdcr.m",
+      "zkcodes.m zkcodes -calls-> zkcdlead @ zkcdlead.m",
+      "zkcodes.m zkcodes -calls-> zkcdlf @ zkcdlf.m",
+      "zkcodes.m zkcodes -calls-> zkcdnl @ zkcdnl.m",
+      "zkcodes.m zkcodes -calls-> zkce1 @ zkce1.m",
+      "zkcodes.m zkcodes -calls-> zkcf1 @ zkcf1.m",
+      "zkcodes.m zkcodes -calls-> zkcfa @ zkcfa.m",
+      "zkcodes.m zkcodes -calls-> zkcfb @ zkcfb.m",
+      "zkcodes.m zkcodes -calls-> zkcg @ zkcg.m",
+      "zkcodes.m zkcodes -calls-> zkcgg1 @ zkcgg1.m",
+      "zkcodes.m zkcodes -calls-> zkcgz @ zkcgz.m",
+      "zkcodes.m zkcodes -calls-> zkch @ zkch.m",
+      "zkcodes.m zkcodes -calls-> zkcn @ zkcn.m",
+      "zkcodes.m zkcodes -calls-> zkcp @ zkcp.m",
+      "zkcodes.m zkcodes -calls-> zkcsa @ zkcsa.m",
+      "zkcodes.m zkcodes -calls-> zkcsb @ zkcsb.m",
+      "zkcodes.m zkcodes -calls-> zkcta @ zkcta.m",
+      "zkcodes.m zkcodes -calls-> zkcua @ zkcua.m",
+      "zkcodes.m zkcodes -calls-> zkcub @ zkcub.m",
+      "zkcodes.m zkcodes -calls-> zkcx @ zkcx.m",
+      "zkcodes.m zkcodes -calls-> zkcy @ zkcy.m",
+      "zkcodes.m zkcodes -calls-> zkcz @ zkcz.m"
+    ],
+    "rows": [
+      "zkcodenv.m:3 calls:xzkcdnv",
+      "zkcodes.m:13 calls:zkcpa"
+    ],
+    "dormant": []
+  }
+}

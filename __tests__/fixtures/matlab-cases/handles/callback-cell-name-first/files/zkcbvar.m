@@ -1,0 +1,2 @@
+function zkcbvar(varargin)
+end

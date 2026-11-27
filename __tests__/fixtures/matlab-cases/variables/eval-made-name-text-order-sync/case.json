@@ -1,0 +1,33 @@
+{
+  "why": "Code an `eval` runs before the `eval` that makes a name calls the function of the name; after it, it reads the variable (MATLAB R2026a, measured for step 16: `eval('hh(2);'); eval('hh = 3;')` calls `hh`, a later `eval('disp(hh(1))')` reads 3). The two texts swapped and back; each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "zkords.m zkords -calls-> zkey @ zkey.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkords.m": "function zkords()\neval('zkey = 3;');\neval('zkey(2);');\nend\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkords.m",
+            "to": "zkey"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkords.m": "function zkords()\neval('zkey(2);');\neval('zkey = 3;');\nend\n"
+      },
+      "truth": {
+        "edges": [
+          "zkords.m zkords -calls-> zkey @ zkey.m"
+        ]
+      }
+    }
+  ]
+}

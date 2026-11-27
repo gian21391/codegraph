@@ -22,15 +22,19 @@ import {
   MAX_TEXT,
   NAME_SHAPED,
   argValue,
+  besidesText,
   bracesIndex,
   callArgs,
   callersUnknown,
   chainHead,
+  CODE_ZERO,
+  charCodePiece,
   childField,
   commandItems,
   errorVariable,
   evaluate,
   fieldOf,
+  hasHole,
   isColonIndex,
   isCutName,
   isOneBuiltStruct,
@@ -357,8 +361,12 @@ interface Frame {
   kind: 'function' | 'lambda' | 'class' | 'file' | 'eval';
   /** Scope path the definitions inside are qualified with (`pkg`, `Cls`, `fn`). */
   qual: readonly string[];
-  /** Variables assigned, passed in or declared HERE (a lambda's: its parameters) — see isLocal for the ones it shares. */
-  locals: ReadonlySet<string>;
+  /**
+   * Variables assigned, passed in or declared HERE (a lambda's: its
+   * parameters) — see isLocal for the ones it shares. Code `eval` runs asks
+   * of a name made at runtime around it by name (see evalLocals).
+   */
+  locals: Pick<ReadonlySet<string>, 'has'>;
   /** Variable → the class its every constructor-shaped assignment here names (`c = pkg.Cls(…)` → `pkg::Cls`). */
   classHints: ReadonlyMap<string, ClassHint>;
   /**
@@ -423,18 +431,27 @@ interface Frame {
    * read is of a name made at runtime only where one of the loads may have
    * run before it (see loadReaches); a read before every one is a call,
    * MATLAB doc 'load' (a variable is there once the load has run).
+   * `made`: every name of `runtime`, with every place that makes it, placed:
+   * the code arguments of the `eval`s whose code makes it, the loads that
+   * list it. Code another `eval` runs reads such a name in text order, as a
+   * script reads its variables (see evalLocals, isRuntimeName): the
+   * function's own code reads one code `eval` runs makes as a name made at
+   * runtime anywhere, as MATLAB reads the function's names from its code
+   * before it runs.
    */
-  runtimeLoads?: { sites: ReadonlyMap<string, readonly Placed[]> } & ClearSites;
+  runtimeLoads?: { sites: ReadonlyMap<string, readonly Placed[]>; made?: ReadonlyMap<string, readonly Placed[]> } & ClearSites;
   /**
    * A script's top level: each of its variables written where the walk can
    * place it (see ScopeFacts.writeSites), with its writes, placed, and the
    * script's clears. A script's reads go in text order (the user's ruling,
    * step 11): a read with no write of the name before it in text order (see
-   * writeReaches) reads no variable of the script's, and is a call.
-   * A name written where no place is known (by code `eval` runs) is a
-   * variable everywhere.
+   * writesReach) reads no variable of the script's, and is a call.
+   * A name code `eval` runs makes is written at the code argument that
+   * makes it (see addRuntimeNames). Code `eval` runs reads the names it
+   * writes or clears itself in its own text order (see evalTextOrder), and
+   * `carried` says which of them is a variable where that code starts.
    */
-  textOrder?: { sites: ReadonlyMap<string, readonly Placed[]> } & ClearSites;
+  textOrder?: { sites: Pick<ReadonlyMap<string, readonly Placed[]>, 'get'>; carried?: (name: string) => boolean } & ClearSites;
   /**
    * In a function, a script's top level or code `eval` runs where it is: the
    * `load`s there that may make names the code does not spell (see
@@ -994,7 +1011,7 @@ function keptReaching(
  * see keepsObject), at least one does, and when `v` holds something on entry,
  * one comes before `p` whenever `p` runs. A write may reach `p` as a load
  * may (see loadReaches, a `try` body's reaching its `catch` clause as in
- * writeReaches), each other whole write of `v` and each clear of it ending
+ * writesReach), each other whole write of `v` and each clear of it ending
  * it as a clear ends a load: `g = gadget(); g = 5; tidy(g)` dispatches on a
  * double, and so does `if c, g = 5; end` between. One a `return` follows in
  * its block reaches nothing after the block (see returnsAfter).
@@ -1113,15 +1130,20 @@ function readsStructField(f: Frame, v: string, member: string): boolean {
 function isRuntimeName(f: Frame, name: string, at: SyntaxNode): boolean {
   if (isVariableAt(f, name, at)) return false;
   let pos = at;
+  /** Read in code `eval` runs in the function `g` is: in text order (see Frame.runtimeLoads). */
+  let inText = false;
   for (let g: Frame | null = f; g; g = g.parent) {
     if (g.runtime?.has(name)) {
-      const listed = g.runtimeLoads?.sites.get(name);
+      const listed = inText ? g.runtimeLoads?.made?.get(name) : g.runtimeLoads?.sites.get(name);
       if (!listed) return true;
       const p = pos;
       const clears = clearsOf(g.runtimeLoads!, name);
       return listed.some((s) => loadReaches(s, p, clears));
     }
-    if (g.kind === 'eval' && g.at) pos = g.at;
+    if (g.kind === 'eval' && g.at) {
+      pos = g.at;
+      inText = true;
+    } else if (g.kind === 'function') inText = false;
   }
   return false;
 }
@@ -1138,38 +1160,154 @@ function runtimeFact(f: Frame, name: string, at: SyntaxNode): MatlabRefFacts {
  * place in the code around; a lambda where it is written (it takes what is
  * a variable when it is made).
  */
-function isVariableAt(f: Frame, name: string, at: SyntaxNode): boolean {
+function isVariableAt(f: Frame, name: string, at: SyntaxNode, besides?: SyntaxNode): boolean {
   let pos = at;
   for (let g: Frame | null = f; g; g = g.parent) {
     if (g.locals.has(name)) {
-      const sites = g.textOrder?.sites.get(name);
+      const order = g.textOrder;
+      const sites = order?.sites.get(name);
       if (!sites) return true;
-      const p = pos;
-      const clears = clearsOf(g.textOrder!, name);
-      return sites.some((s) => writeReaches(s, p, clears));
+      return reachedInOrder(sites, pos, clearsOf(order!, name), besides, order!.carried?.(name) ?? false);
     }
-    if (g.kind === 'eval' && g.at) pos = g.at;
+    if (g.kind === 'eval' && g.at) {
+      // A variable of the code around that the text clears before `pos`, in its own order (see evalTextOrder).
+      const clears = g.textOrder ? clearsOf(g.textOrder, name) : NO_SITES;
+      if (clears.length > 0 && !reachedInOrder(NO_SITES, pos, clears, undefined, true) && clearedByText(g.parent, name)) return false;
+      pos = g.at;
+    }
   }
   return false;
 }
 
+/** No sites (see reachedInOrder): one list, which OrderIndex is kept by. */
+const NO_SITES: readonly Placed[] = [];
+
 /**
- * Whether write `s` of a script's variable comes before what is read at `p`
- * in text order, with the name still a variable there: `s` ends before `p`
- * (a read in the write itself, `x = x(2)`, comes first), in no clause of an
- * `if` / `switch` that `p` is in another clause of, nor in a `catch` clause
- * read from its `try` body (a `try` body's write may have run before the
- * statement that erred, and the `catch` clause runs after it: MATLAB doc
- * 'try, catch'), and no clear of the name that runs whenever either does
- * comes between them (as for a load: see loadReaches). Not round a loop: a read before the write in the loop's body
- * is a call on the loop's first pass, a real call, even when later passes
- * read the variable.
+ * Whether a clear in code `eval` runs, in frame `f`, ends the variable `name`
+ * of the code around: one of a script's top level, or of code an enclosing
+ * `eval` runs (MATLAB R2026a, measured for step 16: in a script, `gg = 1;
+ * eval('clear gg; gg(5)')` calls `gg`), not one of a function, which its own
+ * code assigns and which stays a variable (measured for step 16: `hc = 1;
+ * eval('clear hc'); eval('hc(2);')` is "Reference to a cleared variable").
  */
-function writeReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[]): boolean {
-  if (s.node.endIndex > p.startIndex) return false;
-  if (s.clauses.some((c) => within(p, c.parent!) && !within(p, c) && !isTryBody(c))) return false;
-  const ends = (c: Placed): boolean => runsWith(c, p) || runsWith(c, s.node);
-  return !clears.some((c) => s.node.endIndex <= c.node.startIndex && c.node.endIndex <= p.startIndex && ends(c));
+function clearedByText(f: Frame | null, name: string): boolean {
+  for (let g = f; g; g = g.parent) if (g.locals.has(name)) return g.kind === 'file' || g.kind === 'eval';
+  return false;
+}
+
+/**
+ * Whether what is read at `p` reads a variable a write of `sites` makes, in
+ * text order, with none of `clears` between (see writesReach). Not the write
+ * at `besides`, when one is given: code `eval` runs there, which reads the
+ * names it makes in its own text order (see evalTextOrder). `carried`: the
+ * name is a variable where the code starts, as if written before all of it
+ * (a variable of the code around that code `eval` runs clears itself: see
+ * evalTextOrder).
+ */
+function reachedInOrder(sites: readonly Placed[], p: SyntaxNode, clears: readonly Placed[], besides?: SyntaxNode, carried = false): boolean {
+  return writesReach(orderIndex(sites, clears), p, besides?.id, carried);
+}
+
+/**
+ * The write sites and the clears of one name, each sorted by place once, so
+ * that a read looks only at the sites and clears nearest it (see
+ * writesReach): a script that writes, reads and clears one name thousands of
+ * times is read in time near-linear in its length, not cubic. Kept per pair
+ * of lists, which live as long as the frame that holds them (see clearsOf,
+ * which gives the same list for a name each time).
+ */
+interface OrderIndex {
+  /** The sites, by where they end. */
+  byEnd: readonly Placed[];
+  ends: readonly number[];
+  ids: ReadonlySet<number>;
+  /** The clears, by where they start. */
+  clears: readonly Placed[];
+  clearStarts: readonly number[];
+}
+
+const orderIndexes = new WeakMap<readonly Placed[], WeakMap<readonly Placed[], OrderIndex>>();
+
+/** The OrderIndex of `sites` and `clears`. */
+function orderIndex(sites: readonly Placed[], clears: readonly Placed[]): OrderIndex {
+  let bySites = orderIndexes.get(sites);
+  if (!bySites) orderIndexes.set(sites, (bySites = new WeakMap()));
+  let x = bySites.get(clears);
+  if (!x) {
+    const byEnd = [...sites].sort((a, b) => a.node.endIndex - b.node.endIndex);
+    const sorted = [...clears].sort((a, b) => a.node.startIndex - b.node.startIndex);
+    x = { byEnd, ends: byEnd.map((s) => s.node.endIndex), ids: new Set(sites.map((s) => s.node.id)), clears: sorted, clearStarts: sorted.map((c) => c.node.startIndex) };
+    bySites.set(clears, x);
+  }
+  return x;
+}
+
+/** How many of the ascending `xs` are below `v` (`orEqual`: at most `v`). */
+function countBelow(xs: readonly number[], v: number, orEqual = false): number {
+  let lo = 0;
+  let hi = xs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid]! < v || (orEqual && xs[mid] === v)) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Whether a write of the index's sites comes before what is read at `p` in
+ * text order, with the name still a variable there: a write `s` that ends
+ * before `p` (a read in the write itself, `x = x(2)`, comes first), in no
+ * clause of an `if` / `switch` that `p` is in another clause of, nor in a
+ * `catch` clause read from its `try` body (a `try` body's write may have run
+ * before the statement that erred, and the `catch` clause runs after it:
+ * MATLAB doc 'try, catch'), and no clear of the name that runs whenever
+ * either does comes between them (as for a load: see loadReaches). Not round
+ * a loop: a read before the write in the loop's body is a call on the loop's
+ * first pass, a real call, even when later passes read the variable.
+ *
+ * A write at `p` itself is code `eval` runs, read by that code: one of the
+ * texts its argument may hold makes the name another of them reads (`eval([v
+ * ' = 1; f(' v ')'])` with `v` one of two names), and it reaches (project
+ * rule, step 16). The value interpreter builds such texts piece by piece, as
+ * the cross product of the pieces' values, so most of them mix values that
+ * never go together and never run; read in text order, they would call
+ * names that are variables in every text that runs. The rule hides a call
+ * where the texts are real alternatives (`s = 'x = 1;'` on one branch, `s =
+ * 'x(1);'` on the other, then `eval(s)`: MATLAB R2026a, measured for step 16,
+ * calls `x` there), which no base build linked either. The names one text
+ * makes itself it reads in its own text order (see evalTextOrder). Not the
+ * site whose node is `besides`. `carried`: a write before every site and
+ * clear, in no clause (see reachedInOrder).
+ *
+ * The sites are walked from the nearest before `p` back, with the clears
+ * among them: a clear that runs whenever `p` does ends every site before it,
+ * so the walk stops there; one that runs only on a branch `p` is not on ends
+ * a site before it that runs on that branch too. A clear later in a loop
+ * body than the read ends nothing the read sees (the rule of base; MATLAB
+ * calls the function on the next pass: pending S18-clear-around-loop).
+ */
+function writesReach(x: OrderIndex, p: SyntaxNode, besides: number | undefined, carried: boolean): boolean {
+  if (p.id !== besides && x.ids.has(p.id)) return true;
+  let i = countBelow(x.ends, p.startIndex, true) - 1;
+  let j = countBelow(x.clearStarts, p.startIndex) - 1;
+  const branchClears: Placed[] = [];
+  while (i >= 0 || j >= 0) {
+    const s = i >= 0 ? x.byEnd[i]! : null;
+    const c = j >= 0 ? x.clears[j]! : null;
+    if (c && (!s || c.node.startIndex >= s.node.endIndex)) {
+      j--;
+      if (c.node.endIndex > p.startIndex) continue;
+      if (runsWith(c, p)) return false;
+      branchClears.push(c);
+      continue;
+    }
+    i--;
+    if (s!.node.id === besides || s!.clauses.some((c) => within(p, c.parent!) && !within(p, c) && !isTryBody(c))) continue;
+    if (branchClears.some((b) => runsWith(b, s!.node))) continue;
+    return true;
+  }
+  return carried;
 }
 
 /**
@@ -1214,7 +1352,7 @@ interface LoadSites extends ClearSites {
  * every variable (ScopeFacts.clears), and by name those that name one
  * (`clear x`, `clearvars x`, `clear('x')`: ScopeFacts.clearedAt), MATLAB doc
  * 'clear'. Each ends what a write or a load before it made of the names it
- * removes (see writeReaches, loadReaches).
+ * removes (see writesReach, loadReaches).
  */
 interface ClearSites {
   clears: readonly Placed[];
@@ -1223,11 +1361,21 @@ interface ClearSites {
   matched?: ReadonlyArray<{ at: Placed; removes: (v: string) => boolean }>;
 }
 
-/** The clears among `c` that remove `name` (see ClearSites). */
+const clearsByName = new WeakMap<ClearSites, Map<string, readonly Placed[]>>();
+
+/** The clears among `c` that remove `name` (see ClearSites): the same list each time it is asked, which OrderIndex is kept by. */
 function clearsOf(c: ClearSites, name: string): readonly Placed[] {
-  const named = c.named?.get(name);
-  const matched = c.matched?.filter((m) => m.removes(name)).map((m) => m.at) ?? [];
-  return named || matched.length > 0 ? [...c.clears, ...(named ?? []), ...matched] : c.clears;
+  if (!c.named && !c.matched) return c.clears;
+  let memo = clearsByName.get(c);
+  if (!memo) clearsByName.set(c, (memo = new Map()));
+  let out = memo.get(name);
+  if (!out) {
+    const named = c.named?.get(name);
+    const matched = c.matched?.filter((m) => m.removes(name)).map((m) => m.at) ?? [];
+    out = named || matched.length > 0 ? [...c.clears, ...(named ?? []), ...matched] : c.clears;
+    memo.set(name, out);
+  }
+  return out;
 }
 
 /** A scope's clears, placed (see ClearSites). */
@@ -1286,7 +1434,7 @@ function runsWith(c: Placed, n: SyntaxNode): boolean {
  * whenever the load does (one in a clause or a loop body neither is in may
  * not have run). `tryBodyReachesCatch`: for a write rather than a load, which
  * a `try` body may have run before the statement that erred (see
- * writeReaches).
+ * writesReach).
  */
 function loadReaches(s: Placed, p: SyntaxNode, clears: readonly Placed[], tryBodyReachesCatch = false): boolean {
   if (within(p, s.node)) return false;
@@ -1412,6 +1560,8 @@ interface ScopeFacts {
   clearedAt: Map<string, SyntaxNode[]>;
   /** The `clear` / `clearvars` statements here with a pattern (`clear xa*`, `-regexp`, `-except`), each with the test of the names it removes. */
   clearedBy: Array<{ at: SyntaxNode; removes: (v: string) => boolean }>;
+  /** Every `clear` / `clearvars` statement here, with its name and its arguments as text (null for one that is not literal), in text order: what code given as text clears (see textClears). */
+  clearCalls: Array<{ at: SyntaxNode; name: string; items: readonly (string | null)[] }>;
   /** Every name written here: assigned, indexed or field-assigned into, a loop's, a `catch`'s, a global. */
   assigned: Set<string>;
   /** The names written here from a value the interpreter may know of itself: a text, a handle, a cell, a struct, a text built. */
@@ -1440,6 +1590,34 @@ interface ScopeFacts {
    * Unused in a function.
    */
   made: Set<string>;
+}
+
+/**
+ * Notes a `clear` / `clearvars` statement (`name`) at `at` with these
+ * arguments as text in `facts` (see matlabClearOf, ScopeFacts.clears,
+ * clearedAt, clearedBy): every variable, the names it lists, or those its
+ * pattern matches; `clear global …` the names among `globals`, those
+ * declared `global` before it, and no other variable. Returns the test of
+ * the names it removes.
+ */
+function noteClear(facts: Pick<ScopeFacts, 'clears' | 'clearedAt' | 'clearedBy'>, at: SyntaxNode, name: string, items: readonly (string | null)[], globals: Iterable<string>): (v: string) => boolean {
+  const removed = matlabClearOf(name, items);
+  if (removed === 'all') {
+    facts.clears.push(at);
+    return () => true;
+  }
+  if ('removes' in removed) {
+    facts.clearedBy.push({ at, removes: removed.removes });
+    return removed.removes;
+  }
+  const names = 'names' in removed ? removed.names : [...globals].filter(removed.globals);
+  for (const v of names) {
+    const list = facts.clearedAt.get(v);
+    if (list) list.push(at);
+    else facts.clearedAt.set(v, [at]);
+  }
+  const set = new Set(names);
+  return (v) => set.has(v);
 }
 
 /** Calls that may set names the code does not spell: a `load`, a `clear`, code run by `eval`, a script `run`. */
@@ -1562,6 +1740,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   const globals = new Set<string>();
   const clearedAt = new Map<string, SyntaxNode[]>();
   const clearedBy: ScopeFacts['clearedBy'] = [];
+  const clearCalls: ScopeFacts['clearCalls'] = [];
   /** `v` is one of the scope's variables, made here (see ScopeFacts.made). */
   const local = (v: string): void => {
     locals.add(v);
@@ -1580,24 +1759,9 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
    * again (`clear xb; xb = 5;`, `clear xa*; xa1 = 5;`).
    */
   const cleared = (at: SyntaxNode, name: string, items: readonly (string | null)[]): void => {
-    const removed = matlabClearOf(name, items);
-    if (removed === 'all') {
-      scriptNames.clear();
-      clears.push(at);
-      return;
-    }
-    if ('removes' in removed) {
-      clearedBy.push({ at, removes: removed.removes });
-      for (const v of [...scriptNames]) if (removed.removes(v)) scriptNames.delete(v);
-      return;
-    }
-    // `clear global …`: the globals declared before it that it names, and no other variable.
-    for (const v of 'names' in removed ? removed.names : [...globals].filter(removed.globals)) {
-      scriptNames.delete(v);
-      const list = clearedAt.get(v);
-      if (list) list.push(at);
-      else clearedAt.set(v, [at]);
-    }
+    clearCalls.push({ at, name, items });
+    const removes = noteClear({ clears, clearedAt, clearedBy }, at, name, items, globals);
+    for (const v of [...scriptNames]) if (removes(v)) scriptNames.delete(v);
   };
 
   /**
@@ -1701,7 +1865,10 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
           // `setup_vars`: a statement that may run a script.
           if ((n.type === 'block' || n.type === 'source_file') && !MATLAB_BUILTINS.has(getNodeText(c, source))) clobbers = hiddenWrites = true;
           // `clear` alone removes every variable: it ends what a load before it made (see LoadSites).
-          if ((n.type === 'block' || n.type === 'source_file') && /^clear(?:vars)?$/.test(getNodeText(c, source))) clears.push(c);
+          if ((n.type === 'block' || n.type === 'source_file') && /^clear(?:vars)?$/.test(getNodeText(c, source))) {
+            clears.push(c);
+            clearCalls.push({ at: c, name: getNodeText(c, source), items: [] });
+          }
           break;
         case 'assignment': {
           const left = childField(c, 'left');
@@ -1797,7 +1964,7 @@ function scanScope(scope: SyntaxNode, source: string, isFunction: boolean): Scop
   };
   walk(scope);
   if (!isFunction) for (const v of loaded) locals.add(v);
-  return { locals, constructions, lowerConstructions, objectCopies, writes, opaque, structFields, evalCodes, loaded, loadedAt, writeSites, loads, clears, clearedAt, clearedBy, assigned, valued, copies, passed, clobbers, hiddenWrites, nested, made: scriptNames };
+  return { locals, constructions, lowerConstructions, objectCopies, writes, opaque, structFields, evalCodes, loaded, loadedAt, writeSites, loads, clears, clearedAt, clearedBy, clearCalls, assigned, valued, copies, passed, clobbers, hiddenWrites, nested, made: scriptNames };
 }
 
 /**
@@ -2649,11 +2816,71 @@ function parseCode(code: string): ParsedText | null {
       // A corrupted wasm heap must reach the worker, which restarts with a fresh one.
       if (isWasmMemoryError(e)) throw e;
     }
+    // Code 0 outside a string or a comment ends the code (see CODE_ZERO): what comes before it is what runs, as it is
+    // (MATLAB R2026a, measured for step 16: `['f' 0 '(1)']` runs the statement `f`, a call of no arguments).
+    // (One in a command's argument ends it too: MATLAB R2026a, measured for step 16, `['disp a' 0 'b; gg(3)']` prints `a`.)
+    const cut = tree ? charOutsideText(tree.rootNode, text, CODE_ZERO_AT, false) : -1;
     // A parse that recovered from an error says nothing for sure of what the code does.
-    const parsed = tree && !tree.rootNode.hasError ? { root: tree.rootNode, text, facts: scanScope(tree.rootNode, text, false) } : null;
+    const parsed =
+      cut >= 0
+        ? parseCode(text.slice(0, cut))
+        : tree && !tree.rootNode.hasError && charOutsideText(tree.rootNode, text, CODE_ONLY_IN_TEXT) < 0
+          ? { root: tree.rootNode, text, facts: scanScope(tree.rootNode, text, false) }
+          : null;
     codeTrees.set(text, (entry = { tree, parsed }));
   }
   return entry.parsed;
+}
+
+/**
+ * A character MATLAB has in code only inside a string, a comment or a
+ * command's argument: a control character other than a tab, a line feed, a
+ * vertical tab, a form feed or a carriage return, and any past ASCII (MATLAB
+ * R2026a, measured for step 16: code 1, 1.5, 233 or `char(1)` between two
+ * statements of code given as text is "Invalid text character", and none of
+ * the text runs; codes 11 and 12 there are spaces, and the code after them
+ * runs). One anywhere else makes MATLAB run none of the code, so the text
+ * names nothing, as a parse error does: the parser alone takes a line
+ * separator for a space, and says nothing of it.
+ */
+const CODE_ONLY_IN_TEXT = /[\u0001-\u0008\u000e-\u001f\u007f-\uffff]/g;
+
+/** Where code 0 stands in a text (see CODE_ZERO). */
+const CODE_ZERO_AT = new RegExp(CODE_ZERO, 'g');
+
+/**
+ * The parts of code parsed as `root` that MATLAB reads as text: strings
+ * (`disp('é')`), comments (one after `...` too) and a command's arguments
+ * (`disp é`: MATLAB R2026a, measured for step 16, prints the character and
+ * runs the code after it), in text order.
+ */
+function textSpans(root: SyntaxNode, commands: boolean): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const cursor = root.walk();
+  try {
+    for (;;) {
+      const type = cursor.nodeType;
+      if (type === 'string' || type === 'comment' || type === 'line_continuation' || (commands && type === 'command_argument')) spans.push([cursor.startIndex, cursor.endIndex]);
+      else if (cursor.gotoFirstChild()) continue;
+      while (!cursor.gotoNextSibling()) if (!cursor.gotoParent()) return spans;
+    }
+  } finally {
+    cursor.delete();
+  }
+}
+
+/** Where in code `text`, parsed as `root`, the first match of the global `re` lies outside its text (see textSpans: a command's argument counts as text when `commands`); -1 for none. */
+function charOutsideText(root: SyntaxNode, text: string, re: RegExp, commands = true): number {
+  re.lastIndex = 0;
+  if (!re.test(text)) return -1;
+  const spans = textSpans(root, commands);
+  re.lastIndex = 0;
+  let k = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    while (k < spans.length && spans[k]![1] <= m.index) k++;
+    if (k === spans.length || spans[k]![0] > m.index) return m.index;
+  }
+  return -1;
 }
 
 /** What interpretation asks of the walk, for code `source` whose variables `isVariable` says. */
@@ -2760,46 +2987,98 @@ function forwardable(params: readonly (string | null)[], facts: ScopeFacts, walk
 
 /**
  * The names a scope's code makes at runtime — what the code its `eval`s run
- * assigns or loads (`eval('x = 3;')`), what its `load` lists name: a
- * script's variables (`x(2)` there reads x), a function's runtime names (see
- * Frame.runtime). A name with a part nothing here knows is passed over. And
- * the `load`s that may make names no code spells (see Frame.loads): its own,
- * and the `eval`s whose code holds one (`eval(['load ' f])`), unless `load`
- * is not MATLAB's there (see loadIsMatlabs), or the function's workspace is
- * static (see Frame.staticWorkspace). A name only a `load` list makes is one
- * where such a load may have run (Frame.runtimeLoads); in a static workspace
- * none is made. Returns the names made at runtime.
+ * leaves assigned or loaded (`eval('x = 3;')`: see ScopeFacts.made), what
+ * its `load` lists name: a script's variables (`x(2)` there reads x), a
+ * function's runtime names (see Frame.runtime). Each is made at the place
+ * of the code argument that makes it, as a load list's names are at the
+ * load: a script reads it in text order (see Frame.textOrder), and code
+ * another `eval` of a function runs reads it where one of those places
+ * comes before (see Frame.runtimeLoads). A name with a part nothing here
+ * knows is passed over. And the `load`s that may make names no code spells
+ * (see Frame.loads): its own, and the `eval`s whose code holds one
+ * (`eval(['load ' f])`), unless `load` is not MATLAB's there (see
+ * loadIsMatlabs), or the function's workspace is static (see
+ * Frame.staticWorkspace). A name only a `load` list makes is one where such
+ * a load may have run (Frame.runtimeLoads); in a static workspace none is
+ * made. The clears code an `eval` runs holds are noted in `facts` at the
+ * `eval`'s place first (see textClears). Returns each name code `eval` runs
+ * makes, with the code arguments that make it.
  */
-function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source: string, isFunction: boolean): ReadonlySet<string> {
+function addRuntimeNames(facts: ScopeFacts, f: Frame, scope: SyntaxNode, source: string, isFunction: boolean): ReadonlyMap<string, readonly SyntaxNode[]> {
   // A static workspace takes no variable its code does not spell: a `load` that lists one there is an error
   // (MATLAB 'Attempt to add … to a static workspace'), and the name stays a call.
   const listed = isFunction && !f.staticWorkspace ? facts.loaded : EMPTY;
-  const made = new Set<string>();
+  const byEval = new Map<string, SyntaxNode[]>();
   const loadCalled = !f.staticWorkspace && loadIsMatlabs(f);
   const sites: SyntaxNode[] = loadCalled ? [...facts.loads] : [];
+  let globals: ReadonlyArray<{ name: string; at: SyntaxNode }> | null = null;
   for (const { callee, arg, call } of facts.evalCodes) {
     if (isLocal(f, callee)) continue;
     let loads = false;
-    for (const code of valueAt(arg, source).strs) {
+    const v = valueAt(arg, source);
+    for (const code of v.strs) {
       const parsed = parseCode(code);
-      for (const n of parsed?.facts.locals ?? []) if (!n.includes(PLACEHOLDER)) made.add(n);
+      for (const n of parsed?.facts.made ?? []) {
+        if (n.includes(PLACEHOLDER)) continue;
+        const at = byEval.get(n);
+        if (!at) byEval.set(n, [arg]);
+        else if (at[at.length - 1] !== arg) at.push(arg);
+      }
       if (parsed && parsed.facts.loads.length > 0) loads = true;
     }
     // (An `eval(code, catchCode)` call's two codes are consecutive entries.)
     if (loads && loadCalled && sites[sites.length - 1] !== call) sites.push(call);
+    // `eval(code, catchCode)` may stop its code anywhere, and run its catch code or not: the clears of either may not run.
+    const args = callArgs(call);
+    if (args.length === 1 && args[0]!.id === arg.id && (callee === 'evalc' || isStatement(call))) textClears(facts, v, arg, (globals ??= globalsOf(facts)));
   }
   const loads = loadSitesOf(sites, facts, scope);
   if (loads) f.loads = loads;
+  const made = new Set<string>(byEval.keys());
   // A name only a load list makes is one where such a load may have run (see Frame.runtimeLoads).
   const byLoad = new Map<string, Placed[]>();
   for (const n of listed) if (!made.has(n)) byLoad.set(n, (facts.loadedAt.get(n) ?? []).map((s) => placed(s, scope)));
   for (const n of listed) made.add(n);
-  if (made.size === 0) return made;
+  if (made.size === 0) return byEval;
   if (isFunction) {
     f.runtime = made;
-    if (byLoad.size > 0) f.runtimeLoads = { sites: byLoad, ...clearSitesOf(facts, scope) };
+    const madeAt = new Map<string, Placed[]>();
+    for (const n of made) madeAt.set(n, [...(byEval.get(n) ?? []), ...(listed.has(n) ? (facts.loadedAt.get(n) ?? []) : [])].map((s) => placed(s, scope)));
+    f.runtimeLoads = { sites: byLoad, made: madeAt, ...clearSitesOf(facts, scope) };
   } else for (const n of made) facts.locals.add(n);
-  return made;
+  return byEval;
+}
+
+/**
+ * The clears of code an `eval` runs where it is, given as `v` at `arg` (the
+ * code argument of an `eval` given no catch code: that runs whenever the
+ * `eval` does, and code of it that fails stops every statement after it):
+ * when `v` is one known text, each `clear` / `clearvars` statement of it that
+ * runs whenever the code does (`eval('clear x')`, `eval(['clear ' 'x'])`) is
+ * that clear at `arg`, noted in `facts` (see noteClear): it ends what a clear
+ * written there would. `clear global …` reads the globals the scope
+ * declared before the `eval` (`globals`, see globalsOf). A text that is not
+ * one known string (one of several, a part nothing here knows) clears
+ * nothing, as a clear on one branch of an `if` ends no write (see
+ * writesReach): it may not run; so does the code of an `eval` given catch
+ * code, and the catch code (see addRuntimeNames).
+ */
+function textClears(facts: ScopeFacts, v: Val, arg: SyntaxNode, globals: ReadonlyArray<{ name: string; at: SyntaxNode }>): void {
+  if (v.strs.length !== 1 || besidesText(v) || hasHole(v.strs[0]!)) return;
+  const parsed = parseCode(v.strs[0]!);
+  if (!parsed || parsed.facts.clearCalls.length === 0) return;
+  const before = new Set(globals.filter((g) => g.at.endIndex <= arg.startIndex).map((g) => g.name));
+  for (const { at, name, items } of parsed.facts.clearCalls) {
+    const p = placed(at, parsed.root);
+    if (p.clauses.length === 0 && p.loops.length === 0) noteClear(facts, arg, name, items, before);
+  }
+}
+
+/** The `global` declarations of a scope, each name with the declaration (see ScopeFacts.writeSites). */
+function globalsOf(facts: Pick<ScopeFacts, 'writeSites'>): Array<{ name: string; at: SyntaxNode }> {
+  const out: Array<{ name: string; at: SyntaxNode }> = [];
+  for (const [name, at] of facts.writeSites) for (const d of at) if (d.type === 'global_operator') out.push({ name, at: d });
+  return out;
 }
 
 /**
@@ -2843,9 +3122,45 @@ function dynamicCallRefs(node: SyntaxNode, name: string, ctx: ExtractorContext, 
         codeRefs(isStatement(node) ? v.strs : v.strs.filter((c) => !/^\s*[A-Za-z]\w*\s*;?\s*$/.test(c)), arg, ctx, 'elsewhere', !isStatement(node), computed);
         break;
       case 'callback':
-        codeRefs(v.strs, arg, ctx, 'callback', false, computed);
+        callbackRefs(arg, v, ctx, computed, name !== 'struct');
         break;
     }
+  }
+}
+
+/**
+ * The references of a callback property's value `v`, given at `arg` (see
+ * sinkInputs, and `h.Callback = …`): code given as text (`'Callback', 'go'`),
+ * read as code, and a cell whose first element is a function's name as a
+ * character vector (`{'go', 7}`, `{'pkg.go', 7}`), which MATLAB calls with
+ * the object, the event and the cell's other elements (MATLAB doc 'Specify a
+ * Callback Function', 'timer'): referenced as the handle in `{@go, 7}` is,
+ * at the literal when one is written there, else anchored (see
+ * anchoredRefs). A string object there (`{"go", 7}`) is refused by MATLAB
+ * (R2026a, measured for step 16: "Callback value must be a character
+ * vector, a function handle, or a cell array containing character vector or
+ * function handle"), and a first element that is no name (`{'go(1)', 2}`)
+ * names nothing. Not `cells` for `struct`, which makes a struct array of a
+ * cell's elements. A name, as code given as text, is called in the base
+ * workspace when the event comes (MATLAB R2026a, measured for step 16: a
+ * callback cell or text naming a function of the file or of its `private/`
+ * folder is "Undefined function"): it carries the `runtime` fact, which the
+ * resolver reads as a lookup from outside the file (see
+ * ../../resolution/matlab-lookup.ts); a handle names the function where it
+ * is written.
+ */
+function callbackRefs(arg: SyntaxNode, v: Val, ctx: ExtractorContext, computed: boolean, cells = true): void {
+  codeRefs(v.strs, arg, ctx, 'callback', false, computed);
+  const first = cells ? v.cellItems?.[0] : undefined;
+  if (!first || first.stringObject) return;
+  const row = arg.type === 'cell' ? namedChildren(arg).filter((c) => c.type === 'row') : [];
+  const written = row.length === 1 ? namedChildren(row[0]!).find((c) => c.type !== 'comment' && c.type !== 'line_continuation') : undefined;
+  const literal = written ? stringLiteral(written, ctx.source) : null;
+  for (const text of first.strs) {
+    const f = NAME_SHAPED.test(text) ? namedRef(text.split('.')) : null;
+    if (!f) continue;
+    if (literal === text) addRef(ctx, f.name, 'function_ref', written!, { runtime: true });
+    else addRef(ctx, f.name, 'function_ref', arg, { ...computedFact(f.name, true), runtime: true }, 'anchored');
   }
 }
 
@@ -2908,13 +3223,111 @@ function handleCalls(fns: readonly FnVal[], strs: readonly string[], at: SyntaxN
  */
 type CodeMode = 'here' | 'elsewhere' | 'callback';
 
-/** The variables `locals` and the names made at runtime around frame `f`: in code `eval` runs there, those are variables when it runs. */
-function withRuntimeNames(locals: ReadonlySet<string>, f: Frame): ReadonlySet<string> {
-  let out: Set<string> | null = null;
+/**
+ * The variables of code `eval` runs at `at` (the argument that gives it), in
+ * frame `f`: its own, `own`, and the names made at runtime around `f` that are
+ * variables when it runs (see runtimeBefore), asked of by name, each once.
+ */
+function evalLocals(own: ReadonlySet<string>, f: Frame, at: SyntaxNode): Frame['locals'] {
+  let any = false;
+  for (let g: Frame | null = f; g && !any; g = g.parent) any = (g.runtime?.size ?? 0) > 0;
+  if (!any) return own;
+  const memo = new Map<string, boolean>();
+  return {
+    has: (n) => {
+      if (own.has(n)) return true;
+      let v = memo.get(n);
+      if (v === undefined) memo.set(n, (v = runtimeBefore(n, f, at)));
+      return v;
+    },
+  };
+}
+
+/**
+ * Whether `n`, a name made at runtime around frame `f` (see Frame.runtime),
+ * is a variable when code `eval` runs at `at` runs: a place that makes it
+ * comes before in text order (see Frame.runtimeLoads, madeBefore), not the
+ * one at `besides`. In a nested function, every one its parent's code makes:
+ * what runs before a call of it is no text order. Code `eval` runs around
+ * that holds `n` itself answers for it (see isVariableAt).
+ */
+function runtimeBefore(n: string, f: Frame, at: SyntaxNode, besides?: SyntaxNode): boolean {
+  let pos: SyntaxNode | null = at;
   for (let g: Frame | null = f; g; g = g.parent) {
-    for (const n of g.runtime ?? []) (out ??= new Set(locals)).add(n);
+    if (g.runtime?.has(n) && (!pos || madeBefore(g, n, pos, besides))) return true;
+    if (g.kind === 'eval') {
+      if (g.locals.has(n)) return false;
+      if (g.at) pos = g.at;
+    } else if (g.kind === 'function') pos = null;
   }
-  return out ?? locals;
+  return false;
+}
+
+/**
+ * Whether a place that makes the runtime name `n` of function frame `g`
+ * comes before what is read at `p` in text order, with the name not cleared
+ * between (see reachedInOrder): a script's text-order rule, round no loop (a
+ * read before them in a loop's body is a call on the first pass). Not the
+ * place `besides`. True for a name with no place known.
+ */
+function madeBefore(g: Frame, n: string, p: SyntaxNode, besides?: SyntaxNode): boolean {
+  const r = g.runtimeLoads;
+  const sites = r?.made?.get(n);
+  if (!sites) return true;
+  return reachedInOrder(sites, p, clearsOf(r!, n), besides);
+}
+
+/**
+ * The text order code `eval` runs at `at`, in frame `f`, reads the names it
+ * writes or clears itself in (`facts`, of its tree `root`), as a script reads
+ * its own (see Frame.textOrder), worked out for a name when a read asks:
+ *   - a read before the text's own write of a name is a call where a
+ *     function answers it (MATLAB R2026a, measured for step 16: in a
+ *     function, `eval('xa(1); xa = 1;')` calls `xa`, and so does `eval('eval(
+ *     ''xb(1);''); xb = 1;')`);
+ *   - a name code another `eval` runs made before (see runtimeBefore) is a
+ *     variable where the text starts (`carried`), until the text's own clear
+ *     of it, in the text's order, nested code included (MATLAB R2026a,
+ *     measured for step 16: in a function, after `eval('a = 1;')`, `eval('a(1);
+ *     clear a; a(2);')` calls `a` at `a(2)`; after `eval('b = 1;')`, `eval('clear
+ *     b; eval(''b(3);'');')` calls `b`);
+ *   - so is a variable of a script's top level, or of code an enclosing
+ *     `eval` runs (see clearedByText; MATLAB R2026a, measured for step 16: in
+ *     a script, `gg = 1; eval('clear gg; gg(5)')` calls `gg`): a name the
+ *     text does not write isVariableAt ends at the text's clear itself;
+ *   - a variable of a function's code (see isVariableAt) is one throughout,
+ *     whatever the text writes or clears: a name its own code assigns stays
+ *     a variable (MATLAB R2026a, measured for step 16: `hc = 1; eval('clear
+ *     hc'); eval('hc(2);')` is "Reference to a cleared variable"); and so is
+ *     any of these names that the text does not clear.
+ * Undefined when the text writes and clears nothing.
+ */
+function evalTextOrder(facts: ScopeFacts, root: SyntaxNode, f: Frame, at: SyntaxNode): Frame['textOrder'] {
+  if (facts.writeSites.size === 0 && facts.clears.length === 0 && facts.clearedAt.size === 0 && facts.clearedBy.length === 0) return undefined;
+  const clears = clearSitesOf(facts, root);
+  const memo = new Map<string, readonly Placed[] | undefined>();
+  const carried = new Set<string>();
+  const order = (v: string): readonly Placed[] | undefined => {
+    const own = facts.locals.has(v) ? facts.writeSites.get(v) : undefined;
+    const around = isVariableAt(f, v, at, at);
+    if (around && !clearedByText(f, v)) return undefined;
+    // A name the text does not write is asked of only when code another `eval` runs made it before (see evalLocals).
+    if (around || !own || runtimeBefore(v, f, at, at)) {
+      if (clearsOf(clears, v).length === 0) return undefined;
+      carried.add(v);
+    }
+    return (own ?? []).map((w) => placed(w, root));
+  };
+  return {
+    ...clears,
+    sites: {
+      get: (v) => {
+        if (!memo.has(v)) memo.set(v, order(v));
+        return memo.get(v);
+      },
+    },
+    carried: (v) => carried.has(v),
+  };
 }
 
 /**
@@ -2936,7 +3349,7 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
     const f: Frame = {
       kind: here ? 'eval' : 'file',
       qual: outer.qual,
-      locals: here ? withRuntimeNames(facts.locals, outer) : facts.locals,
+      locals: here ? evalLocals(facts.locals, outer, at) : facts.locals,
       classHints: classHintsFrom(facts, (v) => facts.locals.has(v) || (here && isLocal(outer, v))),
       structFields: facts.structFields,
       self: here && outer.self && !facts.locals.has(outer.self.name) ? outer.self : null,
@@ -2945,6 +3358,8 @@ function codeRefs(codes: readonly string[], at: SyntaxNode, ctx: ExtractorContex
     };
     if (here) {
       f.at = at;
+      const order = evalTextOrder(facts, root, outer, at);
+      if (order) f.textOrder = order;
       const loads = loadIsMatlabs(outer) && !inStaticWorkspace(outer) ? loadSitesOf(facts.loads, facts, root) : undefined;
       if (loads) f.loads = loads;
     }
@@ -3038,9 +3453,10 @@ interface TextPiece {
 /**
  * The literals the argument `at` writes `code` in, when that is all it is:
  * one literal (`'f; g'`, `"f; g"`), or a row of char literals concatenated
- * (`['disp(1); ' 'mkvars']`, over continued lines too). Null for anything
- * else (a value, a call, a piece that is a string object, which makes a
- * string array, not one text).
+ * (`['disp(1); ' 'mkvars']`, over continued lines too), character codes
+ * among them (`['f(1);' 10 'g(2)']`, `newline`: see charCodePiece), which
+ * hold no place. Null for anything else (a value, a call, a piece that is a
+ * string object, which makes a string array, not one text).
  */
 function textPieces(at: SyntaxNode, code: string, source: string): TextPiece[] | null {
   const piece = (node: SyntaxNode, offset: number): TextPiece | null => {
@@ -3055,14 +3471,17 @@ function textPieces(at: SyntaxNode, code: string, source: string): TextPiece[] |
   if (rows.length !== 1 || rows[0]!.type !== 'row') return null;
   const pieces: TextPiece[] = [];
   let offset = 0;
+  let text = '';
   for (const c of namedChildren(rows[0]!)) {
     if (c.type === 'comment' || c.type === 'line_continuation') continue;
     const p = c.type === 'string' && source[c.startIndex] === "'" ? piece(c, offset) : null;
-    if (!p) return null;
-    pieces.push(p);
-    offset += p.text.length;
+    const ch = p ? null : charCodePiece(c, source, (n) => isLocal(frame(), n));
+    if (!p && ch === null) return null;
+    if (p) pieces.push(p);
+    text += p ? p.text : ch;
+    offset = text.length;
   }
-  return pieces.length > 0 && pieces.map((p) => p.text).join('') === code ? pieces : null;
+  return pieces.length > 0 && text === code ? pieces : null;
 }
 
 /** How many characters the name written at `column` of the code's line `line` takes (`f`, `pkg.f`, `@f`), at least one. */
@@ -3109,7 +3528,7 @@ const DEFINITIONS: ReadonlySet<string> = new Set(['function_definition', 'functi
 interface CodeRefStyle {
   /** A callback's: what it calls is referenced (`function_ref`). */
   callback: boolean;
-  /** Code run in another workspace: every name a name made at runtime (the `runtime` fact). */
+  /** Code run in another workspace: every name a name made at runtime (the `runtime` fact), a handle only in a callback's. */
   runtime: boolean;
   /** Code evaluated for a value: a statement there is an expression, never a script run (`statement` read as `bare`). */
   asValue: boolean;
@@ -3145,7 +3564,10 @@ function codeContext(outer: ExtractorContext, source: string, at: SyntaxNode, pi
       let candidates = (ref.candidates ?? []).filter((c) => !(isMatlabArgsCandidate(c) && c.includes(PLACEHOLDER)));
       if (ref.referenceName.includes(PLACEHOLDER) || candidates.some((c) => c.includes(PLACEHOLDER))) return;
       if (style.asValue) candidates = candidates.map((c) => (c === 'statement' ? 'bare' : c));
-      if (style.runtime && !candidates.includes(RUNTIME_TAG)) candidates = withFact(candidates, RUNTIME_TAG);
+      // A handle, or a name given as text (`@f`, `str2func('f')`), names a function, never a variable of that
+      // workspace: code `evalin` runs looks it up as code here does (MATLAB R2026a, measured for step 16: a local
+      // function of the file answers it). A callback's names are called from the base workspace (see callbackRefs).
+      if (style.runtime && !candidates.includes(RUNTIME_TAG) && (style.callback || ref.referenceKind !== 'function_ref')) candidates = withFact(candidates, RUNTIME_TAG);
       if (style.computed && isDottedName(ref.referenceName) && !candidates.includes(COMPUTED_TAG)) candidates = withFact(candidates, COMPUTED_TAG);
       const anchored = unplacedRefs.has(ref);
       const place = pieces && piecePlace(pieces, ref.line, ref.column, anchored ? 0 : writtenNameLength(source, ref.line, ref.column));
@@ -3805,12 +4227,14 @@ function inFile<T>(root: SyntaxNode, source: string, filePath: string, body: () 
 
 /**
  * A script's variables in text order (see Frame.textOrder): each name with
- * its writes, placed; not a name code `eval` runs may write (`made`), whose
- * place is unknown: a variable everywhere.
+ * its writes, placed, a name code `eval` runs makes written at each code
+ * argument that makes it (`byEval`, see addRuntimeNames).
  */
-function textOrderOf(facts: ScopeFacts, made: ReadonlySet<string>, scope: SyntaxNode): Frame['textOrder'] {
+function textOrderOf(facts: ScopeFacts, byEval: ReadonlyMap<string, readonly SyntaxNode[]>, scope: SyntaxNode): Frame['textOrder'] {
   const sites = new Map<string, Placed[]>();
-  for (const [v, at] of facts.writeSites) if (!made.has(v)) sites.set(v, at.map((s) => placed(s, scope)));
+  for (const v of new Set([...facts.writeSites.keys(), ...byEval.keys()])) {
+    sites.set(v, [...(facts.writeSites.get(v) ?? []), ...(byEval.get(v) ?? [])].map((s) => placed(s, scope)));
+  }
   return { sites, ...clearSitesOf(facts, scope) };
 }
 
@@ -3836,8 +4260,8 @@ function walkFile(node: SyntaxNode, ctx: ExtractorContext): void {
     // A function file's or a class file's top level runs nothing of its own.
     const script = !sinkCollector && namedChildren(node).some((c) => !DEFINITIONS.has(c.type) && c.type !== 'comment');
     f.values = script ? scopeValues(node, { isFunction: false, inputs: EMPTY, shared: () => false }, source, needsWalk(node, undefined, source, facts)) : NO_VALUES;
-    const madeByEval = addRuntimeNames(facts, f, node, source, false);
-    if (script) f.textOrder = textOrderOf(facts, madeByEval, node);
+    const byEval = addRuntimeNames(facts, f, node, source, false);
+    if (script) f.textOrder = textOrderOf(facts, byEval, node);
     for (const c of namedChildren(node)) if (!sinkCollector || DEFINITIONS.has(c.type)) ctx.visitNode(c);
   });
 }
@@ -3953,7 +4377,7 @@ export const matlabExtractor: LanguageExtractor = {
         if (left?.type === 'field_expression' && right) {
           const parts = namedChildren(left);
           const last = parts[parts.length - 1];
-          if (last?.type === 'identifier' && CALLBACK_PROPERTY.test(getNodeText(last, source))) codeRefs(valueAt(right, source).strs, right, ctx, 'callback', false, !writtenAsLiteral(right));
+          if (last?.type === 'identifier' && CALLBACK_PROPERTY.test(getNodeText(last, source))) callbackRefs(right, valueAt(right, source), ctx, !writtenAsLiteral(right));
         }
         return false;
       }

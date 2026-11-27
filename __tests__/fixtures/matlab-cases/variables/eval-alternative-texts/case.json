@@ -1,0 +1,17 @@
+{
+  "why": "One `eval` argument whose texts are alternatives, one making a name and one reading it, calls the function where the reading text runs (MATLAB R2026a, measured for step 16: in a function, `s` is `'xa = 1;'` or `'xa(1);'`, then `eval(s)`, calls `xa`; a script reads in text order, the user's ruling 3, step 11). The rule that a text an argument may hold reads what another of its texts makes as a variable hides the call: it stands for the texts the value interpreter builds by crossing the pieces' values, which never run (project rule, step 16). Alternatives that make no name the others read are each read (`zkal3.m`: MATLAB doc 'eval').",
+  "truth": {
+    "edges": [
+      "zkal1.m zkal1 -calls-> zkala @ zkala.m",
+      "zkal2.m zkal2.m -calls-> zkalb @ zkalb.m",
+      "zkal3.m zkal3 -calls-> zkalc @ zkalc.m"
+    ]
+  },
+  "pendingBug": {
+    "id": "S18-eval-alternative-texts",
+    "fails": [
+      "index: missing edge zkal1.m zkal1 -calls-> zkala @ zkala.m",
+      "index: missing edge zkal2.m zkal2.m -calls-> zkalb @ zkalb.m"
+    ]
+  }
+}

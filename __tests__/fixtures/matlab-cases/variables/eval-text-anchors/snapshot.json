@@ -1,0 +1,11 @@
+{
+  "index": {
+    "edges": [
+      "zkanch.m zkanch -calls-> zkna @ zkna.m",
+      "zkanch.m zkanch -calls-> zknb @ zknb.m",
+      "zkanch.m zkanch -calls-> zknc @ zknc.m"
+    ],
+    "rows": [],
+    "dormant": []
+  }
+}

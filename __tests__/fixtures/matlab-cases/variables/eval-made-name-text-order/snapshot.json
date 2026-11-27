@@ -1,0 +1,14 @@
+{
+  "index": {
+    "edges": [
+      "zkord1.m zkord1 -calls-> zkea @ zkea.m",
+      "zkord2.m zkord2 -calls-> zkeb @ zkeb.m",
+      "zkord4.m zkord4.m -calls-> zkes @ zkes.m"
+    ],
+    "rows": [
+      "zkord3.m:3 calls:zkec",
+      "zkord5.m:1 calls:zket"
+    ],
+    "dormant": []
+  }
+}

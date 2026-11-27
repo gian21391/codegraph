@@ -1,0 +1,38 @@
+{
+  "index": {
+    "edges": [
+      "zkto1.m zkto1 -calls-> zktoa @ zktoa.m",
+      "zkto1.m zkto1 -calls-> zktob @ zktob.m",
+      "zkto1.m zkto1 -calls-> zktoc @ zktoc.m",
+      "zkto2.m zkto2.m -calls-> zktog @ zktog.m",
+      "zkto3.m zkto3 -calls-> zktoi @ zktoi.m",
+      "zkto3.m zkto3 -calls-> zktoj @ zktoj.m",
+      "zkto4.m zkto4.m -calls-> zktom @ zktom.m"
+    ],
+    "rows": [],
+    "dormant": []
+  },
+  "steps": [
+    {
+      "edges": [
+        "zkto2.m zkto2.m -calls-> zktog @ zktog.m",
+        "zkto3.m zkto3 -calls-> zktoi @ zktoi.m",
+        "zkto3.m zkto3 -calls-> zktoj @ zktoj.m",
+        "zkto4.m zkto4.m -calls-> zktom @ zktom.m"
+      ],
+      "rows": [],
+      "dormant": []
+    },
+    {
+      "edges": [
+        "zkto1.m zkto1 -calls-> zktoa @ zktoa.m",
+        "zkto2.m zkto2.m -calls-> zktog @ zktog.m",
+        "zkto3.m zkto3 -calls-> zktoi @ zktoi.m",
+        "zkto3.m zkto3 -calls-> zktoj @ zktoj.m",
+        "zkto4.m zkto4.m -calls-> zktom @ zktom.m"
+      ],
+      "rows": [],
+      "dormant": []
+    }
+  ]
+}

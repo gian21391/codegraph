@@ -1,0 +1,50 @@
+{
+  "why": "Code `eval` runs that is a clear is that clear where the `eval` runs (MATLAB R2026a, measured for step 16: in a script, `hd = 1; eval('clear hd'); hd(2)` and `fk = 4; eval(['clear ' 'fk']); fk(3)` call `hd` and `fk`; in a function, `eval('xb = 1;'); eval('clear xb'); eval('xb(2);')` calls `xb`), its patterns too (`clear zkxj*` removes `zkxj`, not `zkxk`: MATLAB doc 'clear'). In a function a plain clear and a text clear end what code `eval` runs and a `load` list made, for later code `eval` runs (`zkcl6.m`, `zkcl7.m`: a clear ends a variable however it was made, MATLAB doc 'clear', measured for step 16 for a name code `eval` runs made: `eval('xb = 1;'); eval('clear xb'); eval('xb(2);')` calls `xb`). A name a function assigns in its own code stays a variable (MATLAB R2026a, measured for step 16: `hc = 1; eval('clear hc'); hc(2)` is the error 'Reference to a cleared variable hc'), so `zkcl4.m` links nothing. `evalin('base', …)` and `evalin('caller', …)` clear another workspace (MATLAB doc 'evalin'): `zkcl5.m`'s read is still the variable. A text that is one of two strings may not run its clear, as a clear on one branch of an `if` ends no write (project rule, step 16): `zkcl8.m` reads the variable. Code `eval` runs that fails stops there, and code given `eval` as its catch code runs only then: a clear in either may not run, and ends nothing, as a clear on one branch (MATLAB R2026a, measured for step 16: `xa = 1; eval('r5missing(1); clear xa', 'disp(0)'); xa(1)` indexes the variable), so `zkcl10.m` and `zkcl11.m` link nothing. In a function, a name its code assigns, cleared by a text, is still no name a later text calls (MATLAB R2026a, measured for step 16: `hc = 1; eval('clear hc'); eval('hc(2);')` is the error 'Reference to a cleared variable'): `zkcl12.m`. The function's own code reads a name code `eval` runs made as a call (MATLAB R2026a, measured for step 16: `eval('xa = 1;'); xa(1)` calls `xa`), cleared or not: `zkcl13.m`. A text that makes a name and then clears it leaves no variable (MATLAB R2026a, measured for step 16: in a script, `xa = 1; eval('xa = 2; clear xa'); xa(1)` calls `xa`): `zkcl14.m`. A clear inside a clause of the text may not run (project rule, as for a clear on one branch; here `rand > 2` never holds, MATLAB doc 'rand'): `zkcl15.m` reads the variable. `clear global x` in a text removes the global declared before it (MATLAB doc 'clear'): `zkcl16.m` calls the function.",
+  "truth": {
+    "edges": [
+      "zkcl1.m zkcl1.m -calls-> zkxa @ zkxa.m",
+      "zkcl2.m zkcl2.m -calls-> zkxb @ zkxb.m",
+      "zkcl3.m zkcl3 -calls-> zkxc @ zkxc.m",
+      "zkcl6.m zkcl6 -calls-> zkxg @ zkxg.m",
+      "zkcl7.m zkcl7 -calls-> zkxh @ zkxh.m",
+      "zkcl9.m zkcl9.m -calls-> zkxj @ zkxj.m",
+      "zkcl13.m zkcl13 -calls-> zkxo @ zkxo.m",
+      "zkcl14.m zkcl14.m -calls-> zkxp @ zkxp.m",
+      "zkcl16.m zkcl16.m -calls-> zkxr @ zkxr.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkcl4.m",
+        "to": "zkxd"
+      },
+      {
+        "from": "zkcl5.m",
+        "to": "zkxe"
+      },
+      {
+        "from": "zkcl8.m",
+        "to": "zkxi"
+      },
+      {
+        "from": "zkcl9.m",
+        "to": "zkxk"
+      },
+      {
+        "from": "zkcl10.m",
+        "to": "zkxl"
+      },
+      {
+        "from": "zkcl11.m",
+        "to": "zkxm"
+      },
+      {
+        "from": "zkcl12.m",
+        "to": "zkxn"
+      },
+      {
+        "from": "zkcl15.m",
+        "to": "zkxq"
+      }
+    ]
+  }
+}

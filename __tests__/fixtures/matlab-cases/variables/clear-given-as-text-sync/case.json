@@ -1,0 +1,33 @@
+{
+  "why": "In a script, `eval('clear x')` removes `x`, so a read after it calls the function (MATLAB R2026a, measured for step 16: `hd = 1; eval('clear hd'); hd(2)` calls `hd`); code that clears nothing leaves the variable. Edited out of the clear and back; each step must end where a fresh index ends (project rule).",
+  "truth": {
+    "edges": [
+      "zkcls.m zkcls.m -calls-> zkxs @ zkxs.m"
+    ]
+  },
+  "steps": [
+    {
+      "edit": {
+        "zkcls.m": "zkxs = 1;\neval('disp(1)');\nzkxs(2)\n"
+      },
+      "truth": {
+        "noEdges": [
+          {
+            "from": "zkcls.m",
+            "to": "zkxs"
+          }
+        ]
+      }
+    },
+    {
+      "edit": {
+        "zkcls.m": "zkxs = 1;\neval(['clear ' 'zkxs']);\nzkxs(2)\n"
+      },
+      "truth": {
+        "edges": [
+          "zkcls.m zkcls.m -calls-> zkxs @ zkxs.m"
+        ]
+      }
+    }
+  ]
+}

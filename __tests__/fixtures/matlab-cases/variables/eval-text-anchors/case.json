@@ -1,0 +1,16 @@
+{
+  "why": "Anchors that hold on base: a variable holding a concatenation of code is run whole (`x = ['fe(1); ' 'ge(2)']; eval(x)` calls both; MATLAB doc 'eval'); valid non-ASCII text before the code changes nothing (MATLAB R2026a, measured for step 16: `eval(['disp(''é€😀''); ' 'ff(1)'])` calls `ff`); and code that is not valid MATLAB (`eval(['é€😀; ' 'f(1)'])`) runs none of it (step 16), so it names nothing.",
+  "truth": {
+    "edges": [
+      "zkanch.m zkanch -calls-> zkna @ zkna.m",
+      "zkanch.m zkanch -calls-> zknb @ zknb.m",
+      "zkanch.m zkanch -calls-> zknc @ zknc.m"
+    ],
+    "noEdges": [
+      {
+        "from": "zkanch.m",
+        "to": "zknd"
+      }
+    ]
+  }
+}
